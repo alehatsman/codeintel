@@ -46,6 +46,8 @@ pub const ROLES: &[&str] = &[
     "test",
     "generated",
     "forward",
+    // `UnspecifiedSymbolRole`: the indexer left the bitset empty.
+    "unknown",
 ];
 
 /// Kinds that own methods: a `function` defined inside one becomes a `method`.

@@ -254,14 +254,18 @@ impl Ingest {
             if symbol.is_empty() {
                 continue;
             }
-            let col = columns.byte(line, col);
+            // A line the source no longer has is a stale range, not a column to
+            // approximate (`specs/02-extraction.md` § Position normalization).
+            let Some(col) = columns.byte(line, col) else {
+                continue;
+            };
             if has(occurrence.symbol_roles, SymbolRole::Definition) {
                 doc.defs.push(Def {
                     symbol,
                     line,
                     col,
-                    enclosing: enclosing_of(occurrence).map(|(sl, sc, el, ec)| {
-                        (sl, columns.byte(sl, sc), el, columns.byte(el, ec))
+                    enclosing: enclosing_of(occurrence).and_then(|(sl, sc, el, ec)| {
+                        Some((sl, columns.byte(sl, sc)?, el, columns.byte(el, ec)?))
                     }),
                 });
             } else {
@@ -434,7 +438,7 @@ fn span_of(occurrence: &Occurrence) -> Option<(u32, u32, u32)> {
             _ => return None,
         },
     };
-    Some((line1(line), nonneg(start), nonneg(end)))
+    Some((line1(line)?, nonneg(start)?, nonneg(end)?))
 }
 
 /// The full-definition range, `(start_line, start_col, end_line, end_col)`.
@@ -453,26 +457,34 @@ fn enclosing_of(occurrence: &Occurrence) -> Option<(u32, u32, u32, u32)> {
             _ => return None,
         },
     };
-    Some((line1(sl), nonneg(sc), line1(el), nonneg(ec)))
+    Some((line1(sl)?, nonneg(sc)?, line1(el)?, nonneg(ec)?))
 }
 
+/// The most specific role in the bitset, or `unknown` for an empty one.
+///
+/// SCIP 0 is `UnspecifiedSymbolRole`, not a read. Reporting it as a read is the
+/// extractor answering a question the indexer declined to answer (invariant 1).
 fn role_of(bits: i32) -> &'static str {
     ROLES
         .iter()
         .find_map(|(role, name)| has(bits, *role).then_some(*name))
-        .unwrap_or("read")
+        .unwrap_or("unknown")
 }
 
 fn has(bits: i32, role: SymbolRole) -> bool {
     bits & protobuf::Enum::value(&role) != 0
 }
 
-fn line1(zero_based: i32) -> u32 {
-    u32::try_from(zero_based).unwrap_or(0).saturating_add(1)
+/// A 0-based SCIP line as our 1-based one. `None` for a negative line: that is
+/// a malformed range, and clamping it to line 1 would put a symbol somewhere it
+/// is not (`specs/02-extraction.md` § Position normalization).
+fn line1(zero_based: i32) -> Option<u32> {
+    u32::try_from(zero_based).ok()?.checked_add(1)
 }
 
-fn nonneg(n: i32) -> u32 {
-    u32::try_from(n).unwrap_or(0)
+/// A column, or `None` if it is negative. Same reasoning as [`line1`].
+fn nonneg(n: i32) -> Option<u32> {
+    u32::try_from(n).ok()
 }
 
 /// Column transcoding for one document.
@@ -512,21 +524,23 @@ impl Columns {
     }
 
     /// The UTF-8 byte column for a code-unit column on a 1-based line.
-    fn byte(&self, line: u32, col: u32) -> u32 {
+    ///
+    /// `None` when the line is past the transcoded source — the file on disk no
+    /// longer matches the index, and returning the code-unit column unchanged
+    /// would emit an approximate column for a UTF-16 document, which
+    /// `specs/02-extraction.md` § Position normalization forbids.
+    fn byte(&self, line: u32, col: u32) -> Option<u32> {
         let (lines, utf16) = match self {
-            Self::Identity => return col,
+            Self::Identity => return Some(col),
             Self::Transcode { lines, utf16 } => (lines, *utf16),
         };
-        let Some(text) = usize::try_from(line)
+        let text = usize::try_from(line)
             .ok()
-            .and_then(|l| lines.get(l.saturating_sub(1)))
-        else {
-            return col;
-        };
+            .and_then(|l| lines.get(l.checked_sub(1)?))?;
         let mut units = 0_u32;
         for (offset, c) in text.char_indices() {
             if units >= col {
-                return u32::try_from(offset).unwrap_or(col);
+                return u32::try_from(offset).ok();
             }
             units = units.saturating_add(if utf16 {
                 u32::try_from(c.len_utf16()).unwrap_or(1)
@@ -534,7 +548,7 @@ impl Columns {
                 1
             });
         }
-        u32::try_from(text.len()).unwrap_or(col)
+        u32::try_from(text.len()).ok()
     }
 }
 
@@ -626,8 +640,9 @@ mod tests {
         assert_eq!(role_of(write), "write");
         assert_eq!(role_of(read), "read");
         assert_eq!(role_of(write | read), "write");
-        // No bits set is a plain read, which is what indexers emit by default.
-        assert_eq!(role_of(0), "read");
+        // No bits set is `UnspecifiedSymbolRole`. Reading it as a read is the
+        // extractor guessing; `unknown` is what the indexer actually said.
+        assert_eq!(role_of(0), "unknown");
     }
 
     #[test]
@@ -638,9 +653,22 @@ mod tests {
         };
         // `🦀` is two UTF-16 units and four UTF-8 bytes, so everything after it
         // shifts. Getting this wrong is a silently wrong edit position.
-        assert_eq!(columns.byte(1, 0), 0);
-        assert_eq!(columns.byte(1, 4), 4);
-        assert_eq!(columns.byte(1, 6), 8);
+        assert_eq!(columns.byte(1, 0), Some(0));
+        assert_eq!(columns.byte(1, 4), Some(4));
+        assert_eq!(columns.byte(1, 6), Some(8));
+    }
+
+    #[test]
+    fn a_line_past_the_source_is_skipped_not_passed_through() {
+        let columns = Columns::Transcode {
+            lines: vec!["let 🦀 = crab;".to_string()],
+            utf16: true,
+        };
+        // The file on disk no longer matches the index. Returning the code-unit
+        // column unchanged would be an approximate column for a UTF-16
+        // document, which `specs/02-extraction.md` forbids.
+        assert_eq!(columns.byte(2, 4), None);
+        assert_eq!(columns.byte(0, 4), None);
     }
 
     #[test]
@@ -649,7 +677,7 @@ mod tests {
             lines: vec!["let 🦀 = crab;".to_string()],
             utf16: false,
         };
-        assert_eq!(columns.byte(1, 5), 8);
+        assert_eq!(columns.byte(1, 5), Some(8));
     }
 
     #[test]
@@ -663,7 +691,7 @@ mod tests {
             PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
         )
         .expect("utf-8 needs nothing");
-        assert_eq!(columns.byte(9, 42), 42);
+        assert_eq!(columns.byte(9, 42), Some(42));
     }
 
     #[test]
@@ -706,6 +734,14 @@ mod tests {
         assert_eq!(span_of(&four), Some((42, 4, 7)));
 
         assert_eq!(span_of(&Occurrence::new()), None);
+
+        // A negative coordinate is a malformed range. Clamping it to line 1
+        // would put a symbol at a byte range that is not its own.
+        let mut negative = Occurrence::new();
+        negative.range = vec![-1, 4, 7];
+        assert_eq!(span_of(&negative), None);
+        negative.range = vec![41, -4, 7];
+        assert_eq!(span_of(&negative), None);
     }
 
     #[test]
@@ -771,7 +807,8 @@ mod tests {
         assert_eq!(doc.defs[0].col, 11);
         assert_eq!(doc.refs.len(), 1);
         assert_eq!(doc.refs[0].symbol, "local src/store.rs 4");
-        assert_eq!(doc.refs[0].role, "read");
+        // The occurrence carries no role bits, so the role is `unknown`.
+        assert_eq!(doc.refs[0].role, "unknown");
 
         let symbol = ingest
             .symbols

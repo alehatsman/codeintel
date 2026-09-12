@@ -121,7 +121,7 @@ def_sig("local src/kinds.rs Mode#Careful.", "Careful").
 def_sig("local src/kinds.rs Mode#Fast.", "Fast").
 def_sig("local src/kinds.rs Word#", "pub union Word").
 def_sig("local src/kinds.rs Word#bits.", "bits: u32").
-def_sig("local src/kinds.rs Word#halves.", "halves: [u16").
+def_sig("local src/kinds.rs Word#halves.", "halves: [u16; 2]").
 def_sig("local src/kinds.rs shout().", "macro_rules! shout").
 def_sig("local src/lib.rs app/", "pub mod app").
 def_sig("local src/lib.rs db/", "pub mod db").

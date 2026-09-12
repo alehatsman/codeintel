@@ -274,7 +274,7 @@ From `scip.proto` (field names verbatim):
 | `SymbolInformation.documentation[]` | `def_doc` (if tier A did not supply one) |
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
 | `Occurrence` without `Definition` role | `scip_ref(S, F, L, C, From, Role)` |
-| `symbol_roles` bits | `Role`: `WriteAccess`→`write`, `ReadAccess`→`read`, `Import`→`import`, `Test`→`test`, `Generated`→`generated`, `ForwardDefinition`→`forward`, `Definition`→`def` |
+| `symbol_roles` bits | `Role`: `WriteAccess`→`write`, `ReadAccess`→`read`, `Import`→`import`, `Test`→`test`, `Generated`→`generated`, `ForwardDefinition`→`forward`, `Definition`→`def`, empty bitset (`UnspecifiedSymbolRole`)→`unknown` |
 | `Relationship.is_implementation` | `implements(S, T, "exact")` |
 | `Relationship.is_type_definition` | `has_type(S, T, "exact")` |
 | symbol string names a package **and no document defines it** | `extern(S, Manager, Pkg, Version)` |
@@ -321,6 +321,16 @@ column) using the document's `text` when present, or the file on disk otherwise.
 If a document specifies UTF-16 and its source is unavailable, **skip that
 document and report it** in `status` — do not emit approximate columns. A
 half-byte-wrong column silently breaks every edit built on it.
+
+The same rule applies per occurrence, not only per document:
+
+- A **negative line or column** is a malformed range. Skip the occurrence; do
+  not clamp it to line 1 or column 0, which would place a real symbol at a real
+  byte range that is not its own.
+- A **line past the end of the transcoded source** means the file on disk no
+  longer matches the index. Skip the occurrence rather than passing the
+  code-unit column through untranscoded — for a UTF-16 document that is an
+  approximate column, which the paragraph above forbids.
 
 Prefer `single_line_range` / `multi_line_range` over the deprecated
 `repeated int32 range` field; support both, since indexer versions vary.

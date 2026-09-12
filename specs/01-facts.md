@@ -60,8 +60,12 @@ macro  typealias  unknown
 
 **`Role`** — how an occurrence uses the symbol:
 ```
-def  read  write  import  test  generated  forward
+def  read  write  import  test  generated  forward  unknown
 ```
+`unknown` is `UnspecifiedSymbolRole`: the indexer emitted an occurrence with an
+empty role bitset. Calling that a `read` would be the extractor guessing
+(invariant 1), and dropping the occurrence would lose a reference the compiler
+did resolve, so it gets its own atom — as `Kind` does for the same reason.
 
 **`Prov`** — resolution provenance. Exactly two values, forever:
 ```

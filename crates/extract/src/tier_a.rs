@@ -672,11 +672,28 @@ fn ancestor(parents: &[Option<usize>], i: usize, want: impl Fn(usize) -> bool) -
 /// signature that opened with three lines of prose would be useless.
 fn signature(src: &str, start: usize, end: usize, stops: &[char]) -> String {
     let text = src.get(start..end).unwrap_or("");
-    let end = text
-        .char_indices()
-        .find(|(_, c)| stops.contains(c) || *c == '\n')
-        .map_or(text.len(), |(i, _)| i);
-    collapse(text.get(..end).unwrap_or(text), SIG_CAP)
+    // A stop character nested inside a bracket group is part of the header, not
+    // the end of it: `struct S<T = u32>` cut at the `=` used to report
+    // `struct S<T`. `->` cannot underflow the depth because the subtraction
+    // saturates.
+    let mut depth = 0_u32;
+    let mut cut = text.len();
+    for (i, c) in text.char_indices() {
+        match c {
+            '<' | '(' | '[' => depth = depth.saturating_add(1),
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            '\n' => {
+                cut = i;
+                break;
+            }
+            _ if depth == 0 && stops.contains(&c) => {
+                cut = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    collapse(text.get(..cut).unwrap_or(text), SIG_CAP)
 }
 
 /// Whitespace-collapsed, trimmed, and cut at a character boundary.
@@ -746,4 +763,42 @@ fn offset(path: &str, n: usize) -> Result<u32> {
         .ok_or_else(|| Error::TooLarge {
             path: path.to_string(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signature;
+
+    /// The stop characters Rust declares (`lang.rs`), duplicated here so the
+    /// test states what it exercises.
+    const RUST: &[char] = &['{', ';', '='];
+
+    #[test]
+    fn a_stop_character_inside_brackets_does_not_end_the_header() {
+        // Each of these used to be cut at the first `=` or `;`, reporting a
+        // signature with an unclosed bracket in it.
+        let cases = [
+            ("struct S<T = u32>;", "struct S<T = u32>"),
+            ("halves: [u16; 2]", "halves: [u16; 2]"),
+            (
+                "fn f<const N: usize = 4>(a: [u8; N]) {",
+                "fn f<const N: usize = 4>(a: [u8; N])",
+            ),
+        ];
+        for (src, want) in cases {
+            assert_eq!(signature(src, 0, src.len(), RUST), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn a_stop_character_at_the_top_level_still_ends_the_header() {
+        assert_eq!(
+            signature("pub const LIMIT: u32 = 64;", 0, 26, RUST),
+            "pub const LIMIT: u32"
+        );
+        assert_eq!(
+            signature("fn go() -> bool { true }", 0, 24, RUST),
+            "fn go() -> bool"
+        );
+    }
 }
