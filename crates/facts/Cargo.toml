@@ -9,6 +9,11 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+datalog.workspace = true
+memmap2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

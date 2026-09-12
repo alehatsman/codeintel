@@ -1,0 +1,166 @@
+% codeintel standard library.
+%
+% Every rule here is derived from the base relations in specs/01-facts.md.
+% A new structural question is a rule in this file — not a function, not a CLI
+% verb, not an MCP tool. That is the mechanism that keeps this project small.
+%
+% Two conventions run through the whole file:
+%   * Seeded traversals take the seed FIRST (impact_of, reach_of). The engine
+%     pushes that binding into the recursion, so evaluation grows outward from
+%     the seed instead of computing all-pairs reachability.
+%   * Anything reading `calls` or `ref` is contaminated by resolution quality,
+%     so it ships in both forms: the `name`-tolerant one and the `_exact` one
+%     that gates on SCIP evidence.
+
+% === reference resolution ==============================================
+% `ref` is DERIVED. Tier B contributes resolved occurrences directly; tier A
+% contributes names that these rules resolve against the whole-repo def set.
+% To tighten resolution, edit the two `name` rules. To disable tier-A
+% resolution entirely, delete them: `ref` degrades to `exact` only.
+
+ref(S, F, L, C, From, Role, "exact") :- scip_ref(S, F, L, C, From, Role).
+
+% same file wins
+ref(S, F, L, C, From, "read", "name") :-
+    name_ref(N, F, L, C, From), def(S, F, _, N).
+
+% else a unique exported definition repo-wide
+ref(S, F, L, C, From, "read", "name") :-
+    name_ref(N, F, L, C, From), !local_def(F, N),
+    def(S, _, _, N), exported(S), !ambiguous(N).
+
+local_def(F, N) :- def(S, F, _, N).
+
+% Grouped, not a self-join: the self-join form emits k*k candidate pairs for a
+% name with k definitions before dedup, and the aggregate form is free.
+ambiguous(N) :- def(_, _, _, N), C = count{ S : def(S, _, _, N) }, C > 1.
+
+% === the location bridge ===============================================
+% Turns a file:line from ripgrep, git diff, a stack trace or a compiler error
+% into a symbol. This is how anything gets INTO the graph.
+%
+% `between` GENERATES when its first two arguments are bound, so Line appears
+% in a positive body literal and the rule is unconditionally safe. Written with
+% bare comparisons instead, Line would be bound by nothing and the engine would
+% reject its own standard library.
+
+symbol_at(F, Line, S) :- def(S, F, _, _), def_span(S, L1, L2, _, _),
+                         between(L1, L2, Line).
+
+% the tightest enclosing definition — usually what you want
+innermost_at(F, Line, S) :- symbol_at(F, Line, S), !tighter_at(F, Line, S).
+
+% T is strictly tighter than S: compare widths, not endpoints, so two
+% definitions sharing an identical span do not cancel each other out and leave
+% `innermost_at` empty.
+tighter_at(F, Line, S) :- symbol_at(F, Line, S), symbol_at(F, Line, T), T != S,
+                          def_span(S, A, B, _, _), def_span(T, C, D, _, _),
+                          V = B - A, W = D - C, W < V.
+
+% === callability =======================================================
+callable("function").
+callable("method").
+callable("constructor").
+callable("macro").
+
+% === calls: a reference to a callable, attributed to its enclosing def ==
+calls_at(From, S, F, L, Prov) :-
+    ref(S, F, L, _, From, Role, Prov), Role != "def",
+    def(S, _, K, _), callable(K).
+
+calls(From, S) :- calls_at(From, S, _, _, _).
+calls_exact(From, S) :- calls_at(From, S, _, _, "exact").
+
+callers(C, S) :- calls(C, S).
+callees(S, C) :- calls(S, C).
+
+% name-taking variants, because a SymId is unwieldy to type by hand
+callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
+impact_by_name(C, N) :- def(S, _, _, N), impact_of(S, C).
+
+% === transitive closure, SEEDED ========================================
+% Always prefer these.
+
+impact_of(Seed, C) :- calls(C, Seed).                     % who calls Seed
+impact_of(Seed, C) :- impact_of(Seed, B), calls(C, B).    % ...transitively
+
+reach_of(Seed, C) :- calls(Seed, C).                      % what Seed calls
+reach_of(Seed, C) :- reach_of(Seed, B), calls(B, C).
+
+impact_of_exact(Seed, C) :- calls_exact(C, Seed).
+impact_of_exact(Seed, C) :- impact_of_exact(Seed, B), calls_exact(C, B).
+
+% === transitive closure, UNSEEDED ======================================
+% Whole-graph questions only. On a large repo these are O(n^2) and will hit
+% max_derived_tuples; that is the honest cost of asking about every pair.
+
+reaches(A, B) :- calls(A, B).
+reaches(A, C) :- reaches(A, B), calls(B, C).
+recursive(S) :- reaches(S, S).
+
+% === location helpers ==================================================
+file_of(S, F) :- def(S, F, _, _).
+defines(F, S) :- def(S, F, _, _).
+at(S, F, L) :- def(S, F, _, _), def_span(S, L, _, _, _).
+
+% === containment closure ===============================================
+within(C, P) :- parent(C, P).
+within(C, A) :- parent(C, P), within(P, A).
+
+% === tests =============================================================
+% `file(F, _)` is not decoration: without it F is a head variable bound only by
+% a filter, which violates range restriction exactly as symbol_at would.
+is_test(F) :- file(F, _), match(F, "(^|/)tests?/").
+is_test(F) :- file(F, _), match(F, "_test\\.(go|py|rs)$").
+is_test(F) :- file(F, _), match(F, "(^|/)test_[^/]*\\.py$").
+is_test(F) :- file(F, _), match(F, "\\.(test|spec)\\.(ts|tsx|js|jsx)$").
+is_test(F) :- scip_ref(_, F, _, _, _, "test").
+
+% === orientation: everything about one symbol, in one round trip =======
+% Heterogeneous rows sharing a discriminator column. One query instead of six,
+% and the definition of "orientation" stays editable.
+
+about(S, "sig",         Sig, "", 0) :- def_sig(S, Sig).
+about(S, "doc",         Doc, "", 0) :- def_doc(S, Doc).
+about(S, "defined",     F,   N,  L) :- def(S, F, _, N), at(S, F, L).
+about(S, "parent",      F,   N,  L) :- parent(S, P), def(P, F, _, N), at(P, F, L).
+about(S, "caller",      F,   N,  L) :- calls(C, S), def(C, F, _, N), at(C, F, L).
+about(S, "callee",      F,   N,  L) :- calls(S, C), def(C, F, _, N), at(C, F, L).
+about(S, "implements",  F,   N,  L) :- implements(S, T, _), def(T, F, _, N), at(T, F, L).
+about(S, "implementor", F,   N,  L) :- implements(T, S, _), def(T, F, _, N), at(T, F, L).
+about(S, "test",        F,   N,  L) :- calls(C, S), def(C, F, _, N), is_test(F), at(C, F, L).
+about(S, "extern",      P,   V,  0) :- extern(S, _, P, V).
+
+% === file-level dependency =============================================
+depends(F, G) :- ref(S, F, _, _, _, _, _), def(S, G, _, _), F != G.
+
+% === the dex "34 methods", as rules ====================================
+% `dead_export` over a `name`-provenance graph OVER-REPORTS: an unresolved call
+% is an invisible call. `entrypoint` does not degrade, it INVERTS — which is why
+% every contaminated rule below ships in an `_exact` form too.
+
+% `def(S, F, _, _)` is what binds F. Written as 01-facts.md had it —
+% `ref_outside(S, F) :- ref(S, G, ...), G != F.` — F appears in the head and
+% only in a comparison, so the rule is not range-restricted and the engine
+% rejects its own standard library. F is always S's defining file at every call
+% site, so naming that is both the fix and the honest reading.
+dead_export(S) :- exported(S), def(S, F, _, _), !ref_outside(S, F).
+ref_outside(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
+
+entrypoint(S) :- def(S, _, K, _), callable(K), !calls(_, S).
+
+long_def(S, N) :- def_span(S, A, B, _, _), N = B - A, N > 80.
+
+undocumented_export(S) :- exported(S), !def_doc(S, _).
+
+uses_package(F, P) :- ref(S, F, _, _, _, _, _), extern(S, _, P, _).
+
+% === the precise forms =================================================
+dead_export_exact(S) :- exported(S), resolved(S), def(S, F, _, _),
+                        !ref_outside_exact(S, F).
+ref_outside_exact(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, "exact"), G != F.
+
+entrypoint_exact(S) :- def(S, _, K, _), callable(K), resolved(S),
+                       !calls_exact(_, S).
+depends_exact(F, G) :- ref(S, F, _, _, _, _, "exact"), def(S, G, _, _), F != G.
+uses_package_exact(F, P) :- ref(S, F, _, _, _, _, "exact"), extern(S, _, P, _).

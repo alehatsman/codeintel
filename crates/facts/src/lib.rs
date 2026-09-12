@@ -4,4 +4,8 @@
 //! bytes are the in-memory representation and loading is `mmap` plus
 //! concatenate. See `specs/04-storage.md`.
 //!
-//! Empty at M0. See `docs/plan.md` M1 and M2.
+//! Segments and the manifest land at M2; M1 is the dictionary.
+
+pub mod intern;
+
+pub use intern::{Dict, Interner};

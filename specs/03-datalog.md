@@ -263,15 +263,27 @@ with the name of the cap that fired** when it bites (invariant 7).
 | `max_result_bytes` | 262,144 | truncate output at a row boundary, `cap: "max_result_bytes"` |
 | `max_derived_tuples` | 10,000,000 | abort, `status: "budget-exceeded"` |
 | `max_time_ms` | 5,000 | abort, `status: "timeout"` |
-| `max_strata` | 32 | reject at planning |
+| `max_strata` | 64 | reject at planning |
 | `max_body_literals` | 32 | reject at planning |
-| `max_regex_steps` | 100,000 | abort, `status: "budget-exceeded"` |
+
+`max_strata` was 32 in an earlier draft. `rules/stdlib.dl` stratifies into 37,
+so that default rejected every query against the shipped standard library: the
+limit had been set against an imagined rule set rather than the real one.
+
+**`max_regex_steps` is gone with the hand-rolled matcher.** A step budget is
+what a backtracker needs to bound catastrophic patterns; `regex` is linear-time
+by construction, so the only bound that means anything is `max_time_ms`, and a
+cap the host cannot measure would be a limit in name only.
 
 `max_result_bytes` exists because rows are not uniformly sized and the consumer
 is a context window. A SCIP symbol string runs ~68 characters ≈ 17 tokens; 1,000
 rows with two symbol columns is ~34,000 tokens of output reported as
 `status: ok`. A row cap alone does not bound that. Both caps are checked, and
 whichever fires first is the one named in `cap`.
+
+A **ground** goal — `?- calls("a", "b").` — has no variables and therefore no
+columns. Truth is one empty row and falsehood is no rows; without the
+distinction an answered "yes" would be indistinguishable from "no".
 
 A truncated result is still sorted, so the first N rows are a stable prefix, not
 an arbitrary sample. This matters: an agent paging through results must get the
@@ -280,12 +292,20 @@ same prefix each time.
 ### Public API
 
 ```rust
-pub struct Engine { /* relations, interner handle */ }
+pub struct Engine { /* relations, dictionary, rules */ }
 
 impl Engine {
-    pub fn load(facts: &FactStore) -> Engine;
+    // Not `load(facts: &FactStore)`: that signature is the seam this crate
+    // exists to keep. The host owns the store and the dictionary and installs
+    // both, so `crates/datalog` never learns what a symbol is.
+    pub fn new(syms: Box<dyn Symbols>) -> Engine;
+    pub fn with_regexes(self, regexes: Box<dyn Regexes>) -> Engine;
+    pub fn insert_relation(&mut self, name: impl Into<String>, relation: Relation);
+
     pub fn load_rules(&mut self, src: &str) -> Result<(), Diagnostic>;
-    pub fn query(&self, src: &str, limits: &Limits) -> Result<QueryResult, Diagnostic>;
+    // `&mut self`, not `&self`: a query's string literals are interned, and a
+    // query may legitimately name a string the corpus does not hold.
+    pub fn query(&mut self, src: &str, limits: &Limits) -> Result<QueryResult, Diagnostic>;
 }
 
 pub struct QueryResult {

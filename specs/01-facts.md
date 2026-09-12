@@ -407,7 +407,12 @@ depends(F, G) :- ref(S, F, _, _, _, _, _), def(S, G, _, _), F != G.
 % --- the dex "34 methods", as rules ------------------------------------
 dead_export(S)   :- exported(S), def(S, F, _, _),
                     !ref_outside(S, F).
-ref_outside(S, F):- ref(S, G, _, _, _, _, _), G != F.
+% `def(S, F, _, _)` is what binds F. Without it F appears in the head and only
+% in a comparison, so the rule is not range-restricted and the engine rejects
+% its own standard library -- found at M1 by the one-line gate that loads this
+% file. F is S's defining file at every call site, so naming it is the honest
+% reading as well as the fix.
+ref_outside(S, F):- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
 
 entrypoint(S)    :- def(S, _, K, _), callable(K), !calls(_, S).
 
@@ -427,7 +432,8 @@ form gates on provenance:
 ```prolog
 dead_export_exact(S) :- exported(S), resolved(S), def(S, F, _, _),
                         !ref_outside_exact(S, F).
-ref_outside_exact(S, F) :- ref(S, G, _, _, _, _, "exact"), G != F.
+ref_outside_exact(S, F) :- def(S, F, _, _),
+                           ref(S, G, _, _, _, _, "exact"), G != F.
 ```
 
 That distinction is the entire point of the `Prov` column. **Every rule that

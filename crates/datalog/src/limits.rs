@@ -19,7 +19,11 @@ pub struct Limits {
     pub max_derived_tuples: u64,
     /// Wall-clock budget in milliseconds. Default 5,000.
     pub max_time_ms: u64,
-    /// Strata accepted at planning. Default 32.
+    /// Strata accepted at planning. Default 64.
+    ///
+    /// The spec said 32. `rules/stdlib.dl` alone stratifies into 37, so that
+    /// default rejected every query against the shipped standard library — the
+    /// limit was set against an imagined rule set rather than the real one.
     pub max_strata: usize,
     /// Literals in one rule or query body, accepted at planning. Default 32.
     pub max_body_literals: usize,
@@ -32,7 +36,7 @@ impl Default for Limits {
             max_result_bytes: 262_144,
             max_derived_tuples: 10_000_000,
             max_time_ms: 5_000,
-            max_strata: 32,
+            max_strata: 64,
             max_body_literals: 32,
         }
     }

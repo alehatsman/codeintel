@@ -640,3 +640,189 @@ fn demand_transformation_agrees_with_naive_evaluation() {
         both(WIDE, query);
     }
 }
+
+// ── the standard library ────────────────────────────────────────────────────
+
+/// The 14 base relations of `specs/01-facts.md`, empty.
+const BASE: [(&str, usize); 14] = [
+    ("file", 2),
+    ("def", 4),
+    ("def_span", 5),
+    ("def_name", 3),
+    ("def_sig", 2),
+    ("def_doc", 2),
+    ("parent", 2),
+    ("exported", 1),
+    ("resolved", 1),
+    ("import", 3),
+    ("scip_ref", 6),
+    ("name_ref", 5),
+    ("implements", 3),
+    ("extern", 4),
+];
+
+/// Compiles every pattern to one that matches nothing.
+///
+/// The engine takes its regex engine from the host, and this file must not
+/// take a dependency. Nothing here holds facts, so no `match` ever decides an
+/// answer — this stands in for the seam, not for `regex`.
+#[derive(Debug)]
+struct NoMatches;
+
+#[derive(Debug)]
+struct NeverMatches;
+
+impl crate::matcher::Matcher for NeverMatches {
+    fn is_match(&self, _text: &str) -> bool {
+        false
+    }
+}
+
+impl crate::matcher::Regexes for NoMatches {
+    fn compile(&self, _pattern: &str) -> Result<Box<dyn crate::matcher::Matcher>, String> {
+        Ok(Box::new(NeverMatches))
+    }
+}
+
+fn stdlib_engine() -> Engine {
+    let mut e = Engine::new(Box::new(Strings::new())).with_regexes(Box::new(NoMatches));
+    for (name, arity) in BASE {
+        e.insert_relation(name, crate::relation::Relation::new(arity));
+    }
+    e
+}
+
+/// The engine must accept its own standard library, **as written**, with no
+/// transformation applied. A rule that is legal only after demand
+/// transformation would leave the differential test with nothing to compare
+/// against — which is the failure this one line guards.
+#[test]
+fn the_engine_loads_its_own_standard_library() {
+    let mut e = stdlib_engine();
+    e.load_rules(include_str!("../../../rules/stdlib.dl"))
+        .expect("stdlib loads");
+    assert!(e.rule_count() > 30, "loaded {} rules", e.rule_count());
+}
+
+#[test]
+fn the_naive_evaluator_accepts_the_standard_library_too() {
+    let mut e = stdlib_engine();
+    e.load_rules(include_str!("../../../rules/stdlib.dl"))
+        .expect("stdlib loads");
+    let result = e
+        .query_naive(r#"?- def(S, F, "function", N)."#, &Limits::default())
+        .expect("naive evaluation runs the stdlib as written");
+    assert!(result.rows.is_empty(), "no facts were loaded");
+}
+
+/// Install a base relation from text rows. A token that parses as a
+/// non-negative integer becomes an integer atom, everything else a string —
+/// the same split `specs/01-facts.md` § Integers describes.
+fn install(e: &mut Engine, name: &str, rows: &[&[&str]]) {
+    let arity = rows.first().map_or(1, |r| r.len());
+    let mut rel = crate::relation::Relation::new(arity);
+    for row in rows {
+        let atoms: Vec<crate::atom::Atom> = row
+            .iter()
+            .map(|token| {
+                token
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| crate::atom::is_int(*n))
+                    .or_else(|| e.intern(token))
+                    .unwrap_or(0)
+            })
+            .collect();
+        assert!(
+            rel.push(&atoms),
+            "row {row:?} has the wrong width for {name}"
+        );
+    }
+    e.insert_relation(name, rel);
+}
+
+#[test]
+fn the_standard_library_answers_over_hand_written_facts() {
+    let mut e = stdlib_engine();
+    install(&mut e, "file", &[&["src/store.rs", "rust"]]);
+    install(
+        &mut e,
+        "def",
+        &[
+            &["S#", "src/store.rs", "struct", "Store"],
+            &["S#get().", "src/store.rs", "method", "get"],
+            &["S#put().", "src/store.rs", "method", "put"],
+        ],
+    );
+    install(
+        &mut e,
+        "def_span",
+        &[
+            &["S#", "1", "50", "0", "1000"],
+            &["S#get().", "10", "20", "100", "400"],
+            &["S#put().", "30", "40", "500", "900"],
+        ],
+    );
+    install(
+        &mut e,
+        "parent",
+        &[
+            &["S#", "src/store.rs"],
+            &["S#get().", "S#"],
+            &["S#put().", "S#"],
+        ],
+    );
+    e.load_rules(include_str!("../../../rules/stdlib.dl"))
+        .expect("stdlib loads");
+
+    // The location bridge: a file:line from a stack trace becomes a symbol.
+    let result = e
+        .query(
+            r#"?- innermost_at("src/store.rs", 15, S)."#,
+            &Limits::default(),
+        )
+        .expect("answers");
+    assert_eq!(
+        render(&e, &result),
+        vec!["\"S#get().\""],
+        "the tightest span wins"
+    );
+
+    // ...and the line that only the struct covers still resolves to the struct.
+    let result = e
+        .query(
+            r#"?- innermost_at("src/store.rs", 5, S)."#,
+            &Limits::default(),
+        )
+        .expect("answers");
+    assert_eq!(render(&e, &result), vec!["\"S#\""]);
+
+    // Containment closure.
+    let result = e
+        .query(r#"?- within("S#get().", A)."#, &Limits::default())
+        .expect("answers");
+    // Ordering is by atom — dictionary order, which is the order the facts
+    // above interned their strings in, not lexicographic order.
+    assert_eq!(render(&e, &result), vec!["\"src/store.rs\"", "\"S#\""]);
+
+    // Orientation, one round trip.
+    let result = e
+        .query(r#"?- about("S#get().", Rel, A, B, L)."#, &Limits::default())
+        .expect("answers");
+    assert!(
+        render(&e, &result)
+            .iter()
+            .any(|row| row.contains("\"parent\"")),
+        "about reports the parent: {:?}",
+        render(&e, &result)
+    );
+
+    // A span question, with arithmetic.
+    let result = e
+        .query("?- long_def(S, N).", &Limits::default())
+        .expect("answers");
+    assert!(
+        render(&e, &result).is_empty(),
+        "no definition here is over 80 lines"
+    );
+}
