@@ -21,12 +21,18 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rust")
 }
 
-/// A throwaway copy of the fixture tree.
+/// A throwaway copy of the fixture tree, **tier A only**.
+///
+/// `index.scip` and the fixture's own `.gitignore` are dropped: these are M2's
+/// tests, and they assert tier-A symbols and an untouched working tree. Tier B
+/// has its own file.
 fn tree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     copy(&fixture(), dir.path());
     // The golden file is not source; the fixture is a tree to index.
-    drop(std::fs::remove_file(dir.path().join("expected.facts")));
+    for extra in ["expected.facts", "index.scip", ".gitignore"] {
+        drop(std::fs::remove_file(dir.path().join(extra)));
+    }
     dir
 }
 
@@ -34,7 +40,12 @@ fn copy(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("mkdir");
     for entry in std::fs::read_dir(from).expect("readable") {
         let entry = entry.expect("entry");
-        let target = to.join(entry.file_name());
+        let name = entry.file_name();
+        // Build output is not fixture data, and copying it is slow.
+        if name == "target" || name == ".codeintel" {
+            continue;
+        }
+        let target = to.join(&name);
         if entry.file_type().expect("file type").is_dir() {
             copy(&entry.path(), &target);
         } else {

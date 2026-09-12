@@ -47,12 +47,31 @@ pub struct Manifest {
 pub struct ScipInput {
     /// Where it was read from.
     pub path: String,
-    /// `Metadata.tool_info`, so `status` can name what produced it.
+    /// `Metadata.tool_info`, so `status` can name what produced it. Empty
+    /// until the index is actually parsed, which a refresh that changes
+    /// nothing never does.
     pub tool: String,
     /// Its mtime in seconds since the epoch.
     pub mtime: u64,
-    /// How many documents it carried.
+    /// Its length in bytes. With `mtime`, this is what decides whether the
+    /// reference graph has to be rebuilt.
+    pub size: u64,
+    /// How many documents it carried. Zero until it is parsed.
     pub documents: u64,
+}
+
+impl ScipInput {
+    /// True when this is the same file, byte for byte as far as a `stat` can
+    /// tell.
+    ///
+    /// `tool` and `documents` are deliberately not compared: they are only
+    /// known after the index is parsed, and a refresh that changes nothing
+    /// never parses it. Comparing them would make every refresh look like a
+    /// changed SCIP input and re-extract the whole tree.
+    #[must_use]
+    pub fn same_bytes(&self, other: &Self) -> bool {
+        self.path == other.path && self.mtime == other.mtime && self.size == other.size
+    }
 }
 
 /// One indexed file.

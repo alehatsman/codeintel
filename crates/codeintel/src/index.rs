@@ -121,16 +121,50 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     let fingerprint = extract::fingerprint();
     let extractor_changed = store.manifest().extractor_fingerprint != fingerprint;
 
-    let (ingest, inputs) = read_scip(&root, &plan.scip)?;
-    // SCIP is all-or-nothing: a reference that *disappeared* from a document
-    // leaves no evidence anywhere else, so there is nothing to drive its
-    // removal per-document. A changed input re-extracts everything
+    // Stat the SCIP inputs, which is cheap, and compare before parsing them,
+    // which is not. SCIP is all-or-nothing: a reference that *disappeared*
+    // from a document leaves no evidence anywhere else, so there is nothing to
+    // drive its removal per-document. A changed input re-extracts everything
     // (specs/04-storage.md § Incremental reindex).
-    let scip_changed = store.manifest().scip != inputs;
+    let mut inputs = stat_scip(&root, &plan.scip);
+    let known_scip = &store.manifest().scip;
+    let scip_changed = known_scip.len() != inputs.len()
+        || !known_scip.iter().zip(&inputs).all(|(a, b)| a.same_bytes(b));
+    // Carry forward what only a parse can tell us, so a refresh that does not
+    // re-read the index does not blank the manifest's record of it.
+    if !scip_changed {
+        for (into, known) in inputs.iter_mut().zip(known_scip) {
+            into.tool.clone_from(&known.tool);
+            into.documents = known.documents;
+        }
+    }
     let invalidated = extractor_changed || scip_changed;
-    report.scip.clone_from(&inputs);
-    report.scip_skipped.clone_from(&ingest.skipped);
     let newest_scip = inputs.iter().map(|i| i.mtime).max();
+
+    // Parsing a large `index.scip` on every auto-refresh would put it on the
+    // query path for nothing. Parse it only when a file actually needs
+    // re-extracting; a refresh that changes nothing reads no protobuf at all.
+    let stale_file = wanted.iter().any(|c| {
+        !store
+            .manifest()
+            .files
+            .get(&c.path)
+            .is_some_and(|e| e.looks_unchanged(c.mtime, c.size))
+    });
+    let reingest = !inputs.is_empty() && (plan.rebuild || invalidated || stale_file);
+    let ingest = if reingest {
+        read_scip(&root, &plan.scip)?
+    } else {
+        Ingest::default()
+    };
+    report.scip_skipped.clone_from(&ingest.skipped);
+    if reingest {
+        for input in &mut inputs {
+            input.tool.clone_from(&ingest.tool);
+            input.documents = ingest.docs.len() as u64;
+        }
+    }
+    report.scip.clone_from(&inputs);
 
     let mut extractors: HashMap<&'static str, Extractor> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -219,6 +253,20 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             .put(&candidate.path, &mut segment, entry)
             .with_context(|| format!("writing the segment for {}", candidate.path))?;
         report.indexed += 1;
+    }
+
+    // Files only tier B covers keep their segments across a refresh that did
+    // not re-read the SCIP index; without this they look vanished and their
+    // facts are dropped.
+    if !reingest {
+        let kept: Vec<String> = store
+            .manifest()
+            .files
+            .iter()
+            .filter(|(path, entry)| entry.tiers == ["scip"] && root.join(path).exists())
+            .map(|(path, _)| path.clone())
+            .collect();
+        seen.extend(kept);
     }
 
     // Files only tier B covers: an unsupported language, or one the walk does
@@ -339,40 +387,59 @@ pub fn ignore_the_store(root: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// Stat every SCIP input. Cheap, and enough to decide whether to parse them.
+///
+/// `tool` and `documents` are filled in by [`read_scip`]; a missing input is
+/// not an error, since `./index.scip` is a default and its absence just means
+/// tier A only.
+fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
+    let mut inputs: Vec<ScipInput> = paths
+        .iter()
+        .filter_map(|path| {
+            let meta = std::fs::metadata(absolute(root, path)).ok()?;
+            Some(ScipInput {
+                path: path.display().to_string().replace('\\', "/"),
+                tool: String::new(),
+                mtime: mtime_of(&meta),
+                size: meta.len(),
+                documents: 0,
+            })
+        })
+        .collect();
+    inputs.sort_by(|a, b| a.path.cmp(&b.path));
+    inputs.dedup_by(|a, b| a.path == b.path);
+    inputs
+}
+
 /// Read every SCIP input and merge them.
 ///
 /// Multiple indexes are ingested independently — symbol strings are globally
 /// unique by construction, so there is no merge logic beyond concatenation
-/// (`specs/02-extraction.md` § Acquisition). A missing input is not an error:
-/// `./index.scip` is a default, and its absence just means tier A only.
-fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, Vec<ScipInput>)> {
+/// (`specs/02-extraction.md` § Acquisition).
+fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<Ingest> {
     let mut merged = Ingest::default();
-    let mut inputs = Vec::new();
     for path in paths {
-        let absolute = if path.is_absolute() {
-            path.clone()
-        } else {
-            root.join(path)
-        };
-        let Ok(meta) = std::fs::metadata(&absolute) else {
+        let absolute = absolute(root, path);
+        if !absolute.exists() {
             continue;
-        };
+        }
         let one = Ingest::read(&absolute, root)
             .with_context(|| format!("reading {}", absolute.display()))?;
-        inputs.push(ScipInput {
-            path: path.display().to_string().replace('\\', "/"),
-            tool: one.tool.clone(),
-            mtime: mtime_of(&meta),
-            documents: one.docs.len() as u64,
-        });
         merged.tool = one.tool;
         merged.docs.extend(one.docs);
         merged.symbols.extend(one.symbols);
         merged.externs.extend(one.externs);
         merged.skipped.extend(one.skipped);
     }
-    inputs.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok((merged, inputs))
+    Ok(merged)
+}
+
+fn absolute(root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
 }
 
 fn mtime_of(meta: &std::fs::Metadata) -> u64 {

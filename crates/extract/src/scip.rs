@@ -133,7 +133,7 @@ pub struct Doc {
 /// What a `SymbolInformation` told us about one symbol.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Info {
-    /// Our `Kind`, via [`KIND_MAP`].
+    /// Our `Kind`, via [`kind_of`].
     pub kind: &'static str,
     /// `display_name`.
     pub name: String,

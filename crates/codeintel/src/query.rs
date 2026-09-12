@@ -302,8 +302,23 @@ fn refresh(
         ));
     };
 
+    // The SCIP inputs the index was built with, carried forward. Without them
+    // an auto-refresh looks like "the SCIP index disappeared", re-extracts the
+    // tree tier-A-only, and silently deletes every tier-B fact — the index
+    // would degrade a little more with each query.
+    //
+    // Auto-refresh is still tier-A-only in effect: a file edited since the SCIP
+    // index was built is re-extracted against the *old* anchors, so it keeps
+    // whatever resolved identity still matches and reports `scip-stale`
+    // (`docs/plan.md` M3). A full `codeintel index` is what reconciles it.
     let plan = Plan {
         deadline: Some(Instant::now() + Duration::from_millis(MAX_REFRESH_MS)),
+        scip: store
+            .manifest()
+            .scip
+            .iter()
+            .map(|input| std::path::PathBuf::from(&input.path))
+            .collect(),
         ..Plan::default()
     };
     let report = index::refresh(store, &plan)?;
