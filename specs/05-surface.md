@@ -29,7 +29,7 @@ guessing what an empty result means.
 | `no-index` | no `.codeintel/` here | `run: codeintel index .` |
 | `stale` | sources changed and auto-refresh was skipped, exceeded `max_refresh_ms`, or `schema_version` mismatched | `run: codeintel index .` — names the N files |
 | `no-scip` | the goal's **relation-dependency closure** reaches a relation only SCIP populates, and none was ingested | which relations, and the indexer command for the languages present |
-| `scip-stale` | an indexed file is newer than `index.scip` | which files, and the indexer command |
+| `scip-stale` | an indexed file holds bytes `index.scip` did not see ([04-storage.md](04-storage.md) § Manifest, `scip_hash`) | which files, and the indexer command |
 | `invalid-query` | parse or safety failure | the rule, the variable, the violated rule |
 | `unstratified` | negation cycle | the cycle |
 | `timeout` / `budget-exceeded` | a limit aborted evaluation | the limit and its value |
@@ -128,16 +128,16 @@ the worst failure this tool has, because it looks like a right one.
 
 - Tier A only. SCIP cannot be refreshed incrementally
   ([04-storage.md](04-storage.md) § Incremental reindex), so a file edited since
-  the SCIP index was built has fresh `name_ref` and stale `scip_ref`. That
-  mixture is reported as `scip-stale`, which auto-refresh makes **more** likely,
-  not less — so the status matters more now, not less.
-- **Auto-refresh carries the manifest's SCIP inputs forward.** It re-extracts a
-  changed file against the *existing* ingest, so the file keeps whatever
-  resolved identity still matches at the old positions and loses the rest. What
-  it must never do is refresh with no SCIP at all: that looks like "the index
+  the SCIP index was built is re-extracted with tier A alone: fresh `name_ref`,
+  no `scip_ref`, `local` definitions
+  ([02-extraction.md](02-extraction.md) § The anchor join). That is reported as
+  `scip-stale`, which auto-refresh makes **more** likely, not less — so the
+  status matters more now, not less.
+- **Auto-refresh carries the manifest's SCIP inputs forward.** What it must
+  never do is refresh with no SCIP at all: that looks like "the index
   disappeared", re-extracts the tree tier-A-only, and deletes every tier-B fact
-  — the store would degrade a little more with each query, silently. A full
-  `codeintel index` is what reconciles a `scip-stale` index.
+  — the store would degrade a little more with each query, silently. Rerunning
+  the indexer and `codeintel index` is what reconciles a `scip-stale` index.
 - Bounded by `max_refresh_ms` (default 2,000). If the refresh would exceed it,
   it is abandoned, the query runs against the index as it stands, and the
   response carries `status: "stale"` naming the files it could not refresh.

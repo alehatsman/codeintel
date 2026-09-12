@@ -298,6 +298,7 @@ mod tests {
             hash: "blake3:00".to_string(),
             lang: "rust".to_string(),
             tiers: vec!["ts".to_string()],
+            scip_hash: None,
         }
     }
 

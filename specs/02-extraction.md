@@ -444,6 +444,15 @@ lands on the resolved identity for free. Nothing is rewritten twice.
 Ordering requirement: **tier A runs first, entirely, then tier B.** Tier B needs
 tier A's `def_name` index to anchor against.
 
+**A file the SCIP inputs did not see is not joined** ([04-storage.md](04-storage.md)
+§ Manifest, `scip_hash`): tier B emits nothing for it, and it is extracted as
+tier A alone. Its positions have moved, so anchoring against the old ones
+adopts the wrong identity or none, and the fallback — a tier-B-only `def`
+beside the tier-A one — is two `def` rows for one definition, with `From`
+computed from new text at old positions. Nothing is inferred to bridge the gap:
+the file's definitions are `local` and `status` says `scip-stale` until the
+indexer reruns.
+
 ### Duplicate suppression
 
 A call site visible to both tiers contributes a `name_ref` *and* a `scip_ref`,

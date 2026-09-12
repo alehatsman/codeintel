@@ -89,6 +89,13 @@ pub struct FileEntry {
     pub lang: String,
     /// Which tiers contributed: `ts`, `scip`.
     pub tiers: Vec<String>,
+    /// The `hash` the SCIP inputs last saw: this file's, when it was not
+    /// newer than them at ingest, else the one recorded before; `""` when
+    /// they never saw any version. `None` in an index written before this
+    /// field existed, which falls back to mtime until the next ingest
+    /// (`specs/04-storage.md` § Manifest).
+    #[serde(default)]
+    pub scip_hash: Option<String>,
 }
 
 impl FileEntry {
@@ -97,6 +104,20 @@ impl FileEntry {
     #[must_use]
     pub fn looks_unchanged(&self, mtime: u64, size: u64) -> bool {
         self.mtime == mtime && self.size == size
+    }
+
+    /// True when the SCIP inputs, the newest of which was written at
+    /// `newest_scip`, did not see this file's current bytes.
+    ///
+    /// By content when the manifest recorded what they saw, so a touched or
+    /// restored file clears itself; by mtime only for an index written before
+    /// `scip_hash` existed.
+    #[must_use]
+    pub fn scip_stale(&self, newest_scip: u64) -> bool {
+        match &self.scip_hash {
+            Some(seen) => *seen != self.hash,
+            None => self.mtime > newest_scip,
+        }
     }
 }
 
@@ -223,6 +244,7 @@ mod tests {
                 hash: "blake3:9c2e".to_string(),
                 lang: "rust".to_string(),
                 tiers: vec!["ts".to_string()],
+                scip_hash: Some("blake3:9c2e".to_string()),
             },
         );
         let dir = tempfile::tempdir().expect("tempdir");
@@ -245,10 +267,42 @@ mod tests {
             size: 20,
             hash: String::new(),
             lang: "rust".to_string(),
+            scip_hash: None,
             tiers: Vec::new(),
         };
         assert!(entry.looks_unchanged(10, 20));
         assert!(!entry.looks_unchanged(11, 20));
         assert!(!entry.looks_unchanged(10, 21));
+    }
+
+    #[test]
+    fn scip_staleness_is_by_content_when_recorded_and_by_mtime_otherwise() {
+        let mut entry = FileEntry {
+            seg: "a.bin".to_string(),
+            mtime: 10,
+            size: 20,
+            hash: "blake3:aa".to_string(),
+            lang: "rust".to_string(),
+            tiers: vec!["ts".to_string()],
+            scip_hash: Some("blake3:aa".to_string()),
+        };
+        assert!(!entry.scip_stale(5), "newer than SCIP but the same bytes");
+        entry.hash = "blake3:bb".to_string();
+        assert!(entry.scip_stale(50), "older than SCIP but different bytes");
+        entry.scip_hash = Some(String::new());
+        assert!(entry.scip_stale(50), "never seen");
+        entry.scip_hash = None;
+        assert!(entry.scip_stale(5), "no record: by mtime");
+        assert!(!entry.scip_stale(50));
+    }
+
+    #[test]
+    fn a_manifest_without_scip_hash_still_parses() {
+        // An index written before the field existed.
+        let text = r#"{"schema_version":1,"created_at":"","roots":[],"writer_version":"",
+            "extractor_fingerprint":"","dict_bin_len":0,"dict_idx_len":0,"dict_generation":0,
+            "files":{"a.rs":{"seg":"a.bin","mtime":1,"size":2,"hash":"h","lang":"rust","tiers":["ts"]}}}"#;
+        let manifest: Manifest = serde_json::from_str(text).expect("parses");
+        assert_eq!(manifest.files["a.rs"].scip_hash, None);
     }
 }

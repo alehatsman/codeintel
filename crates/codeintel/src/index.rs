@@ -177,9 +177,6 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             continue;
         }
         let known = store.manifest().files.get(&candidate.path);
-        if newest_scip.is_some_and(|scip| candidate.mtime > scip) {
-            report.scip_stale.push(candidate.path.clone());
-        }
         if !plan.rebuild
             && !invalidated
             && known.is_some_and(|e| e.looks_unchanged(candidate.mtime, candidate.size))
@@ -215,6 +212,33 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             continue;
         };
 
+        // Did the SCIP inputs see these bytes? By mtime, or by the hash the
+        // manifest recorded at the last ingest of the same inputs — which is
+        // what lets a file edited and then restored stop being `scip-stale`
+        // without rerunning the indexer. A file they did not see is tier A
+        // only: its positions have moved, so anchoring against the old ones
+        // would adopt the wrong identity or none, and a tier-B-only `def`
+        // beside the tier-A one is two rows for one definition
+        // (specs/02-extraction.md § The anchor join).
+        let scip_saw = !inputs.is_empty()
+            && (newest_scip.is_some_and(|scip| candidate.mtime <= scip)
+                || (!scip_changed
+                    && known.is_some_and(|e| e.scip_hash.as_deref() == Some(hash.as_str()))));
+        // What the inputs last saw, kept across an edit they did not see so a
+        // restore can match it; `""` when they never saw any version.
+        let scip_hash = if inputs.is_empty() {
+            None
+        } else if scip_saw {
+            Some(hash.clone())
+        } else if reingest {
+            known
+                .and_then(|e| e.scip_hash.clone())
+                .filter(|_| !scip_changed)
+                .or_else(|| Some(String::new()))
+        } else {
+            known.and_then(|e| e.scip_hash.clone())
+        };
+
         let extractor = match extractors.entry(candidate.lang.name) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => e.insert(
@@ -224,7 +248,11 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         };
         // Tier A runs first, entirely, then tier B — the join needs tier A's
         // `def_name` index to anchor against (specs/02-extraction.md).
-        let anchors = Anchors::of(&ingest, &candidate.path);
+        let anchors = if scip_saw {
+            Anchors::of(&ingest, &candidate.path)
+        } else {
+            Anchors::default()
+        };
         let mut extracted = extractor
             .file(&candidate.path, &src, store.interner_mut(), &anchors)
             .with_context(|| format!("extracting {}", candidate.path))?;
@@ -233,18 +261,23 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         report.counts.imports += extracted.counts.imports;
         report.anchored += extracted.anchored;
 
-        let scip_counts = tier_b::emit(
-            &mut extracted.segment,
-            &ingest,
-            &candidate.path,
-            Some(&src),
-            &extracted.defs,
-            store.interner_mut(),
-        )
-        .with_context(|| format!("ingesting SCIP facts for {}", candidate.path))?;
+        let scip_counts = if scip_saw {
+            tier_b::emit(
+                &mut extracted.segment,
+                &ingest,
+                &candidate.path,
+                Some(&src),
+                &extracted.defs,
+                store.interner_mut(),
+            )
+            .with_context(|| format!("ingesting SCIP facts for {}", candidate.path))?
+        } else {
+            tier_b::Counts::default()
+        };
         add(&mut report.scip_counts, scip_counts);
 
         let mut entry = new_entry(&candidate, &hash);
+        entry.scip_hash = scip_hash;
         if !anchors.is_empty() || scip_counts.refs > 0 {
             entry.tiers.push("scip".to_string());
         }
@@ -309,6 +342,9 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
                     hash: String::new(),
                     lang: doc.lang.clone(),
                     tiers: vec!["scip".to_string()],
+                    // Nothing walks it, so nothing edits it as far as this
+                    // index can tell: never stale.
+                    scip_hash: Some(String::new()),
                 },
             )
             .with_context(|| format!("writing the segment for {path}"))?;
@@ -336,6 +372,18 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         if store.forget(&path) {
             report.removed += 1;
         }
+    }
+
+    // The same rule `query` acts on, read from the manifest this run built
+    // (`FileEntry::scip_stale`).
+    if let Some(newest) = newest_scip {
+        report.scip_stale = store
+            .manifest()
+            .files
+            .iter()
+            .filter(|(path, entry)| seen.contains(*path) && entry.scip_stale(newest))
+            .map(|(path, _)| path.clone())
+            .collect();
     }
 
     store.manifest_mut().extractor_fingerprint = fingerprint;
@@ -498,5 +546,6 @@ fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
         hash: hash.to_string(),
         lang: candidate.lang.name.to_string(),
         tiers: vec!["ts".to_string()],
+        scip_hash: None,
     }
 }

@@ -552,7 +552,8 @@ fn push_char(args: &mut [String], c: char) {
 pub struct ScipState {
     /// True when no SCIP index was ingested.
     pub absent: bool,
-    /// Indexed files modified after the newest SCIP input was built.
+    /// Indexed files whose bytes the SCIP inputs did not see
+    /// ([`facts::FileEntry::scip_stale`]).
     pub stale: Vec<String>,
 }
 
@@ -576,7 +577,7 @@ impl ScipState {
             stale: manifest
                 .files
                 .iter()
-                .filter(|(_, entry)| entry.mtime > newest)
+                .filter(|(_, entry)| entry.scip_stale(newest))
                 .map(|(path, _)| path.clone())
                 .collect(),
         }

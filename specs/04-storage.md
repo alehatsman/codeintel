@@ -136,7 +136,8 @@ deliberately deferred.
   "files": {
     "src/store.rs": {
       "seg": "a3f1...bin", "mtime": 1757000000, "size": 4021,
-      "hash": "blake3:9c2e...", "lang": "rust", "tiers": ["ts", "scip"]
+      "hash": "blake3:9c2e...", "lang": "rust", "tiers": ["ts", "scip"],
+      "scip_hash": "blake3:9c2e..."
     }
   }
 }
@@ -144,6 +145,17 @@ deliberately deferred.
 
 `hash` is content, `mtime`+`size` is the fast path. A file is unchanged iff
 mtime and size both match; otherwise hash before deciding to re-extract.
+
+**`scip_hash` is the content the SCIP inputs last saw.** At ingest it becomes
+`hash` when the file was not newer than the newest input, or when `hash`
+equals what the previous ingest of the same inputs recorded; otherwise the
+recorded value is kept, or `""` when the inputs never saw any version. A file
+is `scip-stale` iff `scip_hash` differs from `hash`, so a file that is touched,
+or edited and restored, clears itself without rerunning the indexer.
+Staleness by mtime alone could not: the touched-but-unchanged path refreshes
+`mtime`, and a restored file stayed `scip-stale` until the indexer reran. An
+index written before the field existed has none and falls back to mtime until
+its next ingest.
 
 **A SCIP input carries `mtime` and `size` for the same reason, and `tool` and
 `documents` are *not* compared.** Those two are only known after the index is
@@ -204,11 +216,13 @@ per-document SCIP incrementality is a correctness trap: a reference that
 *disappeared* from a document leaves no evidence in any other document, so
 there is nothing to drive its removal. Re-ingest the whole thing.
 
-Corollary worth surfacing to the user: after editing source, the tier-A facts
-are fresh and the tier-B facts are stale until the indexer reruns. `status`
-reports this per tier. A query whose answer depends on `"exact"` provenance
-against a stale SCIP index is answering about the past, and the agent must be
-able to see that.
+Corollary worth surfacing to the user: after editing source, the file is
+re-extracted **tier A only** — tier B emits nothing for a file the inputs did
+not see ([02-extraction.md](02-extraction.md) § The anchor join) — so its
+definitions are `local` and its `scip_ref` rows are gone until the indexer
+reruns, while every other file keeps its exact rows. `status` reports the
+files. A query whose answer depends on `"exact"` provenance is then answering
+about the past for those files, and the agent must be able to see that.
 
 ## Concurrency
 

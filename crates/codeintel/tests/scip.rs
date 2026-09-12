@@ -365,6 +365,72 @@ fn a_file_edited_after_the_scip_index_reports_scip_stale() {
     assert!(stderr.contains("status=ok"), "{stderr}");
 }
 
+/// Staleness is by content, not by mtime: a file edited and put back holds
+/// the bytes the indexer saw, and says so without the indexer rerunning.
+#[test]
+fn a_restored_file_is_not_scip_stale() {
+    let dir = tree();
+    index(dir.path());
+    let path = dir.path().join("src/store.rs");
+    let original = std::fs::read(&path).expect("source");
+
+    let mut edited = original.clone();
+    edited.extend_from_slice(b"\npub fn added() -> u32 {\n    7\n}\n");
+    std::fs::write(&path, &edited).expect("writes");
+    let (_, stderr) = query(dir.path(), "?- calls_exact(A, B).");
+    assert!(stderr.contains("status=scip-stale"), "{stderr}");
+
+    std::fs::write(&path, &original).expect("restores");
+    let (_, stderr) = query(dir.path(), "?- calls_exact(A, B).");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    let (_, stderr) = query(dir.path(), "?- calls_exact(A, B).");
+    assert!(
+        stderr.contains("status=ok"),
+        "the second look agrees: {stderr}"
+    );
+
+    // A touch alone — same bytes, new mtime — is not an edit either.
+    std::fs::write(&path, &original).expect("touches");
+    let (_, stderr) = query(dir.path(), "?- calls_exact(A, B).");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+}
+
+/// An edited file is extracted with tier A alone until the indexer reruns:
+/// one `def` per definition, all of them `local`, no `scip_ref` in that file,
+/// and every other file untouched. Before this, tier B emitted a second `def`
+/// for each symbol at the old positions.
+#[test]
+fn an_edited_file_is_tier_a_only_until_the_indexer_reruns() {
+    let dir = tree();
+    index(dir.path());
+    let get = r#"?- def(S, "src/store.rs", "method", "get")."#;
+    assert_eq!(rows(dir.path(), get).len(), 1);
+    assert!(
+        !rows(
+            dir.path(),
+            r#"?- def(S, "src/store.rs", "method", "get"), resolved(S)."#
+        )
+        .is_empty()
+    );
+
+    // Shift every position in the file.
+    let path = dir.path().join("src/store.rs");
+    let mut src = std::fs::read_to_string(&path).expect("source");
+    src.insert_str(0, "// a line that moves everything below it\n\n");
+    std::fs::write(&path, src).expect("writes");
+    index(dir.path());
+
+    let defs = rows(dir.path(), get);
+    assert_eq!(defs.len(), 1, "one definition, one row: {defs:?}");
+    assert!(defs[0].starts_with("local "), "tier A alone: {defs:?}");
+    assert!(rows(dir.path(), r#"?- scip_ref(S, "src/store.rs", L, C, X, R)."#).is_empty());
+    assert!(!rows(dir.path(), r#"?- scip_ref(S, "src/app.rs", L, C, X, R)."#).is_empty());
+
+    let report = String::from_utf8_lossy(&run(dir.path(), &["status"]).stdout).to_string();
+    assert!(report.contains("scip stale:"), "{report}");
+    assert!(report.contains("src/store.rs"), "{report}");
+}
+
 #[test]
 fn auto_refresh_does_not_delete_tier_b() {
     let dir = tree();
