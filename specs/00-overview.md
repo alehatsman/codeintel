@@ -113,9 +113,15 @@ These hold at every commit. A change that breaks one is a spec change first.
 A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 
 - **MCP tools: 1.** Named `code_query`. Growing to 2 requires deleting one.
-- **CLI verbs: 6.** `index`, `query`, `rules`, `schema`, `status`, `mcp`.
-  Benchmarking is a test-only harness (`cargo bench`), **not** a seventh verb.
-- **Base relations: ≤ 16.** Currently 15 ([01-facts.md](01-facts.md)).
+- **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
+  Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
+- **Base relations: ≤ 16.** Currently 14 ([01-facts.md](01-facts.md)).
+- **Named predicates in `rules/stdlib.dl`: ≤ 24.** This is the one that grows.
+  The other three cannot, which is why asserting only those three would make the
+  founding thesis unfalsifiable. Flags do not count — `--rules`, `--raw`,
+  `--expect-empty` cost no verb — but a flag that needs a paragraph in `schema`
+  output is spending the budget that actually binds: **`codeintel schema` must
+  fit in ~1500 tokens with the rule list complete.**
 
 If a new capability cannot be expressed as a Datalog rule over the existing
 relations, that is the signal to think hard — not the signal to add a verb.
@@ -124,14 +130,24 @@ relations, that is the signal to think hard — not the signal to add a verb.
 
 ```
 crates/
-  datalog/     the engine. no knowledge of code. ~1200 LOC, zero deps.
+  datalog/     the engine. no knowledge of code. ~3000 LOC, zero deps.
   facts/       interner, relations, segments, manifest. ~700 LOC.
-  extract/     tree-sitter tier + SCIP tier + the anchor join. ~900 LOC.
+  extract/     tree-sitter tier + SCIP tier + the anchor join. ~1000 LOC per
+               language, plus ~600 shared. Four languages -> ~4600.
   codeintel/   CLI + MCP. thin. ~500 LOC.
-queries/       vendored *.scm per language (tags, imports)
+queries/       *.scm per language (tags, imports) -- AUTHORED, not vendored
 rules/         stdlib.dl — the shipped rule library
 specs/         these documents
 ```
+
+These numbers were revised after the 2026-09-12 review. The engine was budgeted
+at ~1200 LOC, which describes `datafrog` plus a parser and omits eight safety
+checks with named diagnostics, stratification, demand transformation, limits and
+truncation. The extractor was budgeted at ~900 LOC for nine languages, against a
+same-author precedent — `~/projects/dex/internal/graph/` — spending ~6,177 LOC
+on five. **The extractor, not the engine, was the under-estimate**, and it is
+why the language set is four rather than nine ([docs/plan.md](../docs/plan.md)
+M5).
 
 `datalog/` must not depend on `facts/` or know what a symbol is. It is a generic
 engine over interned tuples. This is the seam that keeps the engine testable and
@@ -143,9 +159,18 @@ v1 is done when, on a 100k-LOC polyglot repository:
 
 - `codeintel index` completes the tree-sitter tier in **< 30 s** cold, **< 1 s**
   for a single-file change.
-- Median query latency is **< 20 ms**, p95 **< 100 ms**, over a warm store.
+- Median query latency is **< 20 ms**, p95 **< 100 ms**, over a warm store **in
+  the MCP process**. The CLI pays process start plus a warm load per invocation
+  and is budgeted separately at **< 250 ms**.
+- **These are 100k-LOC numbers.** The 1M-symbol table in
+  [01-facts.md](01-facts.md) § Scale is a sizing note for the storage layout,
+  **not a latency promise**, and the two are ~200x apart. Four independent
+  reviewers built performance objections by pairing them; say it once, here,
+  rather than letting the next reader do it again.
 - An agent given only the output of `codeintel schema` writes a correct,
-  non-trivial query on the first attempt in **≥ 8 of 10** held-out tasks
+  non-trivial query on the first attempt in **≥ 24 of 30** held-out tasks —
+  n=10 cannot separate "works" from "coin flip" (the 95% interval on 8/10 spans
+  roughly 0.49–0.94), and five milestones were gated on it
   ([docs/plan.md](../docs/plan.md) M4 validation).
 - Every question in the "34 methods" list from [research.md](../docs/research.md)
   §1a is answerable, and each answer is **≤ 5 lines of Datalog**.

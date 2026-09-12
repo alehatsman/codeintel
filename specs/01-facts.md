@@ -29,8 +29,7 @@ space is split so integers need no decode step:
 
 ```
 0x0000_0000 ..= 0x0FFF_FFFF   small non-negative integers. id n IS the integer n.
-0x1000_0000 ..= 0xEFFF_FFFF   deduplicated strings. 0x1000_0000 is EMPTY ("").
-0xF000_0000 ..= 0xFFFF_FFFF   opaque blobs. NOT deduplicated. = and != are errors.
+0x1000_0000 ..= 0xFFFF_FFFF   deduplicated strings. 0x1000_0000 is EMPTY ("").
 ```
 
 So `Line = 42` is literally `42` in the tuple, and `<`/`>` work directly on the
@@ -40,18 +39,12 @@ raw `u32` with no lookup. Integer `0` is atom `0`; the empty string is atom
 Consequence an implementer must not miss: the interned string `"42"` and the
 integer `42` are **different atoms**. `Line = "42"` never matches.
 
-**Opaque blobs.** Doc comments are long, effectively unique, and only ever
-displayed — never joined, never compared. Running them through the dedup map
-costs hashing and map overhead at index time and buys nothing, so strings over
-`OPAQUE_THRESHOLD` (default 256 bytes) are appended without a dedup lookup and
-get an id in the opaque range.
-
-The consequence is that two identical doc comments receive **different atoms**.
-Rather than let that silently make `=` return false on equal strings, the engine
-**rejects `=` and `!=` on opaque atoms** as `invalid-query`
-([03-datalog.md](03-datalog.md) § Safety rules). They can be bound, projected,
-returned, and matched with `match`/`contains`; they cannot be tested for
-identity. An explicit error beats a quiet wrong answer.
+**Everything is interned the same way, including doc comments.** An earlier
+draft gave long strings an un-deduplicated "opaque" id range to skip a hash
+lookup at index time. Measured, that saves ~0.12 s on a 30 s index budget —
+0.4% — and costs a third id partition, an extra safety rule, and a class of
+`invalid-query` an agent cannot guess from the schema. Deleted. Doc comments
+are ordinary interned strings and `=` works on them.
 
 ## Atom vocabularies
 
@@ -148,7 +141,7 @@ def_sig("local src/store.rs Store#get().", "pub fn get(&self, k: &str) -> Option
 ### `def_doc(S, Doc)`
 The attached doc comment, marker prefixes stripped, newlines preserved. Absent
 if there is none — **no empty-string rows**, so `!def_doc(S, _)` means
-undocumented. `Doc` is usually an **opaque atom** (§ Integers): displayable and
+undocumented. `Doc` is an ordinary interned string (§ Integers): displayable and
 `match`-able, but not comparable with `=`.
 
 ### `parent(Child, Parent)`
@@ -191,8 +184,14 @@ disagree. Nothing in `stdlib.dl` wants it, and `def_span` containment recovers
 it for anything that does:
 
 ```prolog
-lexical_parent(C, P) :- innermost_at(F, L, P), def(C, F, _, _),
-                        def_span(C, L, _, _, _), P != C.
+% Query def_span containment directly. Do NOT try to express this via
+% innermost_at: L binds to C's own start line, the tightest definition
+% enclosing C's start line IS C, and the `P != C` filter then removes the
+% only binding. An earlier draft shipped exactly that rule and it is always
+% empty.
+lexical_parent(C, P) :- def(C, F, _, _), def_span(C, A, B, _, _),
+                        def(P, F, _, _), def_span(P, X, Y, _, _),
+                        P != C, X <= A, B <= Y.
 ```
 
 ### `exported(S)`
@@ -252,9 +251,14 @@ are load-bearing:
 `Relationship.is_implementation`. Covers interface impls, trait impls, method
 overrides, and protocol conformance uniformly.
 
-### `has_type(S, T, Prov)`
-The type of `S` is `T`. From SCIP `Relationship.is_type_definition`. Present
-only for languages whose indexer supplies it; do not assume coverage.
+### `has_type(S, T, Prov)` — DEFERRED, not in v1
+
+The type of `S` is `T`, from SCIP `Relationship.is_type_definition`. Cut from
+v1: no `stdlib.dl` rule consumes it, it is present only for languages whose
+indexer supplies it — so it is a zero-row trap for most users — and its `Prov`
+column can only ever hold `"exact"`, since tier A cannot produce types. Re-add
+when a query needs it, at which point it costs one of the two free base-relation
+slots.
 
 ### `extern(S, Manager, Pkg, Version)`
 `S` belongs to a third-party package, parsed from the SCIP symbol string's
@@ -289,7 +293,11 @@ ref(S, F, L, C, From, "read", "name") :-
     def(S, _, _, N), exported(S), !ambiguous(N).
 
 local_def(F, N) :- def(S, F, _, N).
-ambiguous(N)    :- def(S, _, _, N), def(T, _, _, N), S != T.
+% Grouped, not a self-join. The self-join form emits k*k candidate pairs for a
+% name with k definitions before dedup; measured on real repos that is ~8.5k
+% pairs (dex) and ~11k (tracing) — harmless — but it is O(k^2) on generated
+% bindings and the aggregate form is free.
+ambiguous(N)    :- def(_, _, _, N), C = count{S : def(S, _, _, N)}, C > 1.
 
 % Everything below is unchanged by which tier supplied the evidence.
 % To tighten resolution, edit the two `name` rules above. To disable tier-A
@@ -299,6 +307,11 @@ ambiguous(N)    :- def(S, _, _, N), def(T, _, _, N), S != T.
 % Turns a file:line from ripgrep, git diff, a stack trace, or a compiler
 % error into a symbol. This is how anything gets INTO the graph.
 
+% @bound(1, 2) — F and Line must be bound at the call site.
+% Line appears in the head and in no positive body literal, so this rule is
+% range-restricted only under demand. The safety checker runs AFTER demand
+% transformation and a call with Line unbound is rejected with a hint, not
+% evaluated slowly ([03-datalog.md](03-datalog.md) § Modes).
 symbol_at(F, Line, S) :- def(S, F, _, _), def_span(S, L1, L2, _, _),
                          L1 <= Line, Line <= L2.
 
@@ -325,7 +338,7 @@ calls_exact(From, S) :- calls_at(From, S, _, _, "exact").
 callers(C, S) :- calls(C, S).
 callees(S, C) :- calls(S, C).
 
-% name-taking variants, so `codeintel rules` stays a dumb translation
+% name-taking variants, because a SymId is unwieldy to type by hand
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
 impact_by_name(C, N)  :- def(S, _, _, N), impact_of(S, C).
 
@@ -411,8 +424,24 @@ dead_export_exact(S) :- exported(S), resolved(S), def(S, F, _, _),
 ref_outside_exact(S, F) :- ref(S, G, _, _, _, _, "exact"), G != F.
 ```
 
-That distinction is the entire point of the `Prov` column, and every rule in
-`stdlib.dl` that can be contaminated by it ships in both forms.
+That distinction is the entire point of the `Prov` column. **Every rule that
+reads `calls` or `ref` is contaminated by it, and every one of them ships in
+both forms** — `dead_export`, `entrypoint`, `depends`, `uses_package`, and
+`about`'s `caller`/`callee`/`test` rows:
+
+```prolog
+entrypoint_exact(S)    :- def(S, _, K, _), callable(K), resolved(S),
+                          !calls_exact(_, S).
+depends_exact(F, G)    :- ref(S, F, _, _, _, _, "exact"), def(S, G, _, _), F != G.
+uses_package_exact(F,P):- ref(S, F, _, _, _, _, "exact"), extern(S, _, P, _).
+```
+
+`entrypoint` is the sharpest case and the reason this list is exhaustive rather
+than illustrative. Over a `name`-provenance graph it does not degrade, it
+**inverts**: an unresolved call is an invisible call, so almost every function
+in the repo reports as an entrypoint. An earlier draft claimed every
+contaminated rule shipped in both forms while shipping only `dead_export` that
+way.
 
 ---
 

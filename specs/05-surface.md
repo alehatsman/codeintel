@@ -5,8 +5,11 @@ binding: yes
 ---
 # 05 — Surface
 
-The surface budget from [00-overview.md](00-overview.md) is binding: **6 CLI
-verbs, 1 MCP tool.** Growth requires deletion.
+The surface budget from [00-overview.md](00-overview.md) is binding: **5 CLI
+verbs, 1 MCP tool, <= 24 named predicates in `stdlib.dl`.** Growth requires
+deletion. The rule count is in the budget because it is the dimension that
+actually grows; asserting only the ones that do not makes the thesis
+unfalsifiable.
 
 ## Status taxonomy
 
@@ -37,16 +40,29 @@ invariant 6 and the most common way a tool like this lies to an agent.
 ## CLI
 
 ```
-codeintel index  [PATH] [--scip FILE]... [--run-indexers] [--rebuild] [--lang L]...
-codeintel query  <PROGRAM|-> [--format text|json|tsv] [--limit N] [--rules FILE]
-                 [--raw] [--no-refresh]
-codeintel rules  [NAME] [ARG]...
+codeintel index  [PATH] [--scip FILE]... [--rebuild] [--lang L]...
+codeintel query  <PROGRAM|-> [--format text|json] [--limit N] [--rules FILE]...
+                 [--raw] [--no-refresh] [--expect-empty]
 codeintel schema [--format text|json]
-codeintel status [PATH]
+codeintel status [PATH] [--format text|json]
 codeintel mcp
 ```
 
-Six verbs. `PATH` defaults to `.`.
+**Five verbs.** `PATH` defaults to `.`.
+
+`rules` is gone. It translated `rules NAME A B` into `?- NAME(A, B, Vars...)`
+with args "bound positionally as atoms, no type coercion" — and integers and
+their string forms are different atoms ([01-facts.md](01-facts.md) § Integers),
+so `codeintel rules innermost_at src/store.rs 142` bound the *string* `"142"`,
+matched nothing, and returned `status: ok` with zero rows. Broken for every rule
+taking a line number, including the headline one, and lying while doing it. The
+`*_by_name` rules it needed stay in `stdlib.dl`; they are useful on their own.
+
+`--format tsv` is gone: text is already TSV-ish and there were three formats for
+two consumers.
+
+`--run-indexers` is not built — see [02-extraction.md](02-extraction.md)
+§ Acquisition. `index` prints the exact command.
 
 ### `index`
 
@@ -119,35 +135,6 @@ output into another query's literal. JSON always carries the raw atom plus a
 `display` field, so a programmatic consumer never parses the pretty form. This
 is presentation only — the tuple is unchanged, and `--raw` is what round-trips.
 
-### `rules`
-
-Runs a named rule from `rules/stdlib.dl` with positional arguments. The
-convenience layer, so common questions do not require writing Datalog.
-
-```sh
-codeintel rules                      # list rules with arities and doc comments
-codeintel rules callers_by_name get  # -> ?- callers_by_name(A, "get").
-codeintel rules impact_by_name get
-codeintel rules dead_export
-```
-
-`rules` **must not** accumulate special cases. It is one fixed translation:
-`codeintel rules NAME A B` → `?- NAME(A, B, Vars...)`, args bound positionally
-as atoms, trailing variables left unbound. No name lookup, no type coercion, no
-argument inspection.
-
-Ergonomics belong in Datalog, not here. Because a `SymId` is an unwieldy thing
-to type, `stdlib.dl` ships `*_by_name` variants that take the display name:
-
-```prolog
-callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
-impact_by_name(C, N)  :- def(S, _, _, N), impact_of(S, C).
-```
-
-That is the pattern for every ergonomic affordance: a rule, in the file users
-can read and extend. Every special case added to `rules` instead is the first
-step back toward dex's 34 store methods.
-
 ### `schema`
 
 Prints the relation catalog, atom vocabularies, and stdlib rule signatures.
@@ -158,7 +145,7 @@ system, and it is the highest-leverage output in the project.
 START HERE — you have a location, you need a symbol
   ?- innermost_at("src/store.rs", 142, S).     from ripgrep / git diff /
                                                 a stack trace / a compiler error
-  ?- def(S, F, _, N), match(N, "(?i)auth").     from a word
+  ?- def(S, F, _, N), contains(N, "auth").      from a word
   ?- about(S, Rel, A, B, L).                    everything about S, one round trip
 
 RELATIONS
@@ -168,10 +155,16 @@ RELATIONS
   scip_ref(S, F, Line, Col, From, Role)     compiler-resolved occurrence
   name_ref(Name, F, Line, Col, From)        unresolved identifier (tier A)
   ...
-KINDS    module type interface struct enum trait class function method
-         constructor field constant variable macro typealias unknown
-ROLES    def read write import test generated forward
-PROV     exact (SCIP, compiler-resolved) | name (tree-sitter, text-matched)
+VALUES   closed sets, with counts from THIS index. A kind at 0 is a kind you
+         will get no rows for -- do not query it.                        <gen>
+  Kind   function 4,201  class 812  module 96  interface 41
+         method 0  struct 0  enum 0  trait 0  constant 0  field 0
+         constructor 0  variable 0  macro 0  typealias 0  type 0  unknown 1,340
+  Role   def 5,150  read 0  write 0  import 402  test 0
+  Prov   name 18,904  exact 0
+Generated from the manifest, not printed as a constant. A static list
+advertising sixteen kinds when the index holds four is this document's own
+invariant 5 broken by its own onboarding text.
 RULES
   innermost_at(F, Line, S)       location -> tightest enclosing symbol
   about(S, Rel, A, B, L)         sig|doc|defined|caller|callee|implements|test
@@ -250,8 +243,15 @@ Exactly one of `query`, `rule`, `schema` per call; two is `invalid-query`.
 }
 ```
 
-- **`hint` is non-null whenever `status != "ok"`** and contains a command the
-  agent can run. `no-index` returns `run: codeintel index .`, not "index not
+- **`hint` is non-null whenever `status != "ok"` OR the result is empty.** On an
+  empty result it names the first body literal that matched nothing:
+  `"def/4 with Kind=\"method\" matched 0 rows; this index contains 0 method
+  definitions"`. As originally specified, `hint` was guaranteed null in exactly
+  the case the taxonomy exists to disambiguate — a valid query returning zero
+  rows, which is indistinguishable from a typo, a wrong `Kind`, a path that is
+  not indexed, and a missing SCIP index. The engine already evaluates
+  literal-by-literal, so the first-zero literal is free.
+- Everything else carries a command the agent can run. `no-index` returns `run: codeintel index .`, not "index not
   found".
 - On `invalid-query`, `hint` contains the corrected shape where it can be
   inferred — an arity mismatch reports the expected arity. An agent should be

@@ -34,7 +34,7 @@ comparison := term op term                 op := = | != | < | <= | > | >=
 assignment := var "=" expr
 expr       := term | term arith term | aggregate
 arith      := + | - | * | /
-aggregate  := ("count"|"sum"|"min"|"max") "{" term ":" body "}"
+aggregate  := "count" "{" term ":" body "}"
 term       := var | string | int | "_"
 var        := upper (alnum | "_")*
 string     := '"' ... '"'                  escapes: \" \\ \n \t
@@ -59,15 +59,24 @@ hot(S, N) :- def(S, _, "function", _), N = count{ C : calls(C, S) }, N > 10.
 
 | Builtin | Meaning |
 |---|---|
-| `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms, and **opaque atoms are rejected** ([01-facts.md](01-facts.md) § Integers). |
+| `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms ([01-facts.md](01-facts.md) § Integers). |
 | `X < Y`, `<=`, `>`, `>=` | **integers only**, checked at runtime: both operands must fall in the integer id range ([01-facts.md](01-facts.md) § Integers), else `invalid-query`. Comparing string atoms is an error, not a byte comparison — string atom ids are allocation-ordered, so comparing them would give results that change between runs. |
 | `X = A + B` (`-`, `*`, `/`) | integer arithmetic. Division by zero → error. Overflow → error. |
 | `match(S, "re")` | regex over the string behind atom `S`. Second argument must be a literal. |
 | `prefix(S, "p")`, `suffix(S, "s")`, `contains(S, "c")` | cheaper string tests; prefer these over `match` where they suffice. |
 | `count{ X : goal }` | number of distinct bindings of `X` satisfying `goal` |
-| `sum{ X : goal }`, `min{...}`, `max{...}` | integer aggregates over distinct bindings |
+| ~~`sum` / `min` / `max`~~ | **deferred.** No `stdlib.dl` rule uses them, and each is an overflow, negative-value and determinism surface in a hand-written engine. Add when a cookbook entry needs one. |
 
-Regex flavour: a minimal backtracking matcher supporting `^ $ . * + ? [] | ()`
+Regex flavour: **the `regex` crate**, injected by the host as a builtin so
+`crates/datalog` keeps its zero-dependency property. An earlier draft specified
+a hand-rolled backtracking matcher to avoid the dependency. It avoids nothing —
+`regex` is already a non-optional transitive dependency of `tree-sitter` itself
+— and a backtracker gives up the linear-time guarantee, so `max_regex_steps`
+would abort on patterns `regex` runs in microseconds. Inline flags such as
+`(?i)` work, which the hand-rolled flavour did not, while the `schema` output
+taught `match(N, "(?i)auth")` anyway.
+
+The superseded flavour was: a minimal backtracking matcher supporting `^ $ . * + ? [] | ()`
 and escapes. No backreferences, no lookaround. Compiled once per query, with a
 step budget. We do not take a regex dependency for this.
 
@@ -84,11 +93,13 @@ step budget. We do not take a regex dependency for this.
 5. **Stratification.** See below.
 6. **Arity consistency.** A relation's arity is fixed by its first use; a later
    use with different arity is an error naming both sites.
-7. **Opaque atom comparison.** `=` and `!=` where either side is an opaque
-   atom ([01-facts.md](01-facts.md) § Integers) is an error naming the variable.
-   Opaque atoms are not deduplicated, so identity comparison would silently
-   return false for equal strings. `match`, `contains`, `prefix`, and `suffix`
-   are allowed and work on the underlying bytes.
+7. **Mode satisfaction.** A rule annotated `@bound(i, ...)` may only be called
+   with those argument positions bound. Range restriction (rule 1) is checked
+   **after** demand transformation, so a head variable may be bound by the
+   caller rather than by a positive body literal — that is what makes
+   `symbol_at(F, Line, S)` legal. A call that leaves a declared-bound position
+   free is `invalid-query` with a hint showing a bound form, not a query that
+   runs slowly and returns `budget-exceeded`.
 8. **Base/derived exclusivity.** A relation is either supplied by the fact store
    or defined by rules, never both. Writing a rule whose head is a base relation
    is an error naming the relation. This keeps "where did this tuple come from"
@@ -163,11 +174,23 @@ impact_of(S, C)     :- magic_impact_of(S), impact_of(S, B), calls(C, B).
 
 Now the work is proportional to the reachable subgraph, not the whole graph.
 
-Scope for v1, kept deliberately narrow:
+Scope for v1:
 
-- Applies to **constant bindings in a query goal**, propagated through recursive
-  predicates. Adornment is on bound/free argument positions only.
-- Not applied where it cannot help (non-recursive predicates, fully-free goals).
+- Applies to **any binding available at a call site** — a constant in the goal,
+  or a variable bound by an earlier body literal — propagated through both
+  recursive **and non-recursive** predicates. Adornment is on bound/free
+  argument positions.
+- **Non-recursive predicates are the majority of the win and are not optional.**
+  `ref`, `calls`, `symbol_at`, `is_test`, `about`, `ambiguous` and `depends` are
+  all non-recursive. An earlier draft excluded them, which left `symbol_at` not
+  range-restricted — so the standard library did not load, and the README's own
+  headline query was rejected by the engine shipped beside it.
+- The headline pattern binds the seed from an **earlier body literal**, not from
+  a goal constant:
+  `?- innermost_at("src/store.rs", 142, S), impact_of(S, C).`
+  Sideways information passing handles this; a transformation scoped to goal
+  constants does not. Test this shape explicitly, not just the constant-goal one.
+- Not applied to fully-free goals, where there is nothing to propagate.
 - The transformation is reported in `stats.transformed`, so an unexpectedly slow
   query can be diagnosed as "demand transformation did not apply here" rather
   than guessed at.

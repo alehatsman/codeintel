@@ -10,16 +10,22 @@ query language, no inference, no ranking, no magic.
 ```sh
 codeintel index .
 
-# you have a location — from ripgrep, a stack trace, a compiler error, a diff.
-# turn it into a symbol, then ask what it touches.
-codeintel query '?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
-                    def(C, F, _, N), at(C, F, L), !is_test(F).'
+# architecture conformance: no module under ui/ may import from db/.
+# works on a fresh index, no build, no language server, every language.
+codeintel query '?- import(F, M, _), prefix(F, "ui/"), contains(M, "db/").'
 ```
 
 ```
-handle_read     src/api/handler.rs:42
-warm_entry      src/cache/warm.rs:118
-flush_pending   src/cache/warm.rs:203
+ui/panel.ts     ../db/pool
+ui/table.ts     ../db/query
+```
+
+With a SCIP index present, the same store answers reachability:
+
+```sh
+# you have a location — from ripgrep, a stack trace, a compiler error, a diff.
+codeintel query '?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
+                    def(C, F, _, N), at(C, F, L), !is_test(F).'
 ```
 
 ## Why
@@ -117,18 +123,22 @@ Read in this order.
 
 ## Languages
 
-Nine, out of the box. Every grammar ships `tags.scm` upstream, so a language
-costs one crate, two vendored query files, and one table row — no per-language
-Rust.
+Four in v1. A language costs one crate, two **authored** query files, one table
+row, and a fixture — call it ~1,000 lines and a day, not a table row.
 
 | | Language | SCIP indexer |
 |---|---|---|
-| **core** | Rust, Go, Python, JavaScript, TypeScript (+TSX) | `rust-analyzer scip` · `scip-go` · `scip-python` · `scip-typescript` |
-| **extended** | C, C++, Ruby, Java | `scip-clang` · `scip-ruby` · `scip-java` |
+| **v1** | Rust, Go, Python, TypeScript (+TSX) | `rust-analyzer scip` · `scip-go` · `scip-python` · `scip-typescript` |
+| **deferred** | C, C++, Java | `scip-clang` · `scip-java` |
+| **dropped** | Ruby | — |
 
-Both tiers are enabled; the label is how much we have **proven**. Core carries
-the full test suite (golden facts, span exactness, anchor rate, tier-A
-precision, locality); extended is smoke-tested while its fixtures get written.
+Four, not nine. We **author** the queries rather than vendoring them, because
+upstream `tags.scm` files are not consistent enough to build on: TypeScript's
+covers only ambient `.d.ts` forms and has no call references at all, Python has
+no method capture, and Rust maps structs, enums, unions and type aliases onto a
+single capture. Ruby is dropped outright — it has no import node, since `require`
+is an ordinary method call. C and C++ are strong candidates next, because they
+are import-complete, which is all conformance needs.
 
 ## Status
 

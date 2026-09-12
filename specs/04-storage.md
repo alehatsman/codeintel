@@ -34,26 +34,26 @@ index and segments never need rewriting when the dictionary grows.
 
 ```
 0x0000_0000 ..= 0x0FFF_FFFF   small non-negative integers, encoded as themselves
-0x1000_0000 ..= 0xEFFF_FFFF   deduplicated strings; 0x1000_0000 is EMPTY ("")
-0xF000_0000 ..= 0xFFFF_FFFF   opaque blobs: not deduplicated, identity-incomparable
+0x1000_0000 ..= 0xFFFF_FFFF   deduplicated strings; 0x1000_0000 is EMPTY ("")
 ```
 
-`dict.bin` is concatenated UTF-8 with no separators. `dict.idx` is a `Vec<u32>`
-of start offsets; entry `i` spans `idx[i]..idx[i+1]`. Both are `mmap`-ed;
+`dict.bin` is concatenated UTF-8 with no separators. `dict.idx` is a `Vec<u64>`
+of start offsets; entry `i` spans `idx[i]..idx[i+1]`. **u64, not u32** — u32
+offsets silently cap `dict.bin` at 4 GiB with no stated limit and wrap to
+garbage strings on breach. The extra four bytes per entry costs ~10 MB on a
+2.5M-string dictionary. Both are `mmap`-ed;
 resolving an atom to a string is two loads and a slice.
 
 In-memory, the indexer additionally holds a `HashMap<&str, Atom>` borrowing from
 the mmap for dedup during a run. The query path never needs it — queries compare
 atoms, and only materialize strings when formatting output.
 
-**Opaque blobs bypass that map.** A string over `OPAQUE_THRESHOLD` (default 256
-bytes) — in practice doc comments — is appended to `dict.bin` and assigned an id
-in the opaque range without a dedup lookup. Doc comments are effectively unique,
-so the lookup nearly always misses; skipping it saves hashing multi-kilobyte
-strings and the per-entry map overhead across every definition in the repo, and
-costs only duplicate bytes on disk in a file that is mmap-ed and never fully
-read. The identity consequence is handled in the engine, not hidden
-([03-datalog.md](03-datalog.md) § Safety rules).
+**Every string goes through the dedup map, including doc comments.** An earlier
+draft bypassed it for strings over 256 bytes. Measured, hashing ~120 MB of doc
+comments with blake3 costs ~0.12 s against a 30 s index budget — 0.4% — in
+exchange for a third id partition, a safety rule, and an `invalid-query` class
+an agent cannot guess. Not worth it, and it violated this document's own rule at
+§ Loading: do not build it until a benchmark says so.
 
 **Growth.** Atoms are never reused and never renumbered. A long-lived index on a
 churning repo accumulates dead strings. Reclaim is `codeintel index --rebuild`,
@@ -110,7 +110,12 @@ deliberately deferred.
 {
   "schema_version": 1,
   "created_at": "2026-09-12T10:00:00Z",
-  "root": "/Users/x/proj",
+  "roots": ["/Users/x/proj"],
+  "writer_version": "codeintel 0.1.0",
+  "extractor_fingerprint": "blake3:7d1a...",
+  "dict_bin_len": 40213884,
+  "dict_idx_len": 2011240,
+  "dict_generation": 3,
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
       "mtime": 1757000000, "documents": 812 }
@@ -126,6 +131,30 @@ deliberately deferred.
 
 `hash` is content, `mtime`+`size` is the fast path. A file is unchanged iff
 mtime and size both match; otherwise hash before deciding to re-extract.
+
+**`extractor_fingerprint` is blake3 over the binary version, every vendored and
+authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A
+mismatch forces a full re-extract.** Without it, incremental indexing means an
+extractor fix reaches only the files a user happens to edit afterwards: half the
+index is built by the old query and half by the new one, `status` says `ok`, and
+nothing will ever reconcile them. It also makes every bug report irreproducible,
+because the reporter's first move is `rm -rf .codeintel`, which destroys the
+evidence. Fifteen lines.
+
+**`roots` is an array from day one** even though v1 writes one element.
+Retrofitting it after segment paths are committed is an invasive change; doing
+it now is one character.
+
+**`dict_bin_len` / `dict_idx_len` bound what a reader may trust.** The manifest
+names segments but does not name dictionary extents, so a reader that loads a
+new manifest and mmaps a dictionary mid-append can read an offset past the end
+of its mapping. Recovery from a torn append is truncation to the recorded
+length.
+
+**`dict_generation` increments on `--rebuild`.** `--rebuild` renumbers every
+atom, and `query --raw` hands raw atom ids to the caller. Without a generation
+stamp, a saved raw id resolves after a rebuild to a *different string* rather
+than to an error.
 
 ## Incremental reindex
 
@@ -158,17 +187,33 @@ able to see that.
 
 **One writer, many readers, no locking protocol.**
 
-- `codeintel index` writes each new or changed segment to `seg/<hash>.bin.tmp`
-  and renames it into place, then writes `manifest.json.tmp` and renames it
-  **last**. The manifest is the only thing that names segments, so a reader sees
+- `codeintel index` writes each new or changed segment to `seg/<hash>.bin.tmp`,
+  **`fsync`s it**, and renames it into place; then writes `manifest.json.tmp`,
+  `fsync`s it, and renames it **last**. The `fsync` is not optional: without it
+  a power loss can land the manifest rename while segment data is still in page
+  cache, and the result is a manifest naming a **zero-filled** segment. Atom `0`
+  is the *integer* zero ([01-facts.md](01-facts.md) § Integers), so those bytes
+  decode as well-formed facts asserting that every symbol lives at line 0,
+  column 0 — no error, no status, a silently wrong answer. The manifest is the only thing that names segments, so a reader sees
   either the old index or the new one, never a mix. Orphaned `.tmp` files from a
   crashed run are removed at the start of the next one.
 - Readers `mmap` segments named by the manifest they loaded. A concurrent
   reindex may unlink those segments; the mapping stays valid on POSIX until the
   reader closes it.
-- Two concurrent `index` runs are undefined behaviour. Take an advisory lock on
-  `.codeintel/lock` (`flock`, `LOCK_EX | LOCK_NB`) and fail with
-  `status: "locked"` rather than racing.
+- Two concurrent writers are undefined behaviour. Take an advisory lock on
+  `.codeintel/lock` (`flock`, `LOCK_EX | LOCK_NB`) and fail rather than racing.
+  **`query`'s auto-refresh is a writer and takes the same lock** — an MCP server
+  serving two concurrent queries is two writers, and `dict.bin` is append-only
+  with no tmp+rename, so interleaved appends put `dict.idx` offsets out of step
+  with `dict.bin` bytes and every atom past that point resolves to the wrong
+  string, with no checksum to notice.
+- A **reader** that cannot take the lock does not fail. It reads the current
+  manifest and returns `status: "stale"`. `locked` is for a second writer;
+  telling a reader "locked" is not actionable.
+- Every segment carries a body checksum, validated on open, and `n_rows` is
+  bounds-checked against the file length. A truncated or zero-filled segment
+  returns `status: "corrupt"` with hint `rm -rf .codeintel && codeintel index .`
+  — never a panic and never silent rows of atom 0.
 
 Windows has no unlink-open-file semantics and is out of scope for v1. Say so in
 the README rather than half-supporting it.
@@ -178,9 +223,13 @@ the README rather than half-supporting it.
 - **No SQLite.** A C dependency, schema migrations, and a parse/load step, for a
   store that is derived, single-writer, and rebuildable. dex paid all three
   costs; [research.md](../docs/research.md) §5.
-- **No WAL, no transactions, no crash recovery.** A crashed index leaves the
-  previous manifest pointing at valid segments, plus orphaned `.tmp` files that
-  the next run removes.
+- **No WAL, no transactions.** Crash recovery is `fsync` + rename ordering +
+  per-segment checksums + dictionary extents in the manifest, above. A crashed
+  index leaves the previous manifest pointing at valid, checksummed segments,
+  plus orphaned `.tmp` files that the next run removes.
+- **`.codeintel/` must be excluded from file sync.** mmap over a Dropbox/iCloud
+  partial write or an SMB/NFS truncation raises `SIGBUS`, which no status code
+  can report. One line in the README.
 - **No compression.** `u32` columns of interned ids are already dense. Adding
   compression would put a decode step on the load path to save disk nobody is
   short of.

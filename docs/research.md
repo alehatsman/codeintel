@@ -115,6 +115,73 @@ together" is explicitly out of scope rather than a tempting future feature.
 
 ---
 
+
+### §1e — dex adopted this thesis, shipped it, and the surface did not collapse
+
+Measured 2026-09-12, read-only, against `~/projects/dex`.
+
+`specs/roadmap.md:1-10` states dex's own active plan: *"dex collapses to one
+composable verb… The surface should be as small as that identity: one verb,
+`query`, that composes."* Dated 2026-08-26. It shipped — `internal/mcp/query_pipe.go`
+(639 LOC), `query.go` (630), `query_select.go` (255), and a git log showing
+`feat: #206 query pipes MVP`.
+
+Today:
+
+| | |
+|---|---:|
+| MCP tools registered in `internal/mcp/server_register.go` | **20**, with `query` as the twentieth |
+| `func (s *Store)` methods in `store_graph.go` | **34** |
+| non-test Go LOC | **84,887**, unchanged after ~9,500 lines of deliberate deletion |
+| pipe grammar | already accreting: `#210` selector seeds, `#219` `since:`/`diff:` seeds |
+
+The composable verb was added **alongside** the nineteen endpoints, not instead
+of them. Its stage vocabulary is a fixed `switch` over eleven cases, so question
+N+1 is a new `case` in a Go parser needing a release.
+
+**This is the strongest available evidence for codeintel, and it is evidence
+about a mechanism rather than a line count.** A query language bolted onto an
+existing endpoint surface does not remove the endpoints; someone has to, and in
+a year nobody did. The defensible claim is therefore *not* "26x smaller" (a
+ratio this document never stated and should never state) and *not* "Datalog
+deletes 84,887 lines" (it plausibly addresses 5–13%, with a further ~34% removed
+by scope decisions that needed no query language at all).
+
+The claim is: **question N+1 is a line of data in a text file the user can edit,
+not a branch in a parser that needs a release** — asserted in CI from commit
+one, before there is anything to delete. That is testable, and
+[plan.md](plan.md) M4 puts a rule-count assertion in the budget test so it can
+fail.
+
+### §1f — corrections to this document
+
+- **§3's `tags.scm` verification checked existence, not sufficiency.** All nine
+  upstream files were re-fetched 2026-09-12; the results and their consequences
+  are in [02-extraction.md](../specs/02-extraction.md) § Adding a language.
+  "Ships `tags.scm` upstream" does not imply "costs one table row", and for
+  TypeScript, Python, Rust and Go it does not.
+- **§6's maintenance signal used `pushed_at`, which bot branches defeat.**
+  Default-branch human commits: `scip-python` **none since 2025-09-05**, with
+  open bugs on `kind=UnspecifiedKind` and silently-dropped cross-package
+  references; `scip-typescript` shipped symbol-kind emission on 2026-09-11.
+  Python ships in v1 for its tier-A story; do not promise `calls_exact` quality
+  there.
+- **§6 omitted `blake3` and `regex`.** Both are used — segments are named by
+  blake3 hash, and `regex` is a non-optional transitive dependency of
+  `tree-sitter` itself, which also removes any reason to hand-roll a matcher.
+  A budget `CLAUDE.md` calls "the entire budget" was wrong at spec time.
+- **§4 answered "which Datalog?" and never asked "why Datalog?"** SQL over the
+  same facts was never evaluated — SQLite was rejected as *storage* in §5 and
+  DataFusion dismissed in one clause. The decision stands (a code-shaped
+  recursive query language with stratified negation, honest provenance, and
+  first-party diagnostics is the differentiator, and byte-exact truncation over
+  arbitrary user SQL would require parsing it anyway) but it stands as a
+  **decision**, not as a survey result.
+- **Invariant 4's evidence is n=1.** `benchmark/skew/baseline-corpus.json` holds
+  one repo — gotify, 485 nodes, 94 of them TypeScript. The conclusion is sound;
+  the phrase "backed by a measurement" is carrying one small repo and should say so.
+
+
 ## 2. Resolution: consume SCIP, do not build a resolver
 
 **SCIP** (SCIP Code Intelligence Protocol) is the successor to LSIF: a protobuf

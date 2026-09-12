@@ -28,11 +28,37 @@ map. Tier B alone gives references with no spans, no signatures, and no docs.
 
 ## Tier A — tree-sitter
 
-### Adding a language is data, not code
+### Adding a language is data — but the data is ours to write
 
-Upstream grammars ship `queries/tags.scm` with a stable capture convention. We
-vendor it, add a small `imports.scm` of our own, and register the grammar. That
-is the entire per-language cost.
+**Superseded 2026-09-12.** The original claim was that upstream grammars ship
+`queries/tags.scm` with a stable capture convention, so vendoring it plus a
+small `imports.scm` was the entire per-language cost. All nine upstream files
+were fetched and checked. The convention is not stable and vendoring does not
+work:
+
+| grammar | `@reference.call` | what breaks |
+|---|---:|---|
+| rust | 3 | `struct_item`, `enum_item`, `union_item` **and** `type_item` all capture as `@definition.class`, so every enum and type alias is emitted `Kind = "struct"` — an extractor guessing **wrong**, which invariant 1 forbids. `impl_item` is `@reference.implementation`, not a definition, so tier-A `parent` for every method is the file. Methods in a `declaration_list` match both `@definition.method` and `@definition.function` and emit two `def` rows. No `@definition.constant`. |
+| go | 1 | emits `@definition.type`, which is absent from the kind table below; five patterns carry a bare `@name` with no tag at all, and emission is undefined for them |
+| python | 1 | **no `@definition.method`** — every method is `Kind = "function"`, so `?- def(M,_,"method",N).` returns zero rows with `status: ok` |
+| javascript | 2 | uses `#strip!`, `#select-adjacent!` — `tree-sitter-tags` directives, not core `Query` predicates; silently no-ops |
+| **typescript** | **0** | captures only ambient `.d.ts` forms. `class X {}`, `function f() {}`, `const f = () => {}` produce **nothing** |
+| **c / c++** | **0** | import-complete, call-empty |
+| ruby | 2 | **no import node at all** — `require` is a method call, and Rails autoloads with none |
+| java | 1 | `@reference.call` attaches to the *arguments* node, so recorded positions point at `(args)` |
+
+So: **we author `tags.scm` and `imports.scm` per language.** Upstream is a
+reference to start from, not a dependency to vendor. Budget ~1,000 LOC of query
+and mapping per language — the same order as
+`~/projects/dex/internal/graph/sitter_rust_tags.go` and its siblings, which
+spend ~6,177 LOC across five languages doing exactly this. That reprices M5 and
+is why the language set is four, not nine.
+
+`imports.scm` was always ours, which is why none of the above touches
+`import/3` — and why architecture conformance is the capability that works on a
+first run with no SCIP index.
+
+The per-language cost is therefore:
 
 ```
 queries/

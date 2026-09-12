@@ -15,6 +15,57 @@ skel   engine  tier A  tier B  surface  langs  perf
 
 ---
 
+## What the 2026-09-12 review changed
+
+An eight-reviewer adversarial review of the specification, before any code.
+Findings are archived; the ones that moved this plan:
+
+**1. `tags.scm` vendoring does not work. We author our own queries.**
+Verified by fetching all nine upstream files. `@reference.call` is absent from
+TypeScript, C, and C++. Python emits no `@definition.method`. Rust collapses
+`struct_item`, `enum_item`, `union_item` **and** `type_item` into one
+`@definition.class` capture, so every Rust enum and type alias would be emitted
+as `Kind = "struct"` — an extractor guessing wrong, which invariant 1 forbids.
+TypeScript's file captures only ambient `.d.ts` forms, so ordinary TS yields
+nothing. `docs/research.md` verified that `tags.scm` *exists* and concluded each
+language *costs one table row*. Existence is not sufficiency.
+
+**2. Therefore the extraction budget, not the engine budget, was the fiction.**
+`~/projects/dex/internal/graph/` spends ~6,177 LOC on tree-sitter extraction for
+five languages — hand-written per-language queries plus per-language scope
+recovery. This plan budgeted ~900 LOC for nine. **Languages narrowed to four.**
+
+**3. The founding argument is stronger than `research.md` states it.** dex
+adopted the one-composable-verb thesis in 2026-08 and shipped it. Today dex has
+**20 registered MCP tools with `query` as the twentieth**, 34 store methods, and
+84,887 non-test LOC — unchanged after ~9,500 lines of deliberate deletion, with
+its pipe grammar already accreting new stages. dex is not a strawman and not a
+refutation: **dex is the experiment, and the surface did not collapse.** The
+claim that survives is narrower and testable — *question N+1 is a line of data,
+not a branch in a parser* — and it is asserted in CI from commit one.
+
+**4. The stdlib does not typecheck against the engine.** `symbol_at` puts `Line`
+in the head and binds it only in comparisons, violating safety rules 1 and 3.
+`innermost_at`, `tighter_at`, and `lexical_parent` all sit on it. Four of five
+`is_test` clauses fail the same rule. Fixed by widening demand transformation to
+non-recursive predicates — which keeps invariant 3 intact and also rescues
+`is_test`, `about`, `impact_by_name`, and `depends`.
+
+**5. Performance objections did not survive measurement.** Claims that auto-
+refresh and `ambiguous/1` break the latency budget were built by pairing the
+100k-LOC success criteria against the 1M-symbol scale note — two numbers ~200x
+apart. Measured: `stat` is 1.5 us warm (1.5 ms for 1,000 files, not 5-20 ms);
+an 8M-row sort is 669 ms, not 2.8 s; `Sigma k^2` for `ambiguous` is **8,486** on
+dex and 11,330 on `tracing`, not the asserted ~25M. The `ambiguous` rewrite is
+still worth doing because it is free. The architecture change is not.
+
+**6. Conformance is the capability that works on first run.** `import/3` is
+extracted by `queries/<lang>/imports.scm`, which is **ours**, so none of finding
+1 touches it. "No module under `ui/` may import from `db/`" needs no SCIP, no
+`calls`, no `ref`. It is now the headline.
+
+---
+
 ## M0 — Skeleton
 
 Workspace, crate seams, and the quality gate. **The gate comes first** — it is
@@ -88,7 +139,10 @@ on either.
 - CI (moongit or GitHub Actions) invokes **the same** `provision apply
   tasks/ci.yml`, so local and CI run one gate, not two that drift.
 - `research.md` §6 is reconciled against `STACK.md`, with any deviation and its
-  trigger written down.
+  trigger written down. **§6 must list `blake3` and `regex`** — both are used
+  (`04-storage.md` names segments by blake3; `regex` is a non-optional transitive
+  dependency of `tree-sitter` itself) and neither appeared in the budget that
+  `CLAUDE.md` calls "the entire budget."
 - A test asserts `crates/datalog/Cargo.toml` depends on neither `facts` nor
   `extract`. This seam is what keeps the engine honest; guard it mechanically
   from commit one.
@@ -101,27 +155,33 @@ on either.
 concepts**. This is the highest-risk milestone; do it first and do it properly.
 
 1. Interner (`facts` crate): reserved integer range, append-only dict, mmap load.
+   **`dict.idx` holds u64 offsets** — u32 silently caps `dict.bin` at 4 GiB.
 2. Lexer + parser → AST. Fuzz it.
 3. Safety checks: range restriction, negation safety, comparison safety,
-   aggregate safety, arity consistency. Each with its diagnostic.
+   aggregate safety, arity consistency, base/derived exclusivity. Each with its
+   diagnostic. **Seven rules, not eight** — the opaque-atom rule is gone with
+   opaque atoms.
 4. Stratification: dependency graph, negative-edge cycle detection, topo order.
 5. `Relation`: flat `Vec<u32>`, sorted, deduplicated, binary search on prefix.
 6. Semi-naive evaluation with the most-bound-first literal ordering.
-7. **Demand transformation (magic sets).** Not optional and not deferrable —
-   without it `impact_of` computes all-pairs reachability and the product's most
-   valuable query returns `budget-exceeded` on any real repo
-   ([03-datalog.md](../specs/03-datalog.md) § Demand transformation). If this
-   milestone runs long, ship the `reach/4` builtin as a stopgap **and open an
-   issue**; do not ship recursion that does not scale and call it done.
-8. Builtins: comparisons, arithmetic, `match`/`prefix`/`suffix`/`contains`, the
-   four aggregates.
+7. **Demand transformation, applied to non-recursive predicates as well as
+   recursive ones.** This is not an optimisation, it is a correctness
+   requirement: without it `symbol_at` is not range-restricted and the stdlib
+   does not load. With `Line` bound it is a binary search into `def_span` — a
+   handful of rows. It simultaneously rescues `is_test`, `about`,
+   `impact_by_name`, `depends`, and stops `impact_of` computing all-pairs
+   reachability.
+8. Builtins: comparisons, arithmetic, `match`/`prefix`/`suffix`/`contains`, and
+   `count`. **`match` delegates to the `regex` crate** — hand-rolling a
+   backtracker buys no dependency reduction, since `tree-sitter` already depends
+   on `regex`, and it loses linear-time guarantees. Inject it as a host builtin
+   so `crates/datalog` keeps its zero-dependency property.
 9. Limits (rows **and bytes**), truncation reporting, `Stats`.
-10. **The cheap agent eval.** See below — this is the point of the milestone as
-    much as the engine is.
+10. **The cheap agent eval.** See below.
 
 **Done when**
 - The conformance suite passes: transitive closure, same-generation, stratified
-  negation, all four aggregates, arithmetic.
+  negation, `count`, arithmetic.
 - The `#[cfg(test)]` naive evaluator agrees with semi-naive on every conformance
   program. *This is the acceptance gate* — a semi-naive bug that drops rows is
   otherwise invisible until it corrupts a real answer.
@@ -129,30 +189,39 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 - Every limit has a test provoking it and asserting `status` and `cap`.
 - 100 runs of each conformance query are byte-identical.
 - `cargo fuzz run parser` survives 10 minutes with no panic.
-- No dependencies in `crates/datalog/Cargo.toml`.
-- Opaque atoms: a string over `OPAQUE_THRESHOLD` gets an id in the opaque range,
-  and `=`/`!=` against it is rejected with a diagnostic naming the variable.
-- **Demand transformation demonstrably applies:** for each seeded traversal, a
-  constant-bound goal derives strictly fewer tuples than the same goal with the
-  transformation disabled, and both return identical results. Equal counts mean
-  it silently did not apply — the failure mode that otherwise surfaces as an
-  unexplained timeout at M6.
-- **The agent eval passes at ≥ 8/10 — against hand-written facts.**
+- `crates/datalog` has no dependencies. `match` arrives as an injected builtin.
+- **Demand transformation demonstrably applies, to both kinds of predicate:**
+  for each seeded traversal *and* for `symbol_at`, a bound goal derives strictly
+  fewer tuples than the same goal with the transformation disabled, and both
+  return identical results. Equal counts mean it silently did not apply.
+- **`load_rules(include_str!("../../rules/stdlib.dl"))` returns `Ok`.** The
+  engine must accept its own standard library. This one line is the guard for
+  the whole class of defect the review found by reading two specs against each
+  other.
+- **The agent eval passes at >= 24/30 — against hand-written facts.**
 
 ### Why the agent eval belongs here, not at M4
 
-The load-bearing bet of this entire project is that an agent can write correct
-Datalog over this schema. If that is false, the schema or the surface is wrong,
-and every milestone after this one is built on top of the mistake.
+The load-bearing bet of this project is that an agent can write correct Datalog
+over this schema. If that is false, the schema or the surface is wrong, and
+every milestone after this one is built on top of the mistake.
 
 Testing it needs **no extractors**: hand-write a fact file for a small,
 realistic repo, write `rules/stdlib.dl` against it, generate `schema` output,
-and give an agent nothing but that plus 10 English questions. A day's work that
-de-risks four milestones.
+and give an agent nothing but that plus the questions.
 
-Record every failure verbatim in `docs/agent-eval.md`. A failure is a `schema`
-wording bug far more often than an agent bug, and the transcript is the
-evidence. M4 re-runs the same eval against real extracted facts.
+**n = 30, not 10.** Ten trials cannot separate "works" from "coin flip" — the
+95% interval on 8/10 spans roughly 0.49 to 0.94. Thirty questions, written
+before the schema is frozen, three samples each.
+
+Record every failure verbatim in `docs/agent-eval.md`. **Do not pre-commit to a
+diagnosis.** The previous wording ("a failure is a `schema` wording bug far more
+often than an agent bug") is a confirmation-bias trap: an agent reading it will
+revise the copy and re-run forever. Three hypotheses are live — the copy, the
+schema, and the language — and the transcript decides which.
+
+**If the eval comes in below 24/30, stop and raise it.** That is a human
+decision, not an implementer's.
 
 ---
 
@@ -161,13 +230,22 @@ evidence. M4 re-runs the same eval against real extracted facts.
 Rust only. Walk → parse → extract → segment → load → query.
 
 1. `ignore`-based walk, binary/size filtering.
-2. Vendor `queries/rust/{tags,imports}.scm`; write the kind-mapping table.
+2. **Author `queries/rust/{tags,imports}.scm`.** Not vendored. Upstream's
+   `tags.scm` maps `struct_item`, `enum_item`, `union_item` and `type_item` all
+   to `@definition.class`, has no `@definition.constant`, treats `impl_item` as
+   `@reference.implementation` rather than a definition, and double-captures
+   methods in a `declaration_list` as both `@definition.method` and
+   `@definition.function`. Upstream is a **reference**, not a dependency.
+   Budget ~1,000 LOC of query + mapping per language, per the dex precedent.
 3. Span-nesting containment sweep. **Write this once, in a shared function** —
-   tier B calls the same code in M4.
+   tier B calls the same code in M3.
 4. Emit `file`, `def`, `def_span`, `def_name`, `def_sig`, `def_doc`, `parent`,
    `exported`, `import`, and `name_ref`. **Tier A resolves nothing** — see
    invariant 3b. Resolution is `stdlib.dl`'s job.
 5. Segment writer + manifest, per [04-storage.md](../specs/04-storage.md).
+   Includes `writer_version`, `extractor_fingerprint`, `dict_bin_len`,
+   `dict_idx_len`, a per-segment body checksum, and `fsync` before the manifest
+   rename.
 6. `codeintel index`, `codeintel query`.
 
 **Done when**
@@ -176,19 +254,39 @@ Rust only. Walk → parse → extract → segment → load → query.
 - Golden fact file for `tests/fixtures/rust/` matches exactly.
 - Span exactness test passes: for every `def`, `src[start_byte..end_byte]`
   reparses to the same kind and `src` at `def_name` equals `Name`.
+- **Kind fidelity: a fixture containing a struct, an enum, a union, a type alias,
+  a trait, a const and an impl block emits seven distinct correct `Kind` values.**
+  This is the test upstream's query fails.
+- **Query liveness: every pattern in every `.scm` matches at least once on its
+  fixture, and no node receives two conflicting `@definition.*` captures.**
+  A dead pattern is the signature of a grammar node rename, and it otherwise
+  surfaces as `status: ok` with zero rows.
 - Indexing twice produces byte-identical segments.
 - Indexing with shuffled file order produces identical facts.
 - Deleting a file and reindexing removes its facts.
 - **Locality test passes:** every fact for file X is reproducible by extracting
-  X alone with nothing else indexed. This is the mechanical guard against
-  reintroducing cross-file lookups into the extractor.
+  X alone with nothing else indexed.
 - **Incremental equivalence passes:** index, mutate one file, reindex
-  incrementally → byte-identical to a cold reindex.
+  incrementally → **equal as resolved fact sets** to a cold reindex. *Not*
+  byte-identical: an append-only interner assigns atom ids in encounter order,
+  so a symbol added to an early file lands after every later file's atoms
+  incrementally and inside its own block cold. The byte-identical form is
+  unsatisfiable and was specified twice.
 - `?- innermost_at("<some file>", <some line>, S).` returns the right symbol.
-  The cold-start path works before anything else does.
+- **A conformance rule runs and fails correctly:** a fixture with a deliberate
+  `ui/ -> db/` import returns the violating row; removing the import returns
+  zero rows with `status: ok`. This is the headline capability and it lands at
+  M2, before any SCIP exists.
 - Auto-refresh on `query`: edit a file, query without reindexing, get the new
-  answer. Delete a file, query, its facts are gone. Both with `stats.refreshed`
-  naming what moved, and `status: "stale"` when `max_refresh_ms` is exceeded.
+  answer. Delete a file, query, its facts are gone. Refresh **commits each
+  file's segment as it completes** — an all-or-nothing refresh that abandons its
+  work at `max_refresh_ms` never converges, so a large `git checkout` would
+  leave every subsequent query paying the full budget and returning `stale`
+  forever. Partial progress is committed; only the unfinished files are reported
+  stale.
+- `query` takes the same `flock` as `index`. On contention it reads the current
+  manifest and returns `stale`, never `locked` — `locked` is for a second writer
+  and is not actionable by a reader.
 
 ---
 
@@ -196,25 +294,27 @@ Rust only. Walk → parse → extract → segment → load → query.
 
 `rust-analyzer scip .` → facts → the anchor join.
 
-1. `scip` crate; read `index.scip`. Then `--run-indexers`: the language→command
-   table, the `PATH` check, the subprocess, the timeout, and the
-   never-fatal failure path ([02-extraction.md](../specs/02-extraction.md)
-   § Acquisition).
+1. `scip` crate; read `index.scip`.
 2. Position normalization, including the UTF-16 case and its skip-and-report
    path.
 3. `local N` → `local <path> N` rewrite. **Test this specifically** — the bug it
    prevents is silent and repo-wide.
-4. `SymbolInformation.kind` → our 16 kinds.
+4. `SymbolInformation.kind` → our kinds.
 5. Reference `From` attribution via the M2 containment sweep.
 6. The anchor join: match on `def_name` position, rewrite the tier-A atom to the
    SCIP symbol in the interner, emit `resolved(S)`.
-7. `implements`, `has_type`, `extern`, and `scip_ref`.
+7. `implements`, `extern`, and `scip_ref`.
 8. Parent precedence: descriptor prefix → `enclosing_symbol` → tier A span
-   nesting, replacing tier A's row after the anchor join
-   ([02-extraction.md](../specs/02-extraction.md) § Parent precedence).
+   nesting, replacing tier A's row after the anchor join.
+
+**`--run-indexers` is not built.** `index` prints the exact command for every
+detected language, which is where the value is. Running another project's build
+system inside this tool buys a 600 s subprocess, seven environment-failure
+matrices, and the only path by which this binary executes arbitrary code. The
+printed command is copy-pasteable and the user runs it.
 
 **Done when**
-- On `tests/fixtures/rust/` with both tiers, ≥ 95% of tier-A definitions carry
+- On `tests/fixtures/rust/` with both tiers, >= 95% of tier-A definitions carry
   `resolved(S)`.
 - Tier-A precision test passes: every `"name"` ref either matches an `"exact"`
   ref at the same position or is listed in `known-imprecise.txt` with a reason.
@@ -222,112 +322,118 @@ Rust only. Walk → parse → extract → segment → load → query.
   hand-audited sample of 20 is correct in both directions.
 - Deleting `index.scip` and reindexing degrades cleanly to `"name"` only, with
   `status: "no-scip"` on a query that needs precision.
-- `codeintel index` **without** `--run-indexers` prints the exact indexer
-  command for every detected language.
-- **Go methods resolve to their type**, not to the file: `?- parent(M, T),
-  def(T, _, _, "Store").` returns the methods. This is the case where lexical
-  and semantic containment visibly disagree, so it is the test that proves the
-  precedence rule is wired.
-- `codeintel index --run-indexers` produces a usable `index.scip` on the fixture,
-  and with the indexer binary removed from `PATH` it reports the failure and
-  completes with tier A only.
+- **`no-scip` fires on the relation-dependency closure, not on literal syntax.**
+  A query reaching `calls`/`ref`/`impact_of` with no SCIP present must say so.
+  Otherwise the README's own headline query returns `status: ok` with zero rows
+  on a fresh install — the exact failure invariant 6 exists to prevent.
+- `codeintel index` prints the exact indexer command for every detected language.
+- **A file edited after `index.scip` was built reports `scip-stale`, and the
+  spec states which `SymId` its tier-A rows carry.** Auto-refresh is tier-A only;
+  the anchor join runs tier-A-then-tier-B over the whole repo. What happens to a
+  single refreshed file is currently undefined, and the honest answer is that it
+  leaves the resolved identity until the next full index.
 
 ---
 
 ## M4 — Surface and stdlib
 
 1. `rules/stdlib.dl` — every rule in [01-facts.md](../specs/01-facts.md) §
-   Derived relations, each with a doc comment and a fixture test. Includes the
-   resolution rules for `ref`, `symbol_at`/`innermost_at`, `about`, `is_test`,
-   and the seeded traversals.
-1b. Output rendering: symbol columns as `Name` + `path:line`, `--raw` for the
-   joinable form, and the byte cap wired through `truncated`/`cap`.
-2. `codeintel rules`, `schema`, `status`.
-3. `codeintel mcp` — one tool, the full status taxonomy, hints on every
+   Derived relations, each with a doc comment and a fixture test.
+2. Output rendering: symbol columns as `Name` + `path:line`, `--raw` for the
+   joinable form, the byte cap wired through `truncated`/`cap`. `--raw` output
+   carries the dictionary generation from the manifest, and a mismatched
+   generation is rejected — `--rebuild` renumbers every atom, so a stale raw id
+   otherwise resolves to a *different string* rather than to an error.
+3. `schema`, `status`. **`status --format json`** — it is the bug-report artifact
+   for a tool with no telemetry, and it must carry the extractor fingerprint and
+   per-relation, per-language fact counts. "python: 1,204 files, 11 defs" is
+   visibly absurd to a human in one second; `status: ok` is not.
+4. `codeintel mcp` — one tool, the full status taxonomy, hints on every
    non-`ok`.
-4. The surface-budget CI test: assert 1 MCP tool, 6 CLI verbs, ≤ 16 base
-   relations. A PR that adds a seventh verb fails CI and has to argue in a spec
-   change.
+5. The surface-budget CI test: assert 1 MCP tool, **5 CLI verbs**, <= 16 base
+   relations, **and <= 24 named predicates in `stdlib.dl`**. The rule count is
+   the dimension that actually grows; asserting only the three that do not makes
+   the founding thesis unfalsifiable.
 
 **Done when**
 - Every rule in `stdlib.dl` has a fixture test with a hand-verified answer.
 - Every question in [research.md](research.md) §1a's 34-method list is
-  answerable in ≤ 5 lines of Datalog. Write them all down in
-  `docs/cookbook.md` — that file is the proof, and the artifact users actually
-  read.
-- `codeintel schema` output is under 1500 tokens, measured.
+  answerable in <= 5 lines of Datalog, written down in `docs/cookbook.md`.
+- **`docs/cookbook.md` opens with the conformance pack** — layering rules,
+  banned-dependency rules, allowed-direction rules — because that section works
+  with no SCIP index and is what a first-run user can actually use.
+- `codeintel schema` output is under 1500 tokens, **measured, with the rule list
+  complete**. If it does not fit, the stdlib is too big; cut rules, not the
+  catalogue.
+- **`schema` prints observed counts, generated from the manifest**, not a static
+  closed list: `Kind function 4,201 · class 812 · method 0 …`. A kind at zero is
+  a kind the agent must not query. A static list advertising sixteen kinds when
+  the index holds five is the onboarding text violating invariant 5.
+- **`hint` is non-null whenever `status != "ok"` OR the result is empty**, naming
+  the first body literal that matched nothing. As specified, `hint` is
+  guaranteed null in exactly the failure mode the taxonomy exists to
+  disambiguate.
 - **The agent test, full version.** The M1 eval re-run against real extracted
-  facts, plus 10 *new* held-out questions in a repo none of the fixtures come
-  from. ≥ 8/10 first-attempt on both sets. A regression against the M1 numbers
-  means extraction quality, not schema wording, and points at M2/M3.
-- A no-SCIP run of the eval, recorded separately. The gap between the two
-  numbers *is* the honest measure of what tier A alone is worth, and it belongs
-  in the README rather than in a footnote.
+  facts, plus 15 *new* held-out questions in a repo none of the fixtures come
+  from. >= 24/30 first-attempt on both sets.
+- A no-SCIP run of the eval, recorded separately, in the README.
 - Surface-budget test is in CI.
 
 ---
 
 ## M5 — Languages
 
-Nine languages ship out of the box. Rust lands at M2/M3 as the bring-up
-language; this milestone is the other eight.
+**Three more, not eight.** Rust lands at M2/M3. Adding a language is one
+authored `tags.scm`, one authored `imports.scm`, one `lang.rs` row, one fixture
+and a golden file — call it ~1,000 LOC and a day of fixture work, not a table
+row. The prior estimate assumed vendoring, and vendoring does not work.
 
-Every one of the nine has a published, current grammar crate that **already
-ships `queries/tags.scm` upstream** (verified 2026-09-12,
-[research.md](research.md) §6). So each language is: one crate, two vendored
-`.scm` files, one `lang.rs` row, one fixture. No per-language Rust.
+### M5a — Go, Python
 
-### M5a — the core five
-
-Go, Python, JavaScript, TypeScript (+TSX). With Rust from M2, these are the
-languages we actually work in, and they get the full treatment.
-
-| Language | Grammar | SCIP indexer |
-|---|---|---|
-| Go | `tree-sitter-go` 0.25.0 | `scip-go` |
-| Python | `tree-sitter-python` 0.25.0 | `scip-python` |
-| JavaScript | `tree-sitter-javascript` 0.25.0 | `scip-typescript` |
-| TypeScript + TSX | `tree-sitter-typescript` 0.23.2 | `scip-typescript` |
-
-**Done when**
-- Each passes the full suite: golden facts, span exactness, anchor rate ≥ 95%,
-  tier-A precision, locality, incremental equivalence.
-- Each is wired into the `--run-indexers` table and produces a working
-  `index.scip` on its fixture.
-- A polyglot fixture (Rust + Go + TS + Python in one tree, one SCIP index per
-  language) indexes and queries correctly across language boundaries.
-- **Go methods resolve to their type** via parent precedence — the case where
-  lexical and semantic containment disagree.
-
-### M5b — the extended four
-
-C, C++, Ruby, Java. Shipped and enabled, smoke-tested rather than fully
-fixtured; the full suite follows as fixtures get written. The tier says how much
-we have **proven**, not what is switched on.
-
-| Language | Grammar | SCIP indexer | tier-B bootstrap |
+| Language | Grammar | SCIP indexer | Notes |
 |---|---|---|---|
-| C | `tree-sitter-c` 0.24.2 | `scip-clang` | needs `compile_commands.json` |
-| C++ | `tree-sitter-cpp` 0.23.4 | `scip-clang` | needs `compile_commands.json` |
-| Ruby | `tree-sitter-ruby` 0.23.1 | `scip-ruby` | needs Sorbet |
-| Java | `tree-sitter-java` 0.23.5 | `scip-java` | needs a working build |
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` | upstream emits `@definition.type` and five bare `@name` captures with no tag at all |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` | upstream has **no** `@definition.method`; `scip-python` has had no human commit on its default branch since 2025-09-05 |
 
-**Done when**
-- Each parses its smoke fixture and emits `def`/`def_span`/`import`/`name_ref`
-  without panicking, with span exactness asserted.
-- `codeintel status` lists them as supported, and their indexer commands appear
-  in `--run-indexers` and in the no-SCIP hint.
-- Grammar ABI is verified: these four are the oldest crates (0.23.x against a
-  0.27 runtime). **Smoke-load all nine grammars in one test before building on
-  them** — an ABI mismatch is a loud failure at load time and a confusing one
-  later.
+Python's tier B is on notice. `scip-python` has three open correctness bugs, one
+of which silently drops cross-package references. Python ships because its
+tier-A story and its `imports.scm` are clean; do not promise `calls_exact`
+quality there.
 
-### The criterion that matters for both
+### M5b — TypeScript + TSX
 
-**Adding a language required no changes outside `queries/`, `lang.rs`, and
-`tests/fixtures/`.** If it did, the extractor is wrong — fix the extractor
-rather than special-casing the language. Eight languages in one milestone is
-only sane if this holds, so it is the first thing to check, not the last.
+The most expensive of the four and the last. Upstream `tags.scm` is 23 lines and
+captures only ambient `.d.ts` forms — `function_signature`, `method_signature`,
+`abstract_class_declaration`, `interface_declaration`. Ordinary
+`class X {}` / `function f() {}` / `const f = () => {}` produce **nothing**, and
+there is no `@reference.call` at all. The whole query is ours. Two grammars
+(TS and TSX).
+
+**Done when (each language)**
+- Golden facts, span exactness, kind fidelity, query liveness, locality,
+  incremental equivalence — the full M2 suite.
+- Anchor rate >= 95% against its SCIP index.
+- Its `imports.scm` produces usable `import/3` rows, and a conformance rule over
+  them passes and fails correctly on a fixture.
+- A polyglot fixture (Rust + Go + Python + TS in one tree) indexes and queries
+  across language boundaries.
+- **Go methods resolve to their type**, not to the file — the case where lexical
+  and semantic containment visibly disagree.
+
+### Dropped
+
+**Ruby is not shipping.** `tree-sitter-ruby` has no import node at all — `require`
+is an ordinary method call, and idiomatic Rails autoloads with no `require` at
+any point. Its `@reference.call` pattern needs `(#is-not? local)`, i.e. a third
+`locals.scm` and scope tracking. It fails at both tiers and at the headline
+capability.
+
+**C, C++, Java are deferred, not rejected.** C and C++ have `preproc_include`
+and zero `@reference.call` — import-complete and call-empty, which is precisely
+the profile where conformance is the whole product and no polyglot incumbent
+exists. They are the strongest candidates for the next language after M5b, and
+they should be added for conformance alone, with `calls` declared unsupported in
+`status` rather than silently empty.
 
 ---
 
@@ -339,16 +445,21 @@ Only now, with correctness fixed and something to measure.
    ~1M LOC).
 2. A **test-only** bench harness (`cargo bench`) reporting cold index, warm
    load, single-file reindex, and query p50/p95 over a fixed query set. Not a
-   CLI verb — the budget is 6 and it is full
-   ([00-overview.md](../specs/00-overview.md) § Surface budget).
+   CLI verb.
 3. Profile and fix what the numbers say — **not what seems slow.**
 
-**Done when** (on the ~100k-LOC corpus entry)
+**Done when** (on the ~100k-LOC corpus entry, which is what the success criteria
+are stated against — the 1M-symbol table in [01-facts.md](../specs/01-facts.md)
+§ Scale is a sizing note, not a latency promise)
 - Cold tier-A index < 30 s.
 - Warm load < 200 ms. If it is not, *then* build the merged-array cache in
   [04-storage.md](../specs/04-storage.md) § Loading, and not before.
 - Single-file reindex < 1 s.
-- Query p50 < 20 ms, p95 < 100 ms.
+- Query p50 < 20 ms, p95 < 100 ms — **in the MCP warm process.** The CLI pays a
+  process start plus a warm load per invocation and cannot meet a 20 ms median;
+  state the two numbers separately rather than implying one.
+- Cold-page-cache numbers recorded alongside warm ones. The agent's first query
+  after a checkout is the one that matters and it is 10-50x the warm cost.
 - Baselines committed as JSON; CI fails on a > 20% regression.
 
 ---
@@ -361,17 +472,18 @@ Recorded so a future agent knows these were considered, not overlooked.
 |---|---|
 | Merged-array load cache | M6 measures warm load > 200 ms |
 | Caching the derived `ref` relation | a profile shows materializing it dominates query time |
+| `--run-indexers` | users report that printing the command is not enough |
 | Watch mode | single-file reindex measures > 1 s |
-| Live LSP probe (`codeintel probe file:line`) | a real query needs a type at a position that SCIP does not carry |
-| Multi-repo / cross-repo indexes | someone has the problem |
-| Full fixture suites for the extended four | M5b smoke tests are green and someone hits a real gap |
-| More languages (C#, Kotlin, Scala, PHP) | M5's "no changes outside three places" holds |
+| C, C++, Java | M5 is green and conformance has a user |
+| `query --facts FILE` (ephemeral injection) | a real consumer — coverage, a stack trace — asks for it |
+| Multi-root / cross-repo indexes | someone has the problem. `manifest.roots` is an array from M2 so this stays cheap |
+| Depth-bounded traversals `impact_of_d/3` | truncation on a traversal proves misleading in practice |
 | Query result caching | a profile shows repeated identical queries |
+| Publishing `crates/datalog` standalone | M1 is green and the seam test holds |
 
 ## Explicitly never
 
-From [00-overview.md](../specs/00-overview.md) § Scope. Listed again because a
-plan document is where scope creep enters.
+From [00-overview.md](../specs/00-overview.md) § Scope.
 
 Embeddings. Vector search. LLM calls. Summarization. Text search as a lane.
 Ranking or centrality scores of any kind. Git-history mining. Agent memory.
