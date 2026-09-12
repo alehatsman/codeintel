@@ -98,7 +98,7 @@ signature together with SCIP's global identity. See
 
 ## Base relations
 
-14 relations. Ceiling is 16 ([00-overview.md](00-overview.md) § Surface budget).
+15 relations. Ceiling is 16 ([00-overview.md](00-overview.md) § Surface budget).
 
 ### `file(F, Lang)`
 One row per indexed source file. `F` is the repo-relative path.
@@ -164,16 +164,37 @@ import("src/api.rs", "crate::store", "").
 import("web/app.ts", "./util/retry", "retry").
 ```
 
-### `ref(S, F, Line, Col, From, Role, Prov)`
-**The load-bearing relation.** One row per occurrence of symbol `S` at
-`F:Line:Col`, lexically inside definition `From`, used as `Role`, resolved with
-provenance `Prov`. `From` is the innermost enclosing definition, or `F` if the
-occurrence is at file scope.
+### `scip_ref(S, F, Line, Col, From, Role)`
+A compiler-resolved occurrence of symbol `S` at `F:Line:Col`, lexically inside
+definition `From`, used as `Role`. No provenance column — everything here is
+`exact` by construction. `From` is the innermost enclosing definition, or `F` if
+the occurrence is at file scope.
 ```
-ref("... Store#get().", "src/api.rs", 88, 12, "... handler#read().", "read", "exact").
+scip_ref("... Store#get().", "src/api.rs", 88, 12, "... handler#read().", "read").
 ```
-Definition sites also appear here with `Role = "def"`, so "every place this name
-occurs" is one relation, not two.
+Definition sites appear here too with `Role = "def"`, so "every place this
+symbol occurs" is one relation, not two.
+
+### `name_ref(Name, F, Line, Col, From)`
+An **unresolved** identifier occurrence from tier A: the text `Name` appears at
+`F:Line:Col` inside definition `From`, in a position the grammar calls a
+reference. It names no symbol.
+```
+name_ref("get", "src/api.rs", 88, 12, "local src/api.rs handler#read().").
+```
+This relation is deliberately *local* — every column is derivable from that one
+file. Resolving a name to a symbol needs whole-repo knowledge, so it happens in
+the rule layer (§ Derived relations), not at extraction. Two reasons, and both
+are load-bearing:
+
+1. **Incremental correctness.** Resolution depends on what exists elsewhere in
+   the repo. Baking it into a per-file fact means adding a second `foo` in file
+   B silently invalidates a fact in file A, which incremental indexing will
+   never revisit because file A did not change. Facts must be functions of their
+   own file, or incremental indexing is unsound.
+2. **Visibility.** Name resolution is a *policy*, and a policy an agent may
+   reasonably want to tighten or loosen. In `stdlib.dl` it is four readable
+   rules; in Rust it is a decision nobody can see.
 
 ### `implements(S, T, Prov)`
 `S` implements, satisfies, or overrides `T`. From SCIP
@@ -202,6 +223,44 @@ them. This is invariant 3 in [00-overview.md](00-overview.md), and the reason
 `calls` is not an extractor output.
 
 ```prolog
+% === reference resolution ==============================================
+% `ref` is DERIVED. Tier B contributes resolved occurrences directly; tier A
+% contributes names that these rules resolve against the whole-repo def set.
+
+ref(S, F, L, C, From, Role, "exact") :- scip_ref(S, F, L, C, From, Role).
+
+% same file wins
+ref(S, F, L, C, From, "read", "name") :-
+    name_ref(N, F, L, C, From), def(S, F, _, N).
+% else a unique exported definition repo-wide
+ref(S, F, L, C, From, "read", "name") :-
+    name_ref(N, F, L, C, From), !local_def(F, N),
+    def(S, _, _, N), exported(S), !ambiguous(N).
+
+local_def(F, N) :- def(S, F, _, N).
+ambiguous(N)    :- def(S, _, _, N), def(T, _, _, N), S != T.
+
+% Everything below is unchanged by which tier supplied the evidence.
+% To tighten resolution, edit the two `name` rules above. To disable tier-A
+% resolution entirely, delete them: `ref` degrades to `exact` only.
+
+% === the location bridge ===============================================
+% Turns a file:line from ripgrep, git diff, a stack trace, or a compiler
+% error into a symbol. This is how anything gets INTO the graph.
+
+symbol_at(F, Line, S) :- def(S, F, _, _), def_span(S, L1, L2, _, _),
+                         L1 <= Line, Line <= L2.
+
+% the tightest enclosing definition — usually what you want
+innermost_at(F, Line, S) :- symbol_at(F, Line, S), !tighter_at(F, Line, S).
+
+% T is strictly tighter than S: compare widths, not endpoints, so two
+% definitions sharing an identical span do not cancel each other out and
+% leave `innermost_at` empty.
+tighter_at(F, Line, S)   :- symbol_at(F, Line, S), symbol_at(F, Line, T), T != S,
+                            def_span(S, A, B, _, _), def_span(T, C, D, _, _),
+                            V = B - A, W = D - C, W < V.
+
 % --- callability -------------------------------------------------------
 callable("function"). callable("method"). callable("constructor"). callable("macro").
 
@@ -217,18 +276,29 @@ callees(S, C) :- calls(S, C).
 
 % name-taking variants, so `codeintel rules` stays a dumb translation
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
-impact_by_name(C, N)  :- impact(S, C), def(S, _, _, N).
+impact_by_name(C, N)  :- def(S, _, _, N), impact_of(S, C).
 
-% --- transitive closure ------------------------------------------------
+% --- transitive closure, SEEDED ----------------------------------------
+% Always prefer these. The first argument is a seed the engine pushes into
+% the recursion (see 03-datalog.md § Demand transformation), so evaluation
+% grows outward from the seed instead of computing all-pairs reachability.
+
+impact_of(Seed, C) :- calls(C, Seed).                     % who calls Seed
+impact_of(Seed, C) :- impact_of(Seed, B), calls(C, B).    % ...transitively
+
+reach_of(Seed, C)  :- calls(Seed, C).                     % what Seed calls
+reach_of(Seed, C)  :- reach_of(Seed, B), calls(B, C).
+
+impact_of_exact(Seed, C) :- calls_exact(C, Seed).
+impact_of_exact(Seed, C) :- impact_of_exact(Seed, B), calls_exact(C, B).
+
+% --- transitive closure, UNSEEDED --------------------------------------
+% Whole-graph questions only. On a large repo these are O(n^2) and will hit
+% `max_derived_tuples`; that is the honest cost of asking about every pair.
+
 reaches(A, B) :- calls(A, B).
 reaches(A, C) :- reaches(A, B), calls(B, C).
-
-impact(S, C)  :- reaches(C, S).          % everything that transitively calls S
 recursive(S)  :- reaches(S, S).
-
-reaches_exact(A, B) :- calls_exact(A, B).
-reaches_exact(A, C) :- reaches_exact(A, B), calls_exact(B, C).
-impact_exact(S, C)  :- reaches_exact(C, S).
 
 % --- location helpers --------------------------------------------------
 file_of(S, F)  :- def(S, F, _, _).
@@ -238,6 +308,28 @@ at(S, F, L)    :- def(S, F, _, _), def_span(S, L, _, _, _).
 % --- containment closure -----------------------------------------------
 within(C, P) :- parent(C, P).
 within(C, A) :- parent(C, P), within(P, A).
+
+% --- tests -------------------------------------------------------------
+is_test(F) :- match(F, "(^|/)tests?/").
+is_test(F) :- match(F, "_test\\.(go|py|rs)$").
+is_test(F) :- match(F, "(^|/)test_[^/]*\\.py$").
+is_test(F) :- match(F, "\\.(test|spec)\\.(ts|tsx|js|jsx)$").
+is_test(F) :- scip_ref(_, F, _, _, _, "test").
+
+% --- orientation: everything about one symbol, in one round trip -------
+% Heterogeneous rows sharing a discriminator column. One query instead of
+% six, and the definition of "orientation" stays editable.
+
+about(S, "sig",        Sig, "", 0) :- def_sig(S, Sig).
+about(S, "doc",        Doc, "", 0) :- def_doc(S, Doc).
+about(S, "defined",    F,   N,  L) :- def(S, F, _, N), at(S, F, L).
+about(S, "parent",     F,   N,  L) :- parent(S, P), def(P, F, _, N), at(P, F, L).
+about(S, "caller",     F,   N,  L) :- calls(C, S), def(C, F, _, N), at(C, F, L).
+about(S, "callee",     F,   N,  L) :- calls(S, C), def(C, F, _, N), at(C, F, L).
+about(S, "implements", F,   N,  L) :- implements(S, T, _), def(T, F, _, N), at(T, F, L).
+about(S, "implementor",F,   N,  L) :- implements(T, S, _), def(T, F, _, N), at(T, F, L).
+about(S, "test",       F,   N,  L) :- calls(C, S), def(C, F, _, N), is_test(F), at(C, F, L).
+about(S, "extern",     P,   V,  0) :- extern(S, _, P, V).
 
 % --- file-level dependency ---------------------------------------------
 depends(F, G) :- ref(S, F, _, _, _, _, _), def(S, G, _, _), F != G.
@@ -276,8 +368,16 @@ That distinction is the entire point of the `Prov` column, and every rule in
 ## Worked queries
 
 ```prolog
-% Transitive blast radius of a rename, precise only, with locations.
-?- impact_exact(S, C), def(S, _, _, "get"), def(C, F, _, N), at(C, F, L).
+% COLD START. You have a location (ripgrep, git diff, a stack trace) and
+% no symbol. Lift it into the graph, then traverse.
+?- innermost_at("src/store.rs", 142, S), about(S, Rel, A, B, L).
+
+% Blast radius of changing a symbol, precise only, with locations.
+?- def(S, _, _, "get"), impact_of_exact(S, C), def(C, F, _, N), at(C, F, L).
+
+% What does this diff hunk affect? (seed from `git diff --unified=0`)
+?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
+   def(C, F, _, N), at(C, F, L), !is_test(F).
 
 % Exported symbols in src/store/ that nothing outside the file references.
 ?- dead_export(S), def(S, F, _, _), match(F, "^src/store/").
@@ -307,14 +407,22 @@ reference point:
 
 | Relation | Rows (order) | Cols | Bytes |
 |---|---:|---:|---:|
-| `ref` | 5M | 7 | 140 MB |
+| `scip_ref` | 5M | 6 | 120 MB |
+| `name_ref` | 5M | 5 | 100 MB |
 | `def` | 1M | 4 | 16 MB |
 | `def_span` | 1M | 5 | 20 MB |
 | everything else | ~2M | ~3 | ~24 MB |
-| **total** | | | **~200 MB** |
+| **stored total** | | | **~280 MB** |
+| derived `ref` (in memory, per query session) | ~8M | 7 | ~220 MB |
 
 Comfortably resident. This is why the engine is in-memory and why fixed-width
 `u32` tuples are the right representation ([04-storage.md](04-storage.md)).
+
+Note that `ref` is now derived, so it costs memory at query time rather than
+disk at index time. If that materialization ever dominates a profile, the fix is
+to cache the derived relation alongside the segments — not to move resolution
+back into the extractor, which would reintroduce the incremental-soundness bug
+that `name_ref` exists to prevent.
 
 ---
 
@@ -322,4 +430,4 @@ Comfortably resident. This is why the engine is in-memory and why fixed-width
 
 | schema_version | Change |
 |---|---|
-| 1 | Initial. 14 relations. |
+| 1 | Initial. 15 relations. `ref` is derived from `scip_ref` + `name_ref`; tier A does not resolve names. |

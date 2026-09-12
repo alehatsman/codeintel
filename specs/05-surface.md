@@ -17,7 +17,7 @@ guessing what an empty result means.
 | status | Meaning | Hint returned |
 |---|---|---|
 | `ok` | query ran, results are complete | — |
-| `truncated` | query ran, a cap fired | which cap, and its current value |
+| `truncated` | query ran, a cap fired | which cap (`max_result_rows` / `max_result_bytes`), and its value |
 | `no-index` | no `.codeintel/` here | `run: codeintel index .` |
 | `stale` | index older than sources, or `schema_version` mismatch | `run: codeintel index .` — names the N changed files |
 | `no-scip` | query needs `"exact"` provenance, none available | the indexer command for the languages present |
@@ -37,7 +37,7 @@ invariant 6 and the most common way a tool like this lies to an agent.
 ## CLI
 
 ```
-codeintel index  [PATH] [--scip FILE]... [--rebuild] [--lang L]...
+codeintel index  [PATH] [--scip FILE]... [--run-indexers] [--rebuild] [--lang L]...
 codeintel query  <PROGRAM|-> [--format text|json|tsv] [--limit N] [--rules FILE]
 codeintel rules  [NAME] [ARG]...
 codeintel schema [--format text|json]
@@ -53,6 +53,15 @@ Builds or updates the store. `--scip` may repeat; defaults to `./index.scip` if
 present. `--rebuild` discards and rewrites, including the dictionary. `--lang`
 restricts grammars.
 
+`--run-indexers` shells out to the canonical SCIP indexer for each detected
+language before indexing ([02-extraction.md](02-extraction.md) § Acquisition).
+Never implicit — an indexer runs arbitrary build code, so it takes an explicit
+flag every time. A missing binary or a failed indexer prints the command and its
+stderr and **continues with tier A only**; it is never fatal.
+
+Without the flag, `index` prints the exact indexer command for every language it
+found. Copy-pasteable, not a description of one.
+
 Prints a summary to stderr: files indexed/skipped/unchanged, facts per relation,
 SCIP coverage, anchor rate, elapsed. Skipped files are summarized **by reason**
 — "412 ignored, 3 too large, 88 unsupported (`.scala`)" — because a silently
@@ -65,14 +74,25 @@ codeintel query '?- callers(C, S), def(S, _, _, "get").'
 codeintel query - < investigation.dl
 ```
 
-Text format is TSV-ish, one row per line, aligned, atoms rendered as their
-strings, designed to be read by a human and grepped by an agent. JSON is
+Text format is TSV-ish, one row per line, aligned, designed to be read by a
+human and grepped by an agent. JSON is
 `{ status, columns, rows, truncated, cap, stats }`. Row-order is the engine's
 deterministic order ([03-datalog.md](03-datalog.md) § Determinism).
 
-Where a result row contains a file atom and a line integer, text format renders
-them adjacent as `path:line` so the output is clickable and pasteable. This is a
-formatting affordance only — it does not change the tuple.
+**Symbol rendering.** A raw `SymId` is a ~68-character SCIP string — 17 tokens,
+unreadable, and impossible for an agent to retype correctly. In text format a
+column holding a symbol atom renders as its `Name`, and where the row also
+carries a file and a line they render adjacent as `path:line`:
+
+```
+handle_read    src/api/handler.rs:42
+warm_entry     src/cache/warm.rs:118
+```
+
+`--raw` prints the underlying `SymId` instead. Use it when piping one query's
+output into another query's literal. JSON always carries the raw atom plus a
+`display` field, so a programmatic consumer never parses the pretty form. This
+is presentation only — the tuple is unchanged, and `--raw` is what round-trips.
 
 ### `rules`
 
@@ -96,7 +116,7 @@ to type, `stdlib.dl` ships `*_by_name` variants that take the display name:
 
 ```prolog
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
-impact_by_name(C, N)  :- impact(S, C), def(S, _, _, N).
+impact_by_name(C, N)  :- def(S, _, _, N), impact_of(S, C).
 ```
 
 That is the pattern for every ergonomic affordance: a rule, in the file users
@@ -110,19 +130,32 @@ Prints the relation catalog, atom vocabularies, and stdlib rule signatures.
 system, and it is the highest-leverage output in the project.
 
 ```
+START HERE — you have a location, you need a symbol
+  ?- innermost_at("src/store.rs", 142, S).     from ripgrep / git diff /
+                                                a stack trace / a compiler error
+  ?- def(S, F, _, N), match(N, "(?i)auth").     from a word
+  ?- about(S, Rel, A, B, L).                    everything about S, one round trip
+
 RELATIONS
   file(F, Lang)
   def(S, F, Kind, Name)
   def_span(S, StartLine, EndLine, StartByte, EndByte)
+  scip_ref(S, F, Line, Col, From, Role)     compiler-resolved occurrence
+  name_ref(Name, F, Line, Col, From)        unresolved identifier (tier A)
   ...
 KINDS    module type interface struct enum trait class function method
          constructor field constant variable macro typealias unknown
 ROLES    def read write import test generated forward
 PROV     exact (SCIP, compiler-resolved) | name (tree-sitter, text-matched)
 RULES
+  innermost_at(F, Line, S)       location -> tightest enclosing symbol
+  about(S, Rel, A, B, L)         sig|doc|defined|caller|callee|implements|test
+  ref(S,F,L,C,From,Role,Prov)    resolved occurrence, either tier
   calls(Caller, Callee)          callable reference, either provenance
   calls_exact(Caller, Callee)    SCIP-resolved only
-  impact(S, Caller)              transitive callers of S
+  impact_of(S, Caller)           transitive callers of S -- SEED THE 1st ARG
+  reach_of(S, Callee)            transitive callees of S -- SEED THE 1st ARG
+  is_test(F)                     test file, by path or SCIP role
   ...
 BUILTINS = != < <= > >= + - * / match/2 prefix/2 suffix/2 contains/2
            count{X:g} sum{X:g} min{X:g} max{X:g}
@@ -130,8 +163,20 @@ NOTES
   lines are 1-based; columns are 0-based UTF-8 bytes
   integers and their string forms are different atoms: Line = "42" never matches
   < and > are integers only
+  seed recursive rules (impact_of/reach_of) with a constant, or they compute
+    all-pairs reachability and hit the budget
+  Prov "name" = tree-sitter text matching: method calls x.f() are mostly
+    MISSING. For precision use calls_exact / impact_of_exact, and check
+    `codeintel status` for whether a SCIP index is present and fresh.
 EXAMPLES
-  ?- impact(S, C), def(S, _, _, "get"), def(C, F, _, N), at(C, F, L).
+  what does this diff hunk affect?
+  ?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
+     def(C, F, _, N), at(C, F, L), !is_test(F).
+
+  blast radius of a rename, precise only
+  ?- def(S, _, _, "get"), impact_of_exact(S, C), def(C, F, _, N), at(C, F, L).
+
+  exported and unreferenced outside its own file
   ?- dead_export(S), def(S, F, _, _), match(F, "^src/").
 ```
 

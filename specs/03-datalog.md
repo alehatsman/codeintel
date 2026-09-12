@@ -84,6 +84,11 @@ step budget. We do not take a regex dependency for this.
 5. **Stratification.** See below.
 6. **Arity consistency.** A relation's arity is fixed by its first use; a later
    use with different arity is an error naming both sites.
+7. **Base/derived exclusivity.** A relation is either supplied by the fact store
+   or defined by rules, never both. Writing a rule whose head is a base relation
+   is an error naming the relation. This keeps "where did this tuple come from"
+   answerable — the reason `ref` was made purely derived and the extractors
+   write `scip_ref` / `name_ref` instead ([01-facts.md](01-facts.md)).
 
 Every violation returns `status: "invalid-query"` with the offending rule, the
 variable, and which rule was violated. An agent must be able to fix its query
@@ -121,6 +126,58 @@ is `data[i*arity .. (i+1)*arity]`.
 
 Sorted + deduplicated is the invariant every operation preserves. It gives
 sort-merge joins, binary-search lookup, and free set semantics.
+
+### Demand transformation (magic sets)
+
+**Required for v1. Without it the product's most valuable query is unusable.**
+
+Bottom-up evaluation ignores the query's bindings. Given
+
+```prolog
+impact_of(Seed, C) :- calls(C, Seed).
+impact_of(Seed, C) :- impact_of(Seed, B), calls(C, B).
+?- impact_of("Store::get", C).
+```
+
+naive bottom-up computes `impact_of` for **every** seed — the full all-pairs
+transitive closure of the call graph — and then filters to one. On a 1M-symbol
+repo that is on the order of 10^10 tuples: `max_derived_tuples` fires, and the
+agent gets `budget-exceeded` on the one question it most wanted answered.
+
+The fix is the standard magic-set / demand transformation (Bancilhon et al.;
+Beeri–Ramakrishnan). Before evaluation, for each recursive predicate whose query
+binds some argument positions, synthesize a `magic_` seed relation and guard the
+recursive rules with it, so evaluation grows outward from the seed:
+
+```prolog
+magic_impact_of("Store::get").
+magic_impact_of(B)  :- magic_impact_of(S), impact_of(S, B).
+impact_of(S, C)     :- magic_impact_of(S), calls(C, S).
+impact_of(S, C)     :- magic_impact_of(S), impact_of(S, B), calls(C, B).
+```
+
+Now the work is proportional to the reachable subgraph, not the whole graph.
+
+Scope for v1, kept deliberately narrow:
+
+- Applies to **constant bindings in a query goal**, propagated through recursive
+  predicates. Adornment is on bound/free argument positions only.
+- Not applied where it cannot help (non-recursive predicates, fully-free goals).
+- The transformation is reported in `stats.transformed`, so an unexpectedly slow
+  query can be diagnosed as "demand transformation did not apply here" rather
+  than guessed at.
+
+`stdlib.dl` is written to cooperate: every traversal ships in a **seeded** form
+whose first argument is the seed (`impact_of`, `reach_of`), with the unseeded
+whole-graph forms (`reaches`, `recursive`) kept separate and documented as
+expensive. A rule written so the seed cannot propagate is a rule that will be
+slow, and that is a property of the rule, not a bug in the engine.
+
+**Cheaper fallback, if M1 runs long:** a `reach(EdgeRel, Seed, Out, MaxDepth)`
+builtin doing a seeded BFS over one relation — ~50 lines, covers most real
+traversals, and honestly a special case rather than general evaluation. Ship it
+only as a stopgap with an issue open for the real transformation; a query
+language whose recursion is a builtin is a query language with an asterisk.
 
 ### Evaluation
 
@@ -166,11 +223,18 @@ with the name of the cap that fired** when it bites (invariant 7).
 | Limit | Default | On breach |
 |---|---:|---|
 | `max_result_rows` | 1,000 | truncate output, `truncated: true`, `cap: "max_result_rows"` |
+| `max_result_bytes` | 262,144 | truncate output at a row boundary, `cap: "max_result_bytes"` |
 | `max_derived_tuples` | 10,000,000 | abort, `status: "budget-exceeded"` |
 | `max_time_ms` | 5,000 | abort, `status: "timeout"` |
 | `max_strata` | 32 | reject at planning |
 | `max_body_literals` | 32 | reject at planning |
 | `max_regex_steps` | 100,000 | abort, `status: "budget-exceeded"` |
+
+`max_result_bytes` exists because rows are not uniformly sized and the consumer
+is a context window. A SCIP symbol string runs ~68 characters ≈ 17 tokens; 1,000
+rows with two symbol columns is ~34,000 tokens of output reported as
+`status: ok`. A row cap alone does not bound that. Both caps are checked, and
+whichever fires first is the one named in `cap`.
 
 A truncated result is still sorted, so the first N rows are a stable prefix, not
 an arbitrary sample. This matters: an agent paging through results must get the
@@ -229,3 +293,8 @@ may shadow stdlib rules — shadowing is reported in `stats`, never silent.
    a hand-verified expected answer.
 7. **Fuzzing.** The parser is fuzzed for panics. Parsing untrusted input must
    produce a `Diagnostic`, never an abort.
+8. **Demand transformation.** For each seeded stdlib traversal, assert that a
+   constant-bound goal derives **strictly fewer** tuples than the same goal run
+   with the transformation disabled, and that both produce identical results.
+   Equal counts mean the transformation silently failed to apply, which is the
+   failure mode that only shows up as an unexplained timeout on a big repo.

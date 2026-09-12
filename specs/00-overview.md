@@ -83,7 +83,13 @@ These hold at every commit. A change that breaks one is a spec change first.
    third value, no confidence float, no blending.
 3. **Derivation lives in Datalog, not Rust.** If a fact can be derived from
    other facts, it is a rule in `stdlib.dl`, visible and overridable. Rust
-   extracts; Datalog derives. `calls` is a rule, not an extractor output.
+   extracts; Datalog derives. `calls` is a rule; so is `ref`, because resolving
+   a name to a symbol needs whole-repo knowledge.
+3b. **Every extracted fact is a function of its own file.** An extractor may not
+   consult another file. Cross-file knowledge enters only through rules, which
+   are re-evaluated per query. Violating this makes incremental indexing
+   unsound — a fact derived from file B cannot be invalidated by a change to
+   file B if it is stored against file A.
 4. **The fact schema is the ABI.** Adding a relation is cheap. Changing or
    removing one is a breaking change with a version bump and a migration note in
    [01-facts.md](01-facts.md).
@@ -99,6 +105,8 @@ These hold at every commit. A change that breaks one is a spec change first.
    answer and is worse than an error.
 8. **Determinism.** The same repo state and the same query produce
    byte-identical output. Result ordering is total and explicit.
+9. **Output is bounded in bytes, not just rows.** The consumer is a context
+   window and rows are not uniformly sized.
 
 ## Surface budget
 
@@ -106,7 +114,8 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 
 - **MCP tools: 1.** Named `code_query`. Growing to 2 requires deleting one.
 - **CLI verbs: 6.** `index`, `query`, `rules`, `schema`, `status`, `mcp`.
-- **Base relations: ≤ 16.** Currently 14 ([01-facts.md](01-facts.md)).
+  Benchmarking is a test-only harness (`cargo bench`), **not** a seventh verb.
+- **Base relations: ≤ 16.** Currently 15 ([01-facts.md](01-facts.md)).
 
 If a new capability cannot be expressed as a Datalog rule over the existing
 relations, that is the signal to think hard — not the signal to add a verb.

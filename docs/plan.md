@@ -46,9 +46,17 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 4. Stratification: dependency graph, negative-edge cycle detection, topo order.
 5. `Relation`: flat `Vec<u32>`, sorted, deduplicated, binary search on prefix.
 6. Semi-naive evaluation with the most-bound-first literal ordering.
-7. Builtins: comparisons, arithmetic, `match`/`prefix`/`suffix`/`contains`, the
+7. **Demand transformation (magic sets).** Not optional and not deferrable —
+   without it `impact_of` computes all-pairs reachability and the product's most
+   valuable query returns `budget-exceeded` on any real repo
+   ([03-datalog.md](../specs/03-datalog.md) § Demand transformation). If this
+   milestone runs long, ship the `reach/4` builtin as a stopgap **and open an
+   issue**; do not ship recursion that does not scale and call it done.
+8. Builtins: comparisons, arithmetic, `match`/`prefix`/`suffix`/`contains`, the
    four aggregates.
-8. Limits, truncation reporting, `Stats`.
+9. Limits (rows **and bytes**), truncation reporting, `Stats`.
+10. **The cheap agent eval.** See below — this is the point of the milestone as
+    much as the engine is.
 
 **Done when**
 - The conformance suite passes: transitive closure, same-generation, stratified
@@ -61,6 +69,27 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 - 100 runs of each conformance query are byte-identical.
 - `cargo fuzz run parser` survives 10 minutes with no panic.
 - No dependencies in `crates/datalog/Cargo.toml`.
+- **Demand transformation demonstrably applies:** for each seeded traversal, a
+  constant-bound goal derives strictly fewer tuples than the same goal with the
+  transformation disabled, and both return identical results. Equal counts mean
+  it silently did not apply — the failure mode that otherwise surfaces as an
+  unexplained timeout at M6.
+- **The agent eval passes at ≥ 8/10 — against hand-written facts.**
+
+### Why the agent eval belongs here, not at M4
+
+The load-bearing bet of this entire project is that an agent can write correct
+Datalog over this schema. If that is false, the schema or the surface is wrong,
+and every milestone after this one is built on top of the mistake.
+
+Testing it needs **no extractors**: hand-write a fact file for a small,
+realistic repo, write `rules/stdlib.dl` against it, generate `schema` output,
+and give an agent nothing but that plus 10 English questions. A day's work that
+de-risks four milestones.
+
+Record every failure verbatim in `docs/agent-eval.md`. A failure is a `schema`
+wording bug far more often than an agent bug, and the transcript is the
+evidence. M4 re-runs the same eval against real extracted facts.
 
 ---
 
@@ -73,7 +102,8 @@ Rust only. Walk → parse → extract → segment → load → query.
 3. Span-nesting containment sweep. **Write this once, in a shared function** —
    tier B calls the same code in M4.
 4. Emit `file`, `def`, `def_span`, `def_name`, `def_sig`, `def_doc`, `parent`,
-   `exported`, `import`, and `"name"`-provenance `ref`.
+   `exported`, `import`, and `name_ref`. **Tier A resolves nothing** — see
+   invariant 3b. Resolution is `stdlib.dl`'s job.
 5. Segment writer + manifest, per [04-storage.md](../specs/04-storage.md).
 6. `codeintel index`, `codeintel query`.
 
@@ -86,6 +116,13 @@ Rust only. Walk → parse → extract → segment → load → query.
 - Indexing twice produces byte-identical segments.
 - Indexing with shuffled file order produces identical facts.
 - Deleting a file and reindexing removes its facts.
+- **Locality test passes:** every fact for file X is reproducible by extracting
+  X alone with nothing else indexed. This is the mechanical guard against
+  reintroducing cross-file lookups into the extractor.
+- **Incremental equivalence passes:** index, mutate one file, reindex
+  incrementally → byte-identical to a cold reindex.
+- `?- innermost_at("<some file>", <some line>, S).` returns the right symbol.
+  The cold-start path works before anything else does.
 
 ---
 
@@ -93,7 +130,10 @@ Rust only. Walk → parse → extract → segment → load → query.
 
 `rust-analyzer scip .` → facts → the anchor join.
 
-1. `scip` crate; read `index.scip`.
+1. `scip` crate; read `index.scip`. Then `--run-indexers`: the language→command
+   table, the `PATH` check, the subprocess, the timeout, and the
+   never-fatal failure path ([02-extraction.md](../specs/02-extraction.md)
+   § Acquisition).
 2. Position normalization, including the UTF-16 case and its skip-and-report
    path.
 3. `local N` → `local <path> N` rewrite. **Test this specifically** — the bug it
@@ -102,7 +142,7 @@ Rust only. Walk → parse → extract → segment → load → query.
 5. Reference `From` attribution via the M2 containment sweep.
 6. The anchor join: match on `def_name` position, rewrite the tier-A atom to the
    SCIP symbol in the interner, emit `resolved(S)`.
-7. `implements`, `has_type`, `extern`.
+7. `implements`, `has_type`, `extern`, and `scip_ref`.
 
 **Done when**
 - On `tests/fixtures/rust/` with both tiers, ≥ 95% of tier-A definitions carry
@@ -113,13 +153,22 @@ Rust only. Walk → parse → extract → segment → load → query.
   hand-audited sample of 20 is correct in both directions.
 - Deleting `index.scip` and reindexing degrades cleanly to `"name"` only, with
   `status: "no-scip"` on a query that needs precision.
+- `codeintel index` **without** `--run-indexers` prints the exact indexer
+  command for every detected language.
+- `codeintel index --run-indexers` produces a usable `index.scip` on the fixture,
+  and with the indexer binary removed from `PATH` it reports the failure and
+  completes with tier A only.
 
 ---
 
 ## M4 — Surface and stdlib
 
 1. `rules/stdlib.dl` — every rule in [01-facts.md](../specs/01-facts.md) §
-   Derived relations, each with a doc comment and a fixture test.
+   Derived relations, each with a doc comment and a fixture test. Includes the
+   resolution rules for `ref`, `symbol_at`/`innermost_at`, `about`, `is_test`,
+   and the seeded traversals.
+1b. Output rendering: symbol columns as `Name` + `path:line`, `--raw` for the
+   joinable form, and the byte cap wired through `truncated`/`cap`.
 2. `codeintel rules`, `schema`, `status`.
 3. `codeintel mcp` — one tool, the full status taxonomy, hints on every
    non-`ok`.
@@ -134,11 +183,13 @@ Rust only. Walk → parse → extract → segment → load → query.
   `docs/cookbook.md` — that file is the proof, and the artifact users actually
   read.
 - `codeintel schema` output is under 1500 tokens, measured.
-- **The agent test.** 10 held-out structural questions, phrased in English, in a
-  repo none of the fixtures come from. An agent given only `codeintel schema`
-  output must write a correct query for ≥ 8 on the first attempt. Record the
-  failures verbatim in `docs/agent-eval.md` — a failure is a `schema` wording
-  bug far more often than an agent bug, and the transcript is the evidence.
+- **The agent test, full version.** The M1 eval re-run against real extracted
+  facts, plus 10 *new* held-out questions in a repo none of the fixtures come
+  from. ≥ 8/10 first-attempt on both sets. A regression against the M1 numbers
+  means extraction quality, not schema wording, and points at M2/M3.
+- A no-SCIP run of the eval, recorded separately. The gap between the two
+  numbers *is* the honest measure of what tier A alone is worth, and it belongs
+  in the README rather than in a footnote.
 - Surface-budget test is in CI.
 
 ---
@@ -166,8 +217,10 @@ Only now, with correctness fixed and something to measure.
 
 1. Benchmark corpus: 3 pinned public repos, one per size decade (~10k, ~100k,
    ~1M LOC).
-2. `codeintel bench` reporting cold index, warm load, single-file reindex, and
-   query p50/p95 over a fixed query set.
+2. A **test-only** bench harness (`cargo bench`) reporting cold index, warm
+   load, single-file reindex, and query p50/p95 over a fixed query set. Not a
+   CLI verb — the budget is 6 and it is full
+   ([00-overview.md](../specs/00-overview.md) § Surface budget).
 3. Profile and fix what the numbers say — **not what seems slow.**
 
 **Done when** (on the ~100k-LOC corpus entry)
@@ -187,6 +240,8 @@ Recorded so a future agent knows these were considered, not overlooked.
 | Deferred | Revisit when |
 |---|---|
 | Merged-array load cache | M6 measures warm load > 200 ms |
+| Caching the derived `ref` relation | a profile shows materializing it dominates query time |
+| Auto-reindex of changed files on query | M6 confirms single-file reindex is well under 1 s |
 | Watch mode | single-file reindex measures > 1 s |
 | Live LSP probe (`codeintel probe file:line`) | a real query needs a type at a position that SCIP does not carry |
 | Multi-repo / cross-repo indexes | someone has the problem |

@@ -101,28 +101,39 @@ Per file, one parse, then:
 5. `exported` per the language's export predicate.
 6. Run `imports.scm` → `import` rows. The module specifier is captured **as
    written**; no resolution.
-7. `@reference.call` captures → `ref` rows with `Role = "read"`, `Prov = "name"`,
-   `From` = enclosing definition by the same span sweep, and `S` resolved by the
-   name-matching rule below.
+7. `@reference.call` captures → `name_ref(Name, F, Line, Col, From)` rows, with
+   `From` from the same span sweep. **Tier A does not resolve names to symbols.**
 
-### Name matching, and its honest limits
+### Tier A does not resolve names
 
-A tier-A reference resolves to a `SymId` by this rule and no other:
+Every tier-A fact is a function of **its own file and nothing else**. A name
+occurrence becomes `name_ref(Name, F, Line, Col, From)` — the text, its
+position, and its enclosing definition. Which symbol that name denotes is
+decided by rules in `stdlib.dl` ([01-facts.md](01-facts.md) § Derived
+relations), evaluated over the whole repo at query time.
 
-1. A definition with the same `Name` in the same file → that symbol.
-2. Otherwise, if exactly one indexed definition anywhere in the repo has that
-   `Name` and is `exported` → that symbol.
-3. Otherwise → **no `ref` row is emitted.**
+This is not a stylistic choice. A resolution decision depends on what exists in
+*other* files, so freezing it into a per-file fact makes incremental indexing
+unsound: adding a second `foo` in file B invalidates a fact in file A, and file
+A will never be re-extracted because file A did not change. Per-file facts must
+be per-file functions.
 
-Rule 3 is deliberate. dex tried harder — per-language import tables, a
+The secondary benefit is that the resolution policy is four readable rules a
+user can tighten, loosen, or delete, rather than a buried Rust decision.
+
+**We do not compete with compilers.** dex tried — per-language import tables, a
 TypeScript constructor-dependency-injection special case — and still produced a
-measurably skewed graph ([research.md](../docs/research.md) §1c). **We do not
-compete with compilers.** An ambiguous name produces nothing, tier B produces
-the truth, and the `Prov` column tells the query which it got.
+measurably skewed graph ([research.md](../docs/research.md) §1c). Tier A records
+what the grammar saw. Tier B records what the compiler knows. The `Prov` column
+on the derived `ref` says which one answered.
 
-Explicitly *not* attempted in tier A: receiver/method dispatch (`x.method()`),
-interface dispatch, generic instantiation, re-export chains, dynamic dispatch,
-aliased imports crossing files.
+Explicitly *not* attempted anywhere in tier A: receiver/method dispatch
+(`x.method()`), interface dispatch, generic instantiation, re-export chains,
+dynamic dispatch, aliased imports crossing files. In Rust, Python, TypeScript,
+and Java `x.method()` is the dominant call form, so **tier A alone yields a
+sparse and unrepresentative call graph.** That is stated plainly here, in
+`status` output, and in the README, because a sparse call graph reporting
+`status: ok` is indistinguishable from code that has no callers.
 
 ### Budget
 
@@ -137,11 +148,37 @@ different from "indexed and empty".
 
 ### Acquisition
 
-`codeintel` does **not** run indexers. It reads `index.scip` if present, at
-`--scip <path>` or the default `./index.scip`. Running `scip-typescript index`
-or `rust-analyzer scip .` is the user's job — those commands need the project's
-own toolchain, dependencies, and build config, and owning that is a second
-product.
+By default `codeintel` reads `index.scip` if present, at `--scip <path>` or the
+default `./index.scip`. It does not produce one.
+
+**`codeintel index --run-indexers`** opts into producing one. It detects the
+languages present, looks up the canonical indexer in a static table, checks the
+binary is on `PATH`, and shells out. That is the whole feature — a table, a
+`which`, and a subprocess.
+
+| Language | Command | Needs |
+|---|---|---|
+| Rust | `rust-analyzer scip .` | a cargo workspace |
+| TypeScript/JS | `scip-typescript index --infer-tsconfig` | `node_modules` installed |
+| Python | `scip-python index . --output index.scip` | an environment with deps |
+| Go | `scip-go` | a buildable module |
+| Java/Scala/Kotlin | `scip-java index` | a working build |
+
+Rules that keep this from becoming a build system:
+
+- **Never implicit.** Without the flag, nothing is executed. An indexer can run
+  arbitrary build code; that needs an explicit opt-in every time.
+- **No environment management.** We do not install indexers, create virtualenvs,
+  run `npm install`, or repair builds. A missing binary or a failing indexer is
+  reported with its stderr and the exact command, and indexing continues with
+  tier A only. It is never fatal.
+- **The table is data.** Adding a language adds a row, not a code path.
+- **Timeout, default 600 s**, after which the child is killed and reported.
+
+Without the flag, `index` and `status` still **print the exact command** for
+each detected language. Not "no SCIP index found" — the literal, copy-pasteable
+line. The gap between tier A and tier B is the difference between a symbol map
+and a call graph, and a user must never have to go looking for how to close it.
 
 `codeintel status` reports SCIP presence, the emitting tool from
 `Metadata.tool_info`, file coverage (`documents` matched against indexed files),
@@ -164,7 +201,7 @@ From `scip.proto` (field names verbatim):
 | `SymbolInformation.enclosing_symbol` | `parent(S, Enclosing)` |
 | `SymbolInformation.documentation[]` | `def_doc` (if tier A did not supply one) |
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
-| `Occurrence` without `Definition` role | `ref(S, F, L, C, From, Role, "exact")` |
+| `Occurrence` without `Definition` role | `scip_ref(S, F, L, C, From, Role)` |
 | `symbol_roles` bits | `Role`: `WriteAccess`→`write`, `ReadAccess`→`read`, `Import`→`import`, `Test`→`test`, `Generated`→`generated`, `ForwardDefinition`→`forward`, `Definition`→`def` |
 | `Relationship.is_implementation` | `implements(S, T, "exact")` |
 | `Relationship.is_type_definition` | `has_type(S, T, "exact")` |
@@ -259,11 +296,22 @@ tier A's `def_name` index to anchor against.
 
 ### Duplicate suppression
 
-A call site visible to both tiers produces two `ref` rows, `"name"` and
-`"exact"`. **Keep both.** They are different facts. `calls(A,B)` deduplicates
-naturally because it projects `Prov` away; `calls_exact` selects the precise one.
-Collapsing them at ingest would destroy the ability to ask "what does tier A see
-that tier B missed" — which is the diagnostic for a broken or stale SCIP index.
+A call site visible to both tiers contributes a `name_ref` *and* a `scip_ref`,
+so the derived `ref` relation carries two rows for it, `"name"` and `"exact"`.
+**Keep both.** They are different facts. `calls(A,B)` deduplicates naturally
+because it projects `Prov` away; `calls_exact` selects the precise one.
+
+Collapsing them would destroy the ability to ask "what does tier A see that
+tier B missed" — which is the diagnostic for a broken, partial, or stale SCIP
+index, and is expressible as a query:
+
+```prolog
+?- name_ref(N, F, L, C, From), !scip_ref(_, F, L, C, _, _).
+```
+
+Rows here are either tier-A false positives or genuine tier-B gaps. Either way
+the number should be small and stable; a jump means one of the tiers changed
+behaviour.
 
 ---
 
@@ -281,9 +329,16 @@ hand-written golden fact file.
    until someone applies an edit.
 3. **Anchor coverage.** On a fixture with both tiers, assert ≥ 95% of tier-A
    definitions get `resolved(S)`. A drop means the anchor join is drifting.
-4. **Tier-A precision.** On a fixture with both tiers, every `"name"` `ref` must
-   either match an `"exact"` `ref` at the same position or be listed in a
-   `known-imprecise.txt` with a reason. This bounds tier A's false-positive rate
-   with a number instead of a hope.
-5. **Idempotence.** Index twice → byte-identical segments.
-6. **Determinism across order.** Index with files shuffled → identical facts.
+4. **Tier-A precision.** On a fixture with both tiers, every derived `"name"`
+   `ref` must either match an `"exact"` `ref` at the same position or be listed
+   in `known-imprecise.txt` with a reason. This bounds tier A's false-positive
+   rate with a number instead of a hope.
+5. **Locality.** Every tier-A fact for file X must be reproducible by extracting
+   file X *alone*, with no other file indexed. This is the mechanical guard on
+   incremental soundness — it fails loudly the moment someone reintroduces a
+   cross-file lookup into the extractor.
+6. **Idempotence.** Index twice → byte-identical segments.
+7. **Determinism across order.** Index with files shuffled → identical facts.
+8. **Incremental equivalence.** Index the fixture; mutate one file; reindex
+   incrementally. The resulting fact set must equal a full cold reindex, byte
+   for byte. This is the test that would have caught the bug `name_ref` fixes.

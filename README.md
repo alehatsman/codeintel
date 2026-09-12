@@ -7,14 +7,19 @@ containment, imports, references, implementations — interns them into a compac
 fact store, and exposes them through a Datalog query engine. One index, one
 query language, no inference, no ranking, no magic.
 
-```
+```sh
 codeintel index .
-codeintel query '?- callers(C, "Store::get").'
+
+# you have a location — from ripgrep, a stack trace, a compiler error, a diff.
+# turn it into a symbol, then ask what it touches.
+codeintel query '?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
+                    def(C, F, _, N), at(C, F, L), !is_test(F).'
 ```
 
 ```
-src/api/handler.rs:42   handle_read
-src/cache/warm.rs:118   warm_entry
+handle_read     src/api/handler.rs:42
+warm_entry      src/cache/warm.rs:118
+flush_pending   src/cache/warm.rs:203
 ```
 
 ## Why
@@ -25,6 +30,11 @@ change it, what does this file actually depend on, which of these 200 exports is
 dead. Those are relational queries over a graph, and the honest interface to a
 graph is a relational query language.
 
+The bridge matters as much as the graph. Every other tool an agent uses speaks
+`path:line` — ripgrep, `git diff`, stack traces, compiler errors. `innermost_at`
+lifts any of them into the graph, so `codeintel` composes with the agent's
+existing habits instead of asking it to start over.
+
 Every hardcoded graph endpoint — `callers`, `impact`, `dead_exports`,
 `entrypoints` — is a two-line Datalog rule. Shipping the engine instead of the
 endpoints means the surface stops growing when the questions do.
@@ -33,7 +43,7 @@ endpoints means the surface stops growing when the questions do.
 
 No embeddings. No vector search. No LLM calls. No chunking, summarizing, or
 reranking. No quality scores or smell heuristics. No agent memory. No text
-search — you have ripgrep.
+search — you have ripgrep, and `innermost_at` is the bridge back.
 
 `codeintel` answers structural questions about code. That is the whole product.
 See [specs/00-overview.md](specs/00-overview.md) § Non-goals, which is binding.
@@ -64,6 +74,30 @@ The tree-sitter tier is fast, universal, and imprecise. The SCIP tier is
 precise and requires a working build. They are joined, not merged: facts carry
 an explicit `exact` / `name` provenance, so a query can demand precision or
 accept reach, and degradation is visible rather than silent.
+
+### You want the SCIP tier
+
+Be clear about what each tier buys, because the difference is large:
+
+| | tree-sitter alone | + SCIP |
+|---|---|---|
+| where symbols are, spans, signatures, docs | ✅ | ✅ |
+| containment, imports, `innermost_at` | ✅ | ✅ |
+| **call graph, `impact_of`, find-references** | ⚠️ sparse | ✅ |
+
+Tier A matches identifiers as text. It does not resolve `x.method()` — and in
+Rust, Python, TypeScript, and Java that is the *dominant* call form. Tier A
+alone gives you a good symbol map and a thin, unrepresentative call graph.
+
+So `codeintel index` always prints the exact indexer command for the languages
+it found, and `--run-indexers` runs them for you:
+
+```sh
+codeintel index . --run-indexers     # rust-analyzer scip . | scip-typescript index | ...
+```
+
+Never implicit — an indexer runs your build. If it is missing or fails, you get
+the command, its stderr, and a tier-A index; it is never fatal.
 
 ## Docs
 
