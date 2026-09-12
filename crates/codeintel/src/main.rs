@@ -21,8 +21,8 @@ struct Cli {
     command: Command,
 }
 
-/// The verbs. The budget is five (`specs/00-overview.md` § Surface budget);
-/// `schema`, `status` and `mcp` land at M4.
+/// The verbs. The budget is five (`specs/00-overview.md` § Surface budget) and
+/// all five are here: growing to six requires deleting one.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Build or update the index.
@@ -61,6 +61,14 @@ enum Command {
         /// piping one query's output into another query's literal.
         #[arg(long)]
         raw: bool,
+        /// A file of extra Datalog rules, loaded after the standard library.
+        /// Repeatable. This is where a repository keeps its conformance rules.
+        #[arg(long = "rules")]
+        rules: Vec<PathBuf>,
+        /// Exit 1 if the query returns any row. A conformance check states the
+        /// violation it looks for, so finding none is the passing case.
+        #[arg(long)]
+        expect_empty: bool,
     },
     /// Print the relation catalog, the value vocabularies and the rules.
     Schema {
@@ -70,6 +78,12 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
+    },
+    /// Serve the one MCP tool on stdin and stdout.
+    Mcp {
+        /// The repository root.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
     /// Report what the index holds and how far it has drifted from the tree.
     Status {
@@ -116,9 +130,23 @@ fn run() -> Result<ExitCode> {
             limit,
             no_refresh,
             raw,
-        } => query_cmd(&program, &path, format, limit, no_refresh, raw),
+            rules,
+            expect_empty,
+        } => query_cmd(
+            &program,
+            &path,
+            format,
+            &Options {
+                limit: limit.unwrap_or_else(|| Options::default().limit),
+                no_refresh,
+                raw,
+                rules,
+            },
+            expect_empty,
+        ),
         Command::Schema { path, format } => schema_cmd(&path, format),
         Command::Status { path, format } => status_cmd(&path, format),
+        Command::Mcp { path } => mcp_cmd(&path),
     }
 }
 
@@ -160,6 +188,16 @@ fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
     }
     // A missing index is a fact about this directory, not a failure of the
     // command that reported it.
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The one MCP tool, over JSON-RPC on stdin and stdout.
+fn mcp_cmd(path: &std::path::Path) -> Result<ExitCode> {
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("{} does not exist", path.display()))?;
+    let stdin = std::io::stdin();
+    codeintel::mcp::serve(&root, stdin.lock(), std::io::stdout().lock())?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -330,9 +368,8 @@ fn query_cmd(
     program: &str,
     path: &std::path::Path,
     format: Format,
-    limit: Option<usize>,
-    no_refresh: bool,
-    raw: bool,
+    options: &Options,
+    expect_empty: bool,
 ) -> Result<ExitCode> {
     let source = if program == "-" {
         let mut buffer = String::new();
@@ -344,18 +381,13 @@ fn query_cmd(
         program.to_string()
     };
 
-    let options = Options {
-        limit: limit.unwrap_or_else(|| Options::default().limit),
-        no_refresh,
-        raw,
-    };
-    let answer = query::run(path, &source, &options)?;
+    let answer = query::run(path, &source, options)?;
 
     match format {
         Format::Json => println!("{}", query::to_json(&answer)),
         Format::Text => {
             for row in &answer.rows {
-                println!("{}", row.line(raw));
+                println!("{}", row.line(options.raw));
             }
             // The status goes to stderr so that stdout is exactly the rows —
             // but it is never omitted, because `ok` with zero rows and a
@@ -366,11 +398,27 @@ fn query_cmd(
             }
         }
     }
-    Ok(if answer.status.answered() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(2)
-    })
+    // Never silent: a repository rule replacing `is_test` changes every answer
+    // that reads it, and the caller has to know it happened.
+    for head in &answer.shadowed {
+        eprintln!("shadowed: `{head}` from a rule file replaces the stdlib rule");
+    }
+
+    if !answer.status.answered() {
+        return Ok(ExitCode::from(2));
+    }
+    // A conformance check states the violation it looks for, so finding none is
+    // the passing case. Exit 1 — distinct from the 2 that means the query never
+    // ran, because "your code violates this" and "I could not tell you" are not
+    // the same result in CI.
+    if expect_empty && !answer.rows.is_empty() {
+        eprintln!(
+            "expect-empty: {} row(s) returned; this check states a violation and found one",
+            answer.rows.len()
+        );
+        return Ok(ExitCode::from(1));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]
@@ -392,6 +440,6 @@ mod tests {
             .map(|c| c.get_name().to_string())
             .collect();
         assert!(verbs.len() <= 5, "{verbs:?}");
-        assert_eq!(verbs, vec!["index", "query", "schema", "status"]);
+        assert_eq!(verbs, vec!["index", "query", "schema", "mcp", "status"]);
     }
 }

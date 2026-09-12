@@ -6,10 +6,12 @@ binding: yes
 # 05 — Surface
 
 The surface budget from [00-overview.md](00-overview.md) is binding: **5 CLI
-verbs, 1 MCP tool, <= 24 named predicates in `stdlib.dl`.** Growth requires
-deletion. The rule count is in the budget because it is the dimension that
-actually grows; asserting only the ones that do not makes the thesis
-unfalsifiable.
+verbs, 1 MCP tool, <= 16 base relations, <= 40 named predicates in
+`stdlib.dl`.** Growth requires deletion. The rule count is in the budget because
+it is the dimension that actually grows; asserting only the ones that do not
+makes the thesis unfalsifiable. `tests/surface.rs` asserts all four, and
+00-overview.md § Surface budget records why the rule cap moved from 24 and what
+now keeps it honest.
 
 ## Status taxonomy
 
@@ -52,11 +54,11 @@ gets what there is and is told exactly what is wrong with it. Only `no-index`,
 
 ```
 codeintel index  [PATH] [--scip FILE]... [--rebuild] [--lang L]...
-codeintel query  <PROGRAM|-> [--format text|json] [--limit N] [--rules FILE]...
-                 [--raw] [--no-refresh] [--expect-empty]
-codeintel schema [--format text|json]
+codeintel query  <PROGRAM|-> [--path DIR] [--format text|json] [--limit N]
+                 [--rules FILE]... [--raw] [--no-refresh] [--expect-empty]
+codeintel schema [--path DIR] [--format text|json]
 codeintel status [PATH] [--format text|json]
-codeintel mcp
+codeintel mcp    [--path DIR]
 ```
 
 **Five verbs.** `PATH` defaults to `.`.
@@ -135,6 +137,23 @@ the worst failure this tool has, because it looks like a right one.
   pinned index.
 - New files are picked up; **deleted files are pruned.** A refresh that only
   added would leave a deleted file's facts answering queries.
+
+**`--rules FILE` is where a repository keeps its own conformance rules** —
+layering, banned dependencies, allowed directions — so they live in the
+repository under review rather than in this binary. Repeatable, loaded after
+`stdlib.dl`.
+
+**Clauses in a rule file are additive, not replacements.** A predicate is the
+union of its clauses, so a file defining `is_test` *widens* it. Only a rule
+written in the query program itself shadows a loaded one, and that shadowing is
+reported on stderr and in `stats.shadowed` — a repository rule quietly replacing
+`is_test` would change every answer that reads it. A repository that means to
+replace a stdlib rule puts it in the program, not in a rule file.
+
+**`--expect-empty` exits 1 if any row comes back.** A conformance check states
+the violation it looks for, so finding none is the passing case. The exit code
+is 1 and not 2 because "your code violates this" and "I could not tell you" are
+different results in CI: 2 stays reserved for a query that never ran.
 
 MCP always refreshes; the flag is not exposed there. An agent editing files is
 the assumed case, not the exception.
@@ -344,17 +363,33 @@ as totals only, rather than joined through `def` to invent a language for them.
     "type": "object",
     "properties": {
       "query":  { "type": "string", "description": "Datalog program ending in a ?- goal." },
-      "rule":   { "type": "string", "description": "Named stdlib rule instead of a program." },
-      "args":   { "type": "array", "items": { "type": "string" } },
       "schema": { "type": "boolean", "description": "Return the relation catalog and exit." },
       "limit":  { "type": "integer", "default": 200 },
-      "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
+      "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
+      "raw":    { "type": "boolean", "description": "SymIds instead of `Name path:line`." }
     }
   }
 }
 ```
 
-Exactly one of `query`, `rule`, `schema` per call; two is `invalid-query`.
+Exactly one of `query` or `schema` per call; both is an error naming the two.
+
+**`rule` and `args` are not in this schema.** They were, and they carried the
+defect that deleted the `rules` CLI verb: `args` is an array of strings, and an
+integer and its string form are different atoms ([01-facts.md](01-facts.md)
+§ Integers), so `{"rule": "innermost_at", "args": ["src/store.rs", "142"]}` bound
+the *string* `"142"`, matched nothing, and returned `ok` with zero rows. Coercing
+digit-only arguments would be the extractor guessing, which invariant 1 forbids,
+and would make a symbol genuinely named `142` unaddressable. An agent writing
+`?- innermost_at("src/store.rs", 142, S).` gets the integer right because it is
+writing Datalog rather than filling positional slots.
+
+**Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout, hand-written.**
+A message with no `id` is a notification and gets no reply. There is no MCP SDK
+dependency: the protocol surface this server needs is `initialize`, `tools/list`,
+`tools/call` and `ping`, `serde_json` is already present for the response
+contract, and the whole transport is ~150 lines. Recorded in
+[research.md](../docs/research.md) §6.
 
 ### Response contract
 

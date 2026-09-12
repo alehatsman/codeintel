@@ -12,6 +12,7 @@
 pub mod census;
 pub mod index;
 pub mod load;
+pub mod mcp;
 pub mod query;
 pub mod regexes;
 pub mod render;

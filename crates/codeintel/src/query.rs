@@ -6,7 +6,7 @@
 //! (`specs/05-surface.md` § `query`).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -55,6 +55,19 @@ pub struct Options {
     /// What round-trips: the output of one query pasted into the next query's
     /// literal. The rendered form is for reading, not for feeding back.
     pub raw: bool,
+    /// Extra rule files, loaded after `stdlib.dl` and before the goal.
+    ///
+    /// This is where a repository keeps its own conformance rules — layering,
+    /// banned dependencies, allowed directions — so they live in the repository
+    /// under review rather than in this binary.
+    ///
+    /// **Clauses here are additive, not replacements.** A predicate is the
+    /// union of its clauses, so a file defining `is_test` *widens* it rather
+    /// than redefining it. Only a rule written in the query program itself
+    /// shadows a loaded one, and that shadowing is reported in
+    /// [`Answer::shadowed`]. A repository that means to replace a stdlib rule
+    /// puts it in the program, not in a rule file.
+    pub rules: Vec<PathBuf>,
 }
 
 impl Default for Options {
@@ -63,6 +76,7 @@ impl Default for Options {
             limit: Limits::default().max_result_rows,
             no_refresh: false,
             raw: false,
+            rules: Vec::new(),
         }
     }
 }
@@ -95,6 +109,10 @@ pub struct Answer {
     pub transformed: Vec<String>,
     /// Base relations the goal's dependency closure reaches.
     pub depends: Vec<String>,
+    /// Stdlib rules a loaded rule file or the query itself shadowed. Never
+    /// silent: a repository rule quietly replacing `is_test` would change
+    /// every answer that reads it.
+    pub shadowed: Vec<String>,
 }
 
 impl Answer {
@@ -111,6 +129,7 @@ impl Answer {
             refreshed: 0,
             transformed: Vec::new(),
             depends: Vec::new(),
+            shadowed: Vec::new(),
         }
     }
 }
@@ -167,6 +186,26 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
     engine
         .load_rules(STDLIB)
         .map_err(|d| anyhow::anyhow!("rules/stdlib.dl does not load: {}", d.message))?;
+    // A repository's own conformance rules. Additive: a predicate is the union
+    // of its clauses, so a file defining `is_test` widens it. Only a rule in
+    // the query program shadows a loaded one.
+    for path in &options.rules {
+        let src = match std::fs::read_to_string(path) {
+            Ok(src) => src,
+            Err(e) => {
+                return Ok(Answer::of(
+                    Status::InvalidQuery,
+                    format!("{}: {e}", path.display()),
+                ));
+            }
+        };
+        if let Err(diagnostic) = engine.load_rules(&src) {
+            return Ok(Answer::of(
+                Status::of(diagnostic.status),
+                format!("{}: {}", path.display(), diagnostic.message),
+            ));
+        }
+    }
 
     let budget = Limits::default().max_result_bytes;
     let mut limits = Limits::default();
@@ -235,6 +274,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         refreshed,
         transformed: result.stats.transformed.clone(),
         depends: result.stats.depends.clone(),
+        shadowed: result.stats.shadowed.clone(),
     })
 }
 
@@ -393,7 +433,7 @@ fn refresh(
             .manifest()
             .scip
             .iter()
-            .map(|input| std::path::PathBuf::from(&input.path))
+            .map(|input| PathBuf::from(&input.path))
             .collect(),
         ..Plan::default()
     };
@@ -447,6 +487,7 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
             "refreshed": answer.refreshed,
             "transformed": answer.transformed,
             "depends": answer.depends,
+            "shadowed": answer.shadowed,
         },
     })
 }

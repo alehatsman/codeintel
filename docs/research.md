@@ -440,6 +440,24 @@ model backend.
 - **`blake3` and `regex` were missing from this budget at spec time** and are
   now listed, per §1f. A budget `CLAUDE.md` calls "the entire budget" has to be
   complete to mean anything.
+- **No MCP SDK — the transport is hand-written.** Decided at M4, when
+  `codeintel mcp` was built. STACK.md has no entry, so this is a first ruling
+  rather than a deviation. The stdio transport is newline-delimited JSON-RPC
+  2.0; the surface this server needs is `initialize`, `tools/list`, `tools/call`
+  and `ping`; `serde_json` is already a dependency for the response contract;
+  and there is exactly **one tool**, so none of what an SDK offers — routing
+  across many tools, schema derivation, capability negotiation beyond a single
+  flag — is load-bearing here. The whole transport is ~150 lines in
+  `crates/codeintel/src/mcp.rs`. Revisit if a second transport is needed, or if
+  the protocol revision this server pins (`2024-11-05`) starts costing more to
+  track than an SDK would.
+- **Still no `tracing`, re-checked at M4.** The revisit trigger recorded above
+  was "when `codeintel mcp` becomes a long-running process with no stdout to
+  spare". It is now that process, and the answer is still no: stdout carries
+  JSON-RPC frames, stderr is free, and every degradation an operator needs is a
+  `status` plus a `hint` on the response itself. A log would be a *second*
+  channel saying what the response already says, which is how the two start
+  disagreeing.
 
 ### Language coverage
 

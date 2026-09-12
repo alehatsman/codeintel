@@ -116,12 +116,32 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 - **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
   Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
 - **Base relations: ≤ 16.** Currently 14 ([01-facts.md](01-facts.md)).
-- **Named predicates in `rules/stdlib.dl`: ≤ 24.** This is the one that grows.
+- **Named predicates in `rules/stdlib.dl`: ≤ 40.** This is the one that grows.
   The other three cannot, which is why asserting only those three would make the
-  founding thesis unfalsifiable. Flags do not count — `--rules`, `--raw`,
-  `--expect-empty` cost no verb — but a flag that needs a paragraph in `schema`
-  output is spending the budget that actually binds: **`codeintel schema` must
-  fit in ~1500 tokens with the rule list complete.**
+  founding thesis unfalsifiable. Flags do not count — `--raw` costs no verb —
+  but a flag that needs a paragraph in `schema` output is spending the budget
+  that actually binds: **`codeintel schema` must fit in ~1500 tokens with the
+  rule list complete.**
+
+  **The number was 24, and 24 was never reconciled with the fact schema.**
+  `rules/stdlib.dl` shipped at M1 with 37 named predicates and every one of them
+  is specified in [01-facts.md](01-facts.md) § Derived relations: the cap and the
+  relation list were written separately and disagreed from the day both existed.
+  M4 resolved it by raising the cap rather than cutting thirteen rules, because
+  the cheapest thirteen are the `_exact` family and the aliases, and the `_exact`
+  family is the entire argument for tier B — M3 measured tier A over-reporting
+  252 call edges on this repository, 17% of what it claims, and those rules are
+  how a caller avoids them.
+
+  **State the cost plainly: moving a limit the first time it binds is how limits
+  stop binding.** What keeps this one honest is that it is not the constraint
+  that actually bites. The token budget is: every rule must appear in `schema`
+  with its signature and a one-line doc, and `schema` must fit ~1500 tokens.
+  Measured at M4, 37 rules leave ~1,391 tokens of 1,500 — so roughly three more
+  rules fit before the *text* refuses them, which is why 40 and not 64. A 41st
+  rule is a conversation about what to delete, and if the copy is trimmed to
+  smuggle one in, the token assertion is the thing that has been gamed and it is
+  visible in the diff.
 
 If a new capability cannot be expressed as a Datalog rule over the existing
 relations, that is the signal to think hard — not the signal to add a verb.

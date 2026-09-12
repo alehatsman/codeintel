@@ -536,3 +536,145 @@ fn truncation_is_reported_with_the_cap_that_fired() {
         Some(2)
     );
 }
+
+#[test]
+fn a_conformance_check_passes_clean_and_fails_dirty() {
+    // The headline capability in the form CI consumes it: a rule file in the
+    // repository under review, and an exit code. `--expect-empty` exits 1 on a
+    // violation, distinct from the 2 that means the query never ran — "your
+    // code violates this" and "I could not tell you" are not the same result.
+    let dir = tree();
+    index(dir.path());
+
+    let rules = dir.path().join("conformance.dl");
+    std::fs::write(
+        &rules,
+        "%% ui_imports_db(F, M)  no module under ui/ may import from db/\n\
+         ui_imports_db(F, M) :- import(F, M, _), prefix(F, \"src/ui/\"), contains(M, \"db\").\n",
+    )
+    .expect("write");
+    let rules = rules.to_string_lossy().to_string();
+
+    let violating = run(
+        dir.path(),
+        &[
+            "query",
+            "?- ui_imports_db(F, M).",
+            "--rules",
+            &rules,
+            "--expect-empty",
+        ],
+    );
+    assert_eq!(
+        violating.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&violating.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&violating.stderr).contains("expect-empty"),
+        "the failure has to say why"
+    );
+
+    // Remove the offending import and the same check passes.
+    let panel = dir.path().join("src/ui/panel.rs");
+    let source = std::fs::read_to_string(&panel).expect("read");
+    let kept: Vec<&str> = source.lines().filter(|l| !l.contains("db")).collect();
+    let cleaned = kept.join("\n");
+    std::fs::write(&panel, cleaned).expect("write");
+
+    let clean = run(
+        dir.path(),
+        &[
+            "query",
+            "?- ui_imports_db(F, M).",
+            "--rules",
+            &rules,
+            "--expect-empty",
+        ],
+    );
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+}
+
+#[test]
+fn rule_files_add_clauses_and_the_query_shadows_them() {
+    // A predicate is the union of its clauses, so a `--rules` file defining
+    // `is_test` WIDENS it rather than replacing it. Only a rule written in the
+    // query program itself shadows a loaded one — and that is reported, because
+    // a repository rule quietly replacing `is_test` would change every answer
+    // that reads it.
+    let dir = tree();
+    index(dir.path());
+    let rules = dir.path().join("extra.dl");
+    std::fs::write(
+        &rules,
+        "is_test(F) :- file(F, _), contains(F, \"panel\").\n",
+    )
+    .expect("write");
+    let rules = rules.to_string_lossy().to_string();
+
+    // `is_test` is the union: the stdlib's path conventions plus the new one.
+    let widened = run(dir.path(), &["query", "?- is_test(F).", "--rules", &rules]);
+    let rows: Vec<String> = String::from_utf8_lossy(&widened.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        rows.iter().any(|r| r.contains("panel")),
+        "the rule file did not widen is_test: {rows:?}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&widened.stderr).contains("shadowed"),
+        "an additive clause is not a shadowing"
+    );
+
+    // The same rule in the *program* replaces every loaded clause, and says so.
+    let shadowing = run(
+        dir.path(),
+        &[
+            "query",
+            "is_test(F) :- file(F, _), contains(F, \"panel\"). ?- is_test(F).",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&shadowing.stderr);
+    assert!(stderr.contains("shadowed"), "{stderr}");
+    assert!(stderr.contains("is_test"), "{stderr}");
+    let rows: Vec<String> = String::from_utf8_lossy(&shadowing.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        rows.iter().all(|r| r.contains("panel")),
+        "the stdlib clauses survived a shadowing: {rows:?}"
+    );
+}
+
+#[test]
+fn a_broken_rule_file_is_an_answer_not_a_crash() {
+    let dir = tree();
+    index(dir.path());
+    let rules = dir.path().join("broken.dl");
+    std::fs::write(&rules, "this is not datalog\n").expect("write");
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- def(S, F, K, N).",
+            "--rules",
+            &rules.to_string_lossy(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("status=invalid-query"), "{stderr}");
+    assert!(
+        stderr.contains("broken.dl"),
+        "the file has to be named: {stderr}"
+    );
+}
