@@ -29,7 +29,8 @@ space is split so integers need no decode step:
 
 ```
 0x0000_0000 ..= 0x0FFF_FFFF   small non-negative integers. id n IS the integer n.
-0x1000_0000 ..= 0xFFFF_FFFF   string-table entries. 0x1000_0000 is EMPTY ("").
+0x1000_0000 ..= 0xEFFF_FFFF   deduplicated strings. 0x1000_0000 is EMPTY ("").
+0xF000_0000 ..= 0xFFFF_FFFF   opaque blobs. NOT deduplicated. = and != are errors.
 ```
 
 So `Line = 42` is literally `42` in the tuple, and `<`/`>` work directly on the
@@ -38,6 +39,19 @@ raw `u32` with no lookup. Integer `0` is atom `0`; the empty string is atom
 
 Consequence an implementer must not miss: the interned string `"42"` and the
 integer `42` are **different atoms**. `Line = "42"` never matches.
+
+**Opaque blobs.** Doc comments are long, effectively unique, and only ever
+displayed — never joined, never compared. Running them through the dedup map
+costs hashing and map overhead at index time and buys nothing, so strings over
+`OPAQUE_THRESHOLD` (default 256 bytes) are appended without a dedup lookup and
+get an id in the opaque range.
+
+The consequence is that two identical doc comments receive **different atoms**.
+Rather than let that silently make `=` return false on equal strings, the engine
+**rejects `=` and `!=` on opaque atoms** as `invalid-query`
+([03-datalog.md](03-datalog.md) § Safety rules). They can be bound, projected,
+returned, and matched with `match`/`contains`; they cannot be tested for
+identity. An explicit error beats a quiet wrong answer.
 
 ## Atom vocabularies
 
@@ -133,15 +147,52 @@ def_sig("local src/store.rs Store#get().", "pub fn get(&self, k: &str) -> Option
 
 ### `def_doc(S, Doc)`
 The attached doc comment, marker prefixes stripped, newlines preserved. Absent
-if there is none — **no empty-string rows**, so `!def_doc(S, _)` means undocumented.
+if there is none — **no empty-string rows**, so `!def_doc(S, _)` means
+undocumented. `Doc` is usually an **opaque atom** (§ Integers): displayable and
+`match`-able, but not comparable with `=`.
 
 ### `parent(Child, Parent)`
-Lexical containment, one hop. `Parent` is a `SymId` for nested definitions or a
-file path `F` for top-level ones — both are atoms, so the column is uniform.
-Every `def` has exactly one `parent` row.
+The **semantic owner**, one hop. `Parent` is a `SymId` for owned definitions or
+a file path `F` for top-level ones — both are atoms, so the column is uniform.
+**Exactly one row per `def`**, guaranteed by the precedence below.
 ```
 parent("local src/store.rs Store#get().", "local src/store.rs Store#").
 parent("local src/store.rs Store#",       "src/store.rs").
+```
+
+Semantic, not lexical — and the two genuinely differ. A Go method is *not*
+lexically inside its type:
+
+```go
+type Store struct { ... }
+func (s *Store) Get(k string) (Entry, bool) { ... }   // lexically at file scope
+```
+
+Span nesting says `parent(Get, "store.go")`. Everyone asking "what are Store's
+methods" means `parent(Get, Store#)`. The second is the useful answer, so
+`parent` carries it.
+
+**Precedence — first source that yields a value wins, and they are tried in
+this fixed order:**
+
+1. **Descriptor prefix of the SCIP symbol.** Drop the last descriptor from the
+   symbol string; if the result names an indexed definition, that is the parent.
+   `pkg/Store#Get().` → `pkg/Store#`. Universally available, because the
+   descriptor grammar is mandatory in SCIP — unlike `enclosing_symbol`, which
+   not every indexer populates.
+2. **`SymbolInformation.enclosing_symbol`**, when descriptor truncation yields
+   nothing indexed. This is the path for SCIP `local` symbols.
+3. **Tier A span nesting** — the innermost enclosing definition, or the file.
+   The only source for unresolved symbols, and the fallback everywhere else.
+
+Deterministic, total, and exactly one row. The tradeoff is deliberate: lexical
+containment is no longer recoverable from `parent` for the cases where the two
+disagree. Nothing in `stdlib.dl` wants it, and `def_span` containment recovers
+it for anything that does:
+
+```prolog
+lexical_parent(C, P) :- innermost_at(F, L, P), def(C, F, _, _),
+                        def_span(C, L, _, _, _), P != C.
 ```
 
 ### `exported(S)`

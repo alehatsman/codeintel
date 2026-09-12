@@ -33,9 +33,9 @@ index and segments never need rewriting when the dictionary grows.
 **Id space** ([01-facts.md](01-facts.md) § Integers):
 
 ```
-0                        the empty string
-1 ..= 0x0FFF_FFFF        small non-negative integers, encoded as themselves
-0x1000_0000 ..= u32::MAX string-table entries
+0x0000_0000 ..= 0x0FFF_FFFF   small non-negative integers, encoded as themselves
+0x1000_0000 ..= 0xEFFF_FFFF   deduplicated strings; 0x1000_0000 is EMPTY ("")
+0xF000_0000 ..= 0xFFFF_FFFF   opaque blobs: not deduplicated, identity-incomparable
 ```
 
 `dict.bin` is concatenated UTF-8 with no separators. `dict.idx` is a `Vec<u32>`
@@ -45,6 +45,15 @@ resolving an atom to a string is two loads and a slice.
 In-memory, the indexer additionally holds a `HashMap<&str, Atom>` borrowing from
 the mmap for dedup during a run. The query path never needs it — queries compare
 atoms, and only materialize strings when formatting output.
+
+**Opaque blobs bypass that map.** A string over `OPAQUE_THRESHOLD` (default 256
+bytes) — in practice doc comments — is appended to `dict.bin` and assigned an id
+in the opaque range without a dedup lookup. Doc comments are effectively unique,
+so the lookup nearly always misses; skipping it saves hashing multi-kilobyte
+strings and the per-entry map overhead across every definition in the repo, and
+costs only duplicate bytes on disk in a file that is mmap-ed and never fully
+read. The identity consequence is handled in the engine, not hidden
+([03-datalog.md](03-datalog.md) § Safety rules).
 
 **Growth.** Atoms are never reused and never renumbered. A long-lived index on a
 churning repo accumulates dead strings. Reclaim is `codeintel index --rebuild`,

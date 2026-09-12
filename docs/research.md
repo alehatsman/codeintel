@@ -297,7 +297,7 @@ The whole binary, as specified:
 | Crate | Why | Verified |
 |---|---|---|
 | `tree-sitter` | parsing | 0.27.0, 2026-08-30 |
-| `tree-sitter-{rust,python,typescript,go}` | grammars | current |
+| 9 grammar crates (below) | grammars | all current, all ship `tags.scm` |
 | `scip` | protobuf bindings for the SCIP tier | 0.10.0, 2026-09-03 |
 | `protobuf` | transitive, required by `scip` | 4.36.1 |
 | `memmap2` | segment loading | 0.9.11 |
@@ -308,6 +308,38 @@ The whole binary, as specified:
 The Datalog engine, the fact store, the interner, the extractors, and the MCP
 server are all first-party. No async runtime, no database, no HTTP client, no
 model backend.
+
+### Language coverage
+
+Verified 2026-09-12: every grammar below is published, current, **and ships
+`queries/tags.scm` upstream** — so each costs one crate, two vendored `.scm`
+files, and one `lang.rs` row. No per-language Rust.
+
+| Language | Grammar crate | SCIP indexer | Tier |
+|---|---|---|---|
+| Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | core |
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` | core |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` | core |
+| JavaScript | `tree-sitter-javascript` 0.25.0 | `scip-typescript` | core |
+| TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | core |
+| C | `tree-sitter-c` 0.24.2 | `scip-clang` | extended |
+| C++ | `tree-sitter-cpp` 0.23.4 | `scip-clang` | extended |
+| Ruby | `tree-sitter-ruby` 0.23.1 | `scip-ruby` | extended |
+| Java | `tree-sitter-java` 0.23.5 | `scip-java` | extended |
+
+**core** = full fixture suite (golden facts, span exactness, anchor rate,
+tier-A precision, locality). **extended** = shipped and smoke-tested; the full
+suite follows as fixtures are written. Both are available out of the box — the
+tier says how much we have *proven*, not what is enabled.
+
+One risk to check at M5: the grammar crates span tree-sitter ABI versions
+(0.23.x through 0.25.x against a 0.27 runtime). tree-sitter maintains ABI
+compatibility across a range, but the four extended grammars are the oldest and
+should be smoke-loaded before anything is built on them.
+
+`scip-clang` needs `compile_commands.json` and `scip-ruby` needs a Sorbet setup,
+so the extended tier has a heavier tier-B bootstrap than the core five. Tier A
+works everywhere regardless.
 
 ---
 

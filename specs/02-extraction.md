@@ -163,6 +163,8 @@ binary is on `PATH`, and shells out. That is the whole feature — a table, a
 | Python | `scip-python index . --output index.scip` | an environment with deps |
 | Go | `scip-go` | a buildable module |
 | Java/Scala/Kotlin | `scip-java index` | a working build |
+| C / C++ | `scip-clang --compdb-path compile_commands.json` | a compilation database |
+| Ruby | `scip-ruby` | a Sorbet-typechecked project |
 
 Rules that keep this from becoming a build system:
 
@@ -198,7 +200,7 @@ From `scip.proto` (field names verbatim):
 | `Occurrence` with `symbol_roles & Definition` | a definition site; `symbol` → `SymId` |
 | `SymbolInformation.kind` | `Kind`, via the mapping table below |
 | `SymbolInformation.display_name` | `Name` |
-| `SymbolInformation.enclosing_symbol` | `parent(S, Enclosing)` |
+| symbol-string descriptor prefix, else `SymbolInformation.enclosing_symbol` | `parent(S, Owner)` — replaces tier A's row, see § Parent precedence |
 | `SymbolInformation.documentation[]` | `def_doc` (if tier A did not supply one) |
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
 | `Occurrence` without `Definition` role | `scip_ref(S, F, L, C, From, Role)` |
@@ -260,6 +262,30 @@ SCIP does not say which function a reference sits inside. We compute it with
 Both tiers, one algorithm, one test suite. This is also why `calls` is a Datalog
 rule rather than an extractor output: the extractor emits *where a reference is*,
 and the rule decides what counts as a call.
+
+### Parent precedence
+
+Both tiers can supply a parent and they disagree in real cases — most visibly a
+Go method, which is lexically at file scope but semantically owned by its type.
+`parent` carries the **semantic owner**, resolved by a fixed order
+([01-facts.md](01-facts.md) § `parent`):
+
+1. Drop the last descriptor from the SCIP symbol string. `pkg/Store#Get().` →
+   `pkg/Store#`. If that names an indexed definition, it is the parent.
+   Preferred because the descriptor grammar is mandatory, so every indexer
+   supplies it.
+2. Else `SymbolInformation.enclosing_symbol`, which is how SCIP `local` symbols
+   get an owner.
+3. Else tier A's span nesting.
+
+Tier B **replaces** tier A's row rather than adding one, so the
+one-row-per-definition guarantee holds. Replacement happens after the anchor
+join, when the tier-A symbol already carries its SCIP identity.
+
+Descriptor truncation must be done on the parsed descriptor list, not by string
+surgery — descriptor names can contain `#`, `.`, and `/` when backtick-quoted
+(SCIP escapes them as `` `name with spaces` ``), so a naive `rsplit` on the
+suffix character corrupts them.
 
 ### Local symbols
 

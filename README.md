@@ -115,6 +115,21 @@ Read in this order.
 | [docs/research.md](docs/research.md) | Findings, rejected options, evidence |
 | [CLAUDE.md](CLAUDE.md) | Rules for agents implementing this |
 
+## Languages
+
+Nine, out of the box. Every grammar ships `tags.scm` upstream, so a language
+costs one crate, two vendored query files, and one table row — no per-language
+Rust.
+
+| | Language | SCIP indexer |
+|---|---|---|
+| **core** | Rust, Go, Python, JavaScript, TypeScript (+TSX) | `rust-analyzer scip` · `scip-go` · `scip-python` · `scip-typescript` |
+| **extended** | C, C++, Ruby, Java | `scip-clang` · `scip-ruby` · `scip-java` |
+
+Both tiers are enabled; the label is how much we have **proven**. Core carries
+the full test suite (golden facts, span exactness, anchor rate, tier-A
+precision, locality); extended is smoke-tested while its fixtures get written.
+
 ## Status
 
 Specification. No code yet. Start at [docs/plan.md](docs/plan.md) § M0.

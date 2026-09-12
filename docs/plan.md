@@ -17,20 +17,81 @@ skel   engine  tier A  tier B  surface  langs  perf
 
 ## M0 — Skeleton
 
-Workspace, crate seams, CI.
+Workspace, crate seams, and the quality gate. **The gate comes first** — it is
+far cheaper to adopt the lint block on an empty workspace than to retrofit it
+across four crates.
 
 ```
 crates/datalog  crates/facts  crates/extract  crates/codeintel
-queries/  rules/  tests/fixtures/
+queries/  rules/  tests/fixtures/  tasks/
 ```
 
+### The quality gate is not ours to invent
+
+This repo is a consumer of [rust-quality](https://github.com/alehatsman/rust-quality)
+— the shared lint block, clippy/rustfmt/cargo-deny config, cargo aliases, and
+the two-mode gate — driven by [provision](https://github.com/alehatsman/provision).
+
+**`provision` is also the worked example.** Its `tasks/` directory is the
+reference consumer wiring; copy that shape rather than deriving a new one.
+
+Wire it exactly as `provision` does:
+
+```
+tasks/
+  tools.yml         pins the rust-quality ref, clones it via the `git` action to
+                    ~/.cache/provision/tools/rust-quality, installs cargo-nextest
+                    / cargo-deny / cargo-machete + the clippy & rustfmt components.
+                    THE PIN LIVES HERE AND NOWHERE ELSE.
+  sync-config.yml   copies clippy.toml / rustfmt.toml / deny.toml / .cargo/config.toml
+                    into this repo and prints the canonical lint block
+  ci.yml            use: ~/.cache/provision/tools/rust-quality/ci.yml   (full gate)
+  ci-fast.yml       use: ~/.cache/provision/tools/rust-quality/fast.yml (pre-commit)
+  lints-check.yml   lint-block drift — the one thing cargo cannot check itself
+  findings.yml      every finding as JSONL -> .gate/findings.jsonl
+```
+
+Notes that matter:
+
+- Every preset defaults to what a single-crate-workspace repo wants, so
+  `tasks/ci.yml` is a `use:` and nothing else. Do not pass `dir` — this is one
+  workspace.
+- Nothing fetches at gate time. The checkout is a step in `tasks/tools.yml`,
+  `creates`-gated, so the gate works offline and a bump is a one-line ref change.
+- The root `Cargo.toml` carries the canonical `[workspace.lints]` block verbatim
+  from `rust-quality/lints.toml`; every member declares `[lints] workspace =
+  true`. `tasks/lints-check.yml` fails if either drifts.
+- `.gate/findings.jsonl` is the machine-readable output. An agent working in this
+  repo reads that, not scraped terminal text.
+
+### Read before writing any Rust
+
+- `rust-quality/docs/RUST.md` — the rules, gate markers, the 2026 trap list, and
+  the review checklist.
+- `rust-quality/docs/STACK.md` — the de-facto crate picks, with versions and
+  documented deviation triggers.
+
+**STACK.md outranks [research.md](research.md) §6 on crate choice.** Where this
+project deviates — the zero-dependency `crates/datalog`, `memmap2` for segment
+loading — record the deviation and its trigger in §6 rather than letting the two
+documents disagree silently. Reconcile them during M0, before any code depends
+on either.
+
 **Done when**
-- `cargo build --workspace` and `cargo test --workspace` are green.
-- `cargo clippy --workspace -- -D warnings` is green.
-- CI runs build, test, clippy, `cargo fmt --check` on every push.
+- `provision apply tasks/tools.yml` converges from a clean machine.
+- `provision apply tasks/sync-config.yml` lands the config, and the root
+  `Cargo.toml` carries the canonical lint block with every member inheriting it.
+- `provision apply tasks/ci.yml` is green: fmt, clippy, test + doctests, rustdoc,
+  cargo-deny, cargo-machete, lint drift, soft caps.
+- `provision apply tasks/ci-fast.yml` is green and needs no network.
+- `tasks/findings.yml` produces `.gate/findings.jsonl`.
+- CI (moongit or GitHub Actions) invokes **the same** `provision apply
+  tasks/ci.yml`, so local and CI run one gate, not two that drift.
+- `research.md` §6 is reconciled against `STACK.md`, with any deviation and its
+  trigger written down.
 - A test asserts `crates/datalog/Cargo.toml` depends on neither `facts` nor
-  `extract`. This seam is the thing that keeps the engine honest; guard it
-  mechanically from commit one.
+  `extract`. This seam is what keeps the engine honest; guard it mechanically
+  from commit one.
 
 ---
 
@@ -69,6 +130,8 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 - 100 runs of each conformance query are byte-identical.
 - `cargo fuzz run parser` survives 10 minutes with no panic.
 - No dependencies in `crates/datalog/Cargo.toml`.
+- Opaque atoms: a string over `OPAQUE_THRESHOLD` gets an id in the opaque range,
+  and `=`/`!=` against it is rejected with a diagnostic naming the variable.
 - **Demand transformation demonstrably applies:** for each seeded traversal, a
   constant-bound goal derives strictly fewer tuples than the same goal with the
   transformation disabled, and both return identical results. Equal counts mean
@@ -123,6 +186,9 @@ Rust only. Walk → parse → extract → segment → load → query.
   incrementally → byte-identical to a cold reindex.
 - `?- innermost_at("<some file>", <some line>, S).` returns the right symbol.
   The cold-start path works before anything else does.
+- Auto-refresh on `query`: edit a file, query without reindexing, get the new
+  answer. Delete a file, query, its facts are gone. Both with `stats.refreshed`
+  naming what moved, and `status: "stale"` when `max_refresh_ms` is exceeded.
 
 ---
 
@@ -143,6 +209,9 @@ Rust only. Walk → parse → extract → segment → load → query.
 6. The anchor join: match on `def_name` position, rewrite the tier-A atom to the
    SCIP symbol in the interner, emit `resolved(S)`.
 7. `implements`, `has_type`, `extern`, and `scip_ref`.
+8. Parent precedence: descriptor prefix → `enclosing_symbol` → tier A span
+   nesting, replacing tier A's row after the anchor join
+   ([02-extraction.md](../specs/02-extraction.md) § Parent precedence).
 
 **Done when**
 - On `tests/fixtures/rust/` with both tiers, ≥ 95% of tier-A definitions carry
@@ -155,6 +224,10 @@ Rust only. Walk → parse → extract → segment → load → query.
   `status: "no-scip"` on a query that needs precision.
 - `codeintel index` **without** `--run-indexers` prints the exact indexer
   command for every detected language.
+- **Go methods resolve to their type**, not to the file: `?- parent(M, T),
+  def(T, _, _, "Store").` returns the methods. This is the case where lexical
+  and semantic containment visibly disagree, so it is the test that proves the
+  precedence rule is wired.
 - `codeintel index --run-indexers` produces a usable `index.scip` on the fixture,
   and with the indexer binary removed from `PATH` it reports the failure and
   completes with tier A only.
@@ -196,18 +269,65 @@ Rust only. Walk → parse → extract → segment → load → query.
 
 ## M5 — Languages
 
-Python, TypeScript, Go. Each is: vendor two `.scm` files, add a grammar crate,
-add a `lang.rs` row, add a fixture with golden facts.
+Nine languages ship out of the box. Rust lands at M2/M3 as the bring-up
+language; this milestone is the other eight.
+
+Every one of the nine has a published, current grammar crate that **already
+ships `queries/tags.scm` upstream** (verified 2026-09-12,
+[research.md](research.md) §6). So each language is: one crate, two vendored
+`.scm` files, one `lang.rs` row, one fixture. No per-language Rust.
+
+### M5a — the core five
+
+Go, Python, JavaScript, TypeScript (+TSX). With Rust from M2, these are the
+languages we actually work in, and they get the full treatment.
+
+| Language | Grammar | SCIP indexer |
+|---|---|---|
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` |
+| JavaScript | `tree-sitter-javascript` 0.25.0 | `scip-typescript` |
+| TypeScript + TSX | `tree-sitter-typescript` 0.23.2 | `scip-typescript` |
 
 **Done when**
-- Each language has a fixture passing golden-fact, span-exactness, anchor-rate,
-  and tier-A-precision tests.
-- A polyglot fixture (Rust + TS + Python in one tree, one SCIP index each)
-  indexes and queries correctly across language boundaries.
-- **Adding a language required no changes outside `queries/`, `lang.rs`, and
-  `tests/fixtures/`.** If it did, the extractor is wrong; fix the extractor
-  rather than special-casing the language. This criterion is the whole reason
-  tier A is query-driven.
+- Each passes the full suite: golden facts, span exactness, anchor rate ≥ 95%,
+  tier-A precision, locality, incremental equivalence.
+- Each is wired into the `--run-indexers` table and produces a working
+  `index.scip` on its fixture.
+- A polyglot fixture (Rust + Go + TS + Python in one tree, one SCIP index per
+  language) indexes and queries correctly across language boundaries.
+- **Go methods resolve to their type** via parent precedence — the case where
+  lexical and semantic containment disagree.
+
+### M5b — the extended four
+
+C, C++, Ruby, Java. Shipped and enabled, smoke-tested rather than fully
+fixtured; the full suite follows as fixtures get written. The tier says how much
+we have **proven**, not what is switched on.
+
+| Language | Grammar | SCIP indexer | tier-B bootstrap |
+|---|---|---|---|
+| C | `tree-sitter-c` 0.24.2 | `scip-clang` | needs `compile_commands.json` |
+| C++ | `tree-sitter-cpp` 0.23.4 | `scip-clang` | needs `compile_commands.json` |
+| Ruby | `tree-sitter-ruby` 0.23.1 | `scip-ruby` | needs Sorbet |
+| Java | `tree-sitter-java` 0.23.5 | `scip-java` | needs a working build |
+
+**Done when**
+- Each parses its smoke fixture and emits `def`/`def_span`/`import`/`name_ref`
+  without panicking, with span exactness asserted.
+- `codeintel status` lists them as supported, and their indexer commands appear
+  in `--run-indexers` and in the no-SCIP hint.
+- Grammar ABI is verified: these four are the oldest crates (0.23.x against a
+  0.27 runtime). **Smoke-load all nine grammars in one test before building on
+  them** — an ABI mismatch is a loud failure at load time and a confusing one
+  later.
+
+### The criterion that matters for both
+
+**Adding a language required no changes outside `queries/`, `lang.rs`, and
+`tests/fixtures/`.** If it did, the extractor is wrong — fix the extractor
+rather than special-casing the language. Eight languages in one milestone is
+only sane if this holds, so it is the first thing to check, not the last.
 
 ---
 
@@ -241,11 +361,11 @@ Recorded so a future agent knows these were considered, not overlooked.
 |---|---|
 | Merged-array load cache | M6 measures warm load > 200 ms |
 | Caching the derived `ref` relation | a profile shows materializing it dominates query time |
-| Auto-reindex of changed files on query | M6 confirms single-file reindex is well under 1 s |
 | Watch mode | single-file reindex measures > 1 s |
 | Live LSP probe (`codeintel probe file:line`) | a real query needs a type at a position that SCIP does not carry |
 | Multi-repo / cross-repo indexes | someone has the problem |
-| More languages (Java, Ruby, C++, C#) | M5's "no changes outside three places" holds |
+| Full fixture suites for the extended four | M5b smoke tests are green and someone hits a real gap |
+| More languages (C#, Kotlin, Scala, PHP) | M5's "no changes outside three places" holds |
 | Query result caching | a profile shows repeated identical queries |
 
 ## Explicitly never

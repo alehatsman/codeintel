@@ -59,7 +59,7 @@ hot(S, N) :- def(S, _, "function", _), N = count{ C : calls(C, S) }, N > 10.
 
 | Builtin | Meaning |
 |---|---|
-| `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms ([01-facts.md](01-facts.md) § Integers). |
+| `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms, and **opaque atoms are rejected** ([01-facts.md](01-facts.md) § Integers). |
 | `X < Y`, `<=`, `>`, `>=` | **integers only**, checked at runtime: both operands must fall in the integer id range ([01-facts.md](01-facts.md) § Integers), else `invalid-query`. Comparing string atoms is an error, not a byte comparison — string atom ids are allocation-ordered, so comparing them would give results that change between runs. |
 | `X = A + B` (`-`, `*`, `/`) | integer arithmetic. Division by zero → error. Overflow → error. |
 | `match(S, "re")` | regex over the string behind atom `S`. Second argument must be a literal. |
@@ -84,7 +84,12 @@ step budget. We do not take a regex dependency for this.
 5. **Stratification.** See below.
 6. **Arity consistency.** A relation's arity is fixed by its first use; a later
    use with different arity is an error naming both sites.
-7. **Base/derived exclusivity.** A relation is either supplied by the fact store
+7. **Opaque atom comparison.** `=` and `!=` where either side is an opaque
+   atom ([01-facts.md](01-facts.md) § Integers) is an error naming the variable.
+   Opaque atoms are not deduplicated, so identity comparison would silently
+   return false for equal strings. `match`, `contains`, `prefix`, and `suffix`
+   are allowed and work on the underlying bytes.
+8. **Base/derived exclusivity.** A relation is either supplied by the fact store
    or defined by rules, never both. Writing a rule whose head is a base relation
    is an error naming the relation. This keeps "where did this tuple come from"
    answerable — the reason `ref` was made purely derived and the extractors

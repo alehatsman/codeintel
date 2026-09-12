@@ -19,7 +19,7 @@ guessing what an empty result means.
 | `ok` | query ran, results are complete | — |
 | `truncated` | query ran, a cap fired | which cap (`max_result_rows` / `max_result_bytes`), and its value |
 | `no-index` | no `.codeintel/` here | `run: codeintel index .` |
-| `stale` | index older than sources, or `schema_version` mismatch | `run: codeintel index .` — names the N changed files |
+| `stale` | sources changed and auto-refresh was skipped, exceeded `max_refresh_ms`, or `schema_version` mismatched | `run: codeintel index .` — names the N files |
 | `no-scip` | query needs `"exact"` provenance, none available | the indexer command for the languages present |
 | `scip-stale` | `index.scip` older than sources | the indexer command |
 | `unsupported-language` | files present in a language with no grammar | which languages, how many files |
@@ -39,6 +39,7 @@ invariant 6 and the most common way a tool like this lies to an agent.
 ```
 codeintel index  [PATH] [--scip FILE]... [--run-indexers] [--rebuild] [--lang L]...
 codeintel query  <PROGRAM|-> [--format text|json|tsv] [--limit N] [--rules FILE]
+                 [--raw] [--no-refresh]
 codeintel rules  [NAME] [ARG]...
 codeintel schema [--format text|json]
 codeintel status [PATH]
@@ -73,6 +74,30 @@ unindexed subtree is the single most confusing failure this tool can have.
 codeintel query '?- callers(C, S), def(S, _, _, "get").'
 codeintel query - < investigation.dl
 ```
+
+**Auto-refresh, on by default.** Before evaluating, `query` stats the files in
+the manifest and re-extracts any that changed. An agent's normal loop is edit →
+ask, and answering that from a stale index produces a confidently wrong answer —
+the worst failure this tool has, because it looks like a right one.
+
+- Tier A only. SCIP cannot be refreshed incrementally
+  ([04-storage.md](04-storage.md) § Incremental reindex), so a file edited since
+  the SCIP index was built has fresh `name_ref` and stale `scip_ref`. That
+  mixture is reported as `scip-stale`, which auto-refresh makes **more** likely,
+  not less — so the status matters more now, not less.
+- Bounded by `max_refresh_ms` (default 2,000). If the refresh would exceed it,
+  it is abandoned, the query runs against the index as it stands, and the
+  response carries `status: "stale"` naming the files it could not refresh.
+  Never a silent slow path and never a silent stale answer.
+- `stats.refreshed` lists what was re-extracted. Zero is the common case and
+  costs one `stat` per indexed file.
+- `--no-refresh` skips it, for benchmarking or for querying a deliberately
+  pinned index.
+- New files are picked up; **deleted files are pruned.** A refresh that only
+  added would leave a deleted file's facts answering queries.
+
+MCP always refreshes; the flag is not exposed there. An agent editing files is
+the assumed case, not the exception.
 
 Text format is TSV-ish, one row per line, aligned, designed to be read by a
 human and grepped by an agent. JSON is
@@ -221,7 +246,7 @@ Exactly one of `query`, `rule`, `schema` per call; two is `invalid-query`.
   "rows": [["handle_read", "src/api/handler.rs", 42]],
   "truncated": false,
   "hint": null,
-  "stats": { "derived": 18422, "elapsed_ms": 7 }
+  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": [], "transformed": ["impact_of"] }
 }
 ```
 

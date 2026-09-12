@@ -22,8 +22,25 @@ code, then write code. Spec and code disagree → surface it and ask. Do not
 reconcile silently in either direction.
 
 **Stay in scope.** No refactors, dependencies, or modernization unless ordered.
-A new dependency needs an entry in [docs/research.md](docs/research.md) §6 with
-a reason, and the bar is high — that table is the entire budget.
+A new dependency is checked against `rust-quality/docs/STACK.md` **first**, then
+recorded in [docs/research.md](docs/research.md) §6 with a reason. STACK.md
+outranks §6 on crate choice; a deliberate deviation gets its trigger written
+down. The bar is high — that table is the entire budget.
+
+**Quality gate.** This repo consumes
+[rust-quality](https://github.com/alehatsman/rust-quality) via
+[provision](https://github.com/alehatsman/provision); `provision`'s own `tasks/`
+is the reference wiring. Read `rust-quality/docs/RUST.md` before writing Rust.
+
+```sh
+provision apply tasks/ci-fast.yml   # pre-commit: lockfile, fmt, clippy, staged ai-lint
+provision apply tasks/ci.yml        # pre-push: the full gate
+provision apply tasks/findings.yml  # -> .gate/findings.jsonl, machine-readable
+```
+
+Read `.gate/findings.jsonl` rather than scraping terminal output. The lint block
+lives in the root `Cargo.toml` and is drift-checked — do not hand-edit it; change
+it upstream in rust-quality and bump the pin in `tasks/tools.yml`.
 
 **Investigation is read-only.** Cite `path:line`.
 
@@ -70,6 +87,13 @@ the ones that get broken by a well-meaning commit:
 4. Does it compute a number that ranks code? → No. See invariant 4.
 5. Does it make an extractor guess? → No. Emit nothing and let `Prov` tell the
    truth ([specs/02-extraction.md](specs/02-extraction.md) § Name matching).
+
+## Language support
+
+Nine out of the box, in two tiers ([docs/plan.md](docs/plan.md) M5). Adding one
+is a grammar crate, two vendored `.scm` files, and a `lang.rs` row — **if you
+find yourself writing per-language Rust, the extractor is wrong.** Fix the
+extractor.
 
 ## Testing expectations
 
