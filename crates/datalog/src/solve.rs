@@ -1,8 +1,10 @@
 //! The join: one rule body, evaluated against the store.
 //!
-//! Nested-loop over literals in a plan order chosen most-bound-first, with a
-//! binary search into the sorted relation on whatever leading prefix is bound.
-//! No optimizer beyond that, and none is warranted at this scale.
+//! Nested-loop over literals in a plan order chosen most-bound-first. Each
+//! relation literal is served by the narrowest access path its bindings allow
+//! — a bound prefix, a bound column's index, or a scan; see
+//! [`Relation::select`]. No optimizer beyond that, and none is warranted at
+//! this scale.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -145,6 +147,28 @@ impl Solver<'_> {
             }
         }
         order
+    }
+
+    /// The plan as text, one entry per literal in plan order: the literal's
+    /// position, and `#c,d` after it when its leading column is free and its
+    /// bound columns `c,d` will be served through their indexes — the column
+    /// path of [`Relation::select`]. What a slow query's `stats.plan` shows.
+    #[must_use]
+    pub fn describe(&self, body: &[Literal], delta_at: Option<usize>) -> String {
+        let mut bound: BTreeSet<u16> = BTreeSet::new();
+        let mut out = Vec::with_capacity(body.len());
+        for i in self.plan(body, delta_at) {
+            let Some(lit) = body.get(i) else { continue };
+            let columns = indexed_columns(lit, &bound);
+            if columns.is_empty() {
+                out.push(i.to_string());
+            } else {
+                let cols: Vec<String> = columns.iter().map(ToString::to_string).collect();
+                out.push(format!("{i}#{}", cols.join(",")));
+            }
+            bind_all(lit, &mut bound);
+        }
+        out.join(", ")
     }
 
     /// `|R| / 2^k` for a relation literal, zero for a filter — filters are free
@@ -306,12 +330,8 @@ impl Solver<'_> {
             return Ok(());
         }
         let pattern = pattern_of(&pred.args, env);
-        let prefix_len = pattern.iter().take_while(|p| p.is_some()).count();
-        let prefix: Vec<Atom> = pattern.iter().take(prefix_len).flatten().copied().collect();
-        let range = rel.prefix(&prefix);
-
         let mut trail: Vec<u16> = Vec::new();
-        for i in range {
+        for i in rel.select(&pattern) {
             self.budget()?;
             let Some(row) = rel.row(i) else { break };
             trail.clear();
@@ -337,9 +357,7 @@ impl Solver<'_> {
             return false;
         }
         let pattern = pattern_of(&pred.args, env);
-        let prefix_len = pattern.iter().take_while(|p| p.is_some()).count();
-        let prefix: Vec<Atom> = pattern.iter().take(prefix_len).flatten().copied().collect();
-        rel.prefix(&prefix).any(|i| {
+        rel.select(&pattern).any(|i| {
             rel.row(i).is_some_and(|row| {
                 pattern
                     .iter()
@@ -735,6 +753,30 @@ pub(crate) fn runnable(lit: &Literal, bound: &BTreeSet<u16>) -> bool {
             Expr::Count { .. } => true,
         },
     }
+}
+
+/// The columns a relation literal will look up through their indexes: its
+/// bound non-leading columns, when the leading one is free. Empty for a
+/// filter, a scan, or a prefix lookup.
+fn indexed_columns(lit: &Literal, bound: &BTreeSet<u16>) -> Vec<usize> {
+    let args = match lit {
+        Literal::Pos(p) | Literal::Neg(p) => &p.args,
+        _ => return Vec::new(),
+    };
+    let is_bound = |t: &Term| match t {
+        Term::Const(_) => true,
+        Term::Var(v) => bound.contains(v),
+        Term::Wildcard => false,
+    };
+    if args.first().is_some_and(is_bound) {
+        return Vec::new();
+    }
+    args.iter()
+        .enumerate()
+        .skip(1)
+        .filter(|(_, t)| is_bound(t))
+        .map(|(c, _)| c)
+        .collect()
 }
 
 /// Every variable a literal binds once it has run.

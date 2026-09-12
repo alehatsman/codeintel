@@ -482,6 +482,26 @@ fn stats_report_what_the_evaluation_cost() {
     assert!(!result.stats.plan.is_empty());
 }
 
+/// A literal whose leading column is free and a later one bound is served
+/// through that column's index, and the plan says so — `i#c` — so a slow
+/// query shows which lookups went through an index and which did not
+/// (`specs/03-datalog.md` § Evaluation).
+#[test]
+fn the_plan_marks_a_lookup_served_by_a_column_index() {
+    let rows = both(GRAPH, "into(X, Y) :- edge(X, Y). ?- into(X, \"b\").");
+    assert_eq!(rows, vec!["\"a\"", "\"e\""]);
+    let mut e = engine(GRAPH);
+    let result = e
+        .query("?- edge(X, \"b\"), edge(\"b\", Y).", &Limits::default())
+        .expect("answers");
+    // The leading column of `edge(X, "b")` is free and its second is bound:
+    // the column path, marked. `edge("b", Y)` is a prefix lookup: unmarked.
+    assert_eq!(
+        result.stats.plan.last().map(String::as_str),
+        Some("?-: 1, 0#1")
+    );
+}
+
 // ── runtime type errors the safety rules cannot catch ───────────────────────
 
 #[test]

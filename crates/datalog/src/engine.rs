@@ -615,12 +615,7 @@ struct Run<'a> {
 }
 
 fn plan_of(solver: &Solver<'_>, body: &[Literal]) -> String {
-    solver
-        .plan(body, None)
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
+    solver.describe(body, None)
 }
 
 fn recursive_positions(body: &[Literal], stratum: &[String]) -> Vec<usize> {

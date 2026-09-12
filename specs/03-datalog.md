@@ -154,6 +154,7 @@ type Atom = u32;
 struct Relation {
     arity: u8,
     data:  Vec<Atom>,   // row-major, len == arity * rows
+    index: per-column row order, built lazily, dropped on write
 }
 ```
 
@@ -163,6 +164,16 @@ is `data[i*arity .. (i+1)*arity]`.
 
 Sorted + deduplicated is the invariant every operation preserves. It gives
 sort-merge joins, binary-search lookup, and free set semantics.
+
+The sort order serves a bound *prefix*. A lookup that binds a later column with
+the prefix free — `def(S, _, _, N)` with `N` bound, `!scip_ref(_, F, L, C, _, _)`
+— has nothing to binary-search, and a scan per outer row is what made
+`ambiguous` cost 650 ms on a 5,000-definition repository (issue #3). So a
+relation also carries a **secondary index per column**: the row ids ordered by
+that column, ties in row order. Built the first time a lookup asks for that
+column, kept for the relation's lifetime, dropped by any write. Nothing is
+precomputed for columns no query binds, and a derived relation that is settled
+every fixpoint round pays only for the columns its rules actually look up.
 
 ### Demand transformation (magic sets)
 
@@ -304,9 +315,22 @@ for each stratum in topological order:
 
 Joining a rule body: order literals by a simple cost heuristic (most-bound-first
 — a literal with `k` already-bound variables costs `|R| / 2^k`), then for each
-literal either **binary-search** the sorted relation on its bound prefix, or
-**scan** if nothing is bound. No query optimizer beyond this, and none is
-warranted at our scale.
+literal pick the narrowest access path the bindings allow:
+
+1. **prefix** — the leading column is bound: binary-search the sorted relation
+   on the whole bound prefix.
+2. **column** — the leading column is free and some later column is bound: look
+   the bound columns up in their secondary indexes and take the one with the
+   fewest matching rows. The other bound columns are filtered per row, as
+   before.
+3. **scan** — nothing is bound.
+
+Candidates are visited in row order on every path, so the same rows come out in
+the same order whichever path served them. No query optimizer beyond this, and
+none is warranted at our scale. `stats.plan` marks a literal on the column path
+as `i#c,d` — literal `i`, its bound non-leading columns — so a slow query shows
+which lookups went through an index and which did not; the narrowest of the
+listed columns is chosen per lookup, not per plan.
 
 Joins produce tuples into a scratch buffer; sort + dedup once per iteration
 rather than per tuple.
@@ -315,7 +339,8 @@ rather than per tuple.
 
 Non-negotiable (invariant 8, [00-overview.md](00-overview.md)).
 
-- All relations sorted by column order; iteration follows storage order.
+- All relations sorted by column order; iteration follows storage order. A
+  lookup through a secondary index yields rows in that same order.
 - Query results sorted by the goal's term order before output. **Term order is
   atom order, which is dictionary order — insertion order, not lexicographic.**
   It is total and deterministic for a given index, but a cold index and an
