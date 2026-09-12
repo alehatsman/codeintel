@@ -678,3 +678,35 @@ fn a_broken_rule_file_is_an_answer_not_a_crash() {
         "the file has to be named: {stderr}"
     );
 }
+
+#[test]
+fn a_rendered_answer_does_not_depend_on_how_the_index_was_built() {
+    // Invariant 8 at the surface: the same tree answers the same way whether it
+    // was indexed in one pass or incrementally. The interner is append-only, so
+    // a symbol first seen in a late pass gets a higher atom id than it would
+    // cold — which is why rendering sorts by printed text rather than by atom.
+    let cold = tree();
+    index(cold.path());
+
+    let incremental = tree();
+    let held = incremental.path().join("src/kinds.rs");
+    let source = std::fs::read_to_string(&held).expect("read");
+    std::fs::remove_file(&held).expect("remove");
+    index(incremental.path());
+    // Same bytes as `cold` now, but kinds.rs's atoms were interned last.
+    std::fs::write(&held, &source).expect("restore");
+    index(incremental.path());
+
+    let goal = r"?- def(S, F, K, N).";
+    let (a, _) = query(cold.path(), goal);
+    let (b, _) = query(incremental.path(), goal);
+    assert!(!a.is_empty());
+    assert_eq!(a, b, "the same tree rendered differently");
+
+    // And the byte cap selects the same rows, because it is applied to the
+    // sorted text rather than to the engine's atom order.
+    let wide = r"?- def(S, F, K, N), def_span(S, L1, L2, B1, B2).";
+    let (a, _) = query(cold.path(), wide);
+    let (b, _) = query(incremental.path(), wide);
+    assert_eq!(a, b, "the byte cap selected a different set");
+}

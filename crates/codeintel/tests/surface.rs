@@ -178,6 +178,9 @@ fn status_reports_per_language_counts_and_the_fingerprint() {
     assert!(text.contains("extractor: blake3:"), "{text}");
     assert!(text.contains("rust "), "{text}");
     assert!(text.contains("defs,"), "{text}");
+    // Provenance is never blended into one number.
+    assert!(text.contains("exact refs"), "{text}");
+    assert!(text.contains("name refs"), "{text}");
     assert!(text.contains("changed since index: none"), "{text}");
     assert!(text.contains("scip: none"), "{text}");
 }
@@ -197,6 +200,11 @@ fn status_json_is_the_bug_report_artifact() {
         "{json}"
     );
     assert!(json["languages"]["rust"]["defs"].as_u64().unwrap_or(0) > 0);
+    assert!(json["languages"]["rust"]["refs_name"].as_u64().unwrap_or(0) > 0);
+    assert_eq!(
+        json["languages"]["rust"]["refs_exact"], 0,
+        "tier A only here"
+    );
     // Every relation, including the ones at zero — an absent key would read as
     // "not measured" rather than "empty".
     for rel in facts::RELATIONS {

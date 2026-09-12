@@ -620,6 +620,21 @@ method in an `impl`. `tests/stdlib.rs` tested containment with module nesting an
 sailed past it. Not fixed here — parent precedence is tier-B ingest, M3's
 territory, and the fix has blast radius.
 
+**M4 item 2's `--raw` generation guard is not built, and will not be.** The
+plan says raw output carries the manifest's dictionary generation and a mismatch
+is rejected, because "`--rebuild` renumbers every atom, so a stale raw id
+otherwise resolves to a *different string* rather than to an error." That
+reasoning presupposes raw output is a **numeric atom id**. It is not: a `SymId`
+is an interned string and `--raw` prints its text, which `--rebuild` does not
+change. Demonstrated on the fixture — generation 0 → 1 across a `--rebuild`, and
+a raw id captured before it still binds the right definition after. There is
+also no syntax in [03-datalog.md](../specs/03-datalog.md) for writing a numeric
+atom in a query, so a numeric raw id could not be fed back even if one were
+printed. The guard as specified guards nothing; `dict_generation` stays as a
+`status` field, where it is diagnostic rather than load-bearing. Making raw ids
+numeric — shorter, and the original motivation — is a query-language change and
+a separate decision.
+
 **One done-when is not met, and is not being counted as met.** "Every rule in
 `stdlib.dl` has a fixture test with a hand-verified answer" holds for 32 of 37.
 `implements/3` and `extern/4` are both **zero rows** on `tests/fixtures/rust/`

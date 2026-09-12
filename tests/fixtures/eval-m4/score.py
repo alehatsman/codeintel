@@ -91,6 +91,40 @@ def questions(path):
         yield qid, vars_.split(","), text, reference
 
 
+# Questions whose correct answer genuinely IS "no rows", by set. Everything
+# else must have a non-empty reference answer: a question answered by nothing
+# is passed by any query that returns nothing, including a broken one, and it
+# scores itself correct for free. Ten of set A were silently in this state
+# because the symbol ids had been written by hand and were wrong.
+KNOWN_EMPTY = {
+    # `implements/3` and `extern/4` are zero on this fixture even with SCIP —
+    # no external dependency, and rust-analyzer emits no implementation
+    # relationship for `impl Handler for Config`. Same gap
+    # `the_rules_with_no_positive_coverage_are_named` pins in tests/stdlib.rs.
+    "A": {"16", "17"},
+    "B": set(),
+}
+
+
+def check_not_empty(which, expected):
+    """Fail loudly if a question that should have an answer has none."""
+    allowed = KNOWN_EMPTY.get(which, set())
+    empty = {qid for qid, rows in expected.items() if not rows}
+    unexpected = empty - allowed
+    if unexpected:
+        raise SystemExit(
+            f"questions with an EMPTY reference answer: {sorted(unexpected, key=int)}\n"
+            "A question answered by no rows is passed by any query that returns "
+            "nothing. Fix the question, or add it to KNOWN_EMPTY with a reason."
+        )
+    stale = allowed - empty
+    if stale:
+        raise SystemExit(
+            f"KNOWN_EMPTY lists {sorted(stale, key=int)} but they now return rows — "
+            "give them a real assertion and remove them from the list."
+        )
+
+
 def main():
     mode, which, root = sys.argv[1], sys.argv[2], sys.argv[3]
     qfile = HERE / f"set{which}.tsv"
@@ -106,6 +140,7 @@ def main():
                 got = set()
             out.append(f"{qid}\t{len(got)}\t" + "|".join(sorted(got)))
         efile.write_text("\n".join(out) + "\n")
+        check_not_empty(which, {row.split("\t")[0]: row.split("\t", 2)[2] for row in out})
         print(f"wrote {efile}")
         return
 
@@ -114,6 +149,7 @@ def main():
         qid, _n, payload = line.split("\t", 2)
         expected[qid] = set(payload.split("|")) if payload else set()
 
+    check_not_empty(which, expected)
     wanted = {qid: v for qid, v, _t, _r in questions(qfile)}
     answers = {}
     for line in Path(sys.argv[4]).read_text().splitlines():

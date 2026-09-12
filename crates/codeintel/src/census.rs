@@ -22,8 +22,16 @@ pub struct LangCount {
     pub files: usize,
     /// `def` rows in those files.
     pub defs: usize,
-    /// `scip_ref` plus `name_ref` rows in those files.
-    pub refs: usize,
+    /// `scip_ref` rows in those files — compiler-resolved occurrences.
+    ///
+    /// Kept apart from [`Self::named`] rather than summed. A single `refs`
+    /// column cannot tell a reader whether 200 of 12,000 are anchored or
+    /// 11,000 are, and M3 measured tier A over-reporting 17% of the call edges
+    /// it claims. The ratio is the number that decides whether to trust an
+    /// answer, so `status` must not make you ask for it.
+    pub exact: usize,
+    /// `name_ref` rows in those files — identifier matches, tier A.
+    pub named: usize,
     /// `import` rows in those files.
     pub imports: usize,
 }
@@ -109,8 +117,8 @@ impl Census {
             }
         };
         attribute(relations.get("def"), 1, |c| c.defs += 1);
-        attribute(relations.get("scip_ref"), 1, |c| c.refs += 1);
-        attribute(relations.get("name_ref"), 1, |c| c.refs += 1);
+        attribute(relations.get("scip_ref"), 1, |c| c.exact += 1);
+        attribute(relations.get("name_ref"), 1, |c| c.named += 1);
         attribute(relations.get("import"), 0, |c| c.imports += 1);
 
         // def(S, F, Kind, Name) — the closed set as it actually occurs.
@@ -230,8 +238,8 @@ impl fmt::Display for Report<'_> {
         for (lang, counts) in &census.langs {
             writeln!(
                 f,
-                "  {lang:<12} {} files, {} defs, {} refs, {} imports",
-                counts.files, counts.defs, counts.refs, counts.imports
+                "  {lang:<12} {} files, {} defs, {} exact refs, {} name refs, {} imports",
+                counts.files, counts.defs, counts.exact, counts.named, counts.imports
             )?;
         }
         if !census.unsupported.is_empty() {
@@ -325,7 +333,8 @@ impl Report<'_> {
             (lang.clone(), serde_json::json!({
                 "files": counts.files,
                 "defs": counts.defs,
-                "refs": counts.refs,
+                "refs_exact": counts.exact,
+                "refs_name": counts.named,
                 "imports": counts.imports,
             }))
         }).collect::<serde_json::Map<_, _>>(),
