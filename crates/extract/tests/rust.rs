@@ -198,3 +198,61 @@ fn a_brace_list_is_one_import_row_with_no_alias() {
         ]
     );
 }
+
+#[test]
+fn two_trait_impls_for_one_type_give_their_methods_two_symbols() {
+    // `impl Display for A` and `impl Debug for A` both define `fmt`. One
+    // symbol for both merged their callers and gave `def_span` two rows for
+    // one S; the trait now qualifies the member (01-facts.md § Symbol
+    // identity).
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "pub struct A;\n\
+         impl std::fmt::Display for A { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { Ok(()) } }\n\
+         impl std::fmt::Debug   for A { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { Ok(()) } }\n\
+         pub trait T { fn go(&self); }\n\
+         impl T for A { fn go(&self) {} }\n\
+         impl T for &A { fn go(&self) {} }\n",
+    )
+    .expect("writes");
+    let extracted = extract_tree(dir.path());
+
+    let mut fmts: Vec<Vec<String>> = extracted
+        .rows("def")
+        .into_iter()
+        .filter(|r| r.get(3).map(String::as_str) == Some("fmt"))
+        .collect();
+    fmts.sort();
+    assert_eq!(
+        fmts.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(),
+        [
+            "local lib.rs A#[Debug]fmt().",
+            "local lib.rs A#[Display]fmt().",
+        ]
+    );
+    assert!(fmts.iter().all(|r| r[2] == "method"), "{fmts:?}");
+    let parents = extracted.pairs("parent");
+    for row in &fmts {
+        assert_eq!(
+            parents.get(&row[0]).map(String::as_str),
+            Some("local lib.rs A#")
+        );
+    }
+
+    let mut gos: Vec<String> = extracted
+        .rows("def")
+        .into_iter()
+        .filter(|r| r.get(3).map(String::as_str) == Some("go"))
+        .map(|r| r[0].clone())
+        .collect();
+    gos.sort();
+    assert_eq!(
+        gos,
+        [
+            "local lib.rs A#[T]go().",
+            "local lib.rs A#[`T for &A`]go().",
+            "local lib.rs T#go().",
+        ]
+    );
+}

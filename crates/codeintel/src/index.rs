@@ -136,6 +136,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         for (into, known) in inputs.iter_mut().zip(known_scip) {
             into.tool.clone_from(&known.tool);
             into.documents = known.documents;
+            into.collisions = known.collisions;
         }
     }
     let invalidated = extractor_changed || scip_changed;
@@ -162,6 +163,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         for input in &mut inputs {
             input.tool.clone_from(&ingest.tool);
             input.documents = ingest.docs.len() as u64;
+            input.collisions = ingest.collisions.len() as u64;
         }
     }
     report.scip.clone_from(&inputs);
@@ -483,6 +485,7 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
                 mtime: mtime_of(&meta),
                 size: meta.len(),
                 documents: 0,
+                collisions: 0,
             })
         })
         .collect();
@@ -520,6 +523,7 @@ fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<Ingest> {
         merged.externs.extend(one.externs);
         merged.skipped.extend(one.skipped);
     }
+    merged.recount_collisions();
     Ok(merged)
 }
 
@@ -542,6 +546,7 @@ fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
     into.refs += counts.refs;
     into.resolved += counts.resolved;
     into.only += counts.only;
+    into.collided += counts.collided;
 }
 
 fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {

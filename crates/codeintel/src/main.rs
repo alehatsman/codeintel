@@ -375,6 +375,14 @@ fn report_scip(report: &index::Report) {
         "  tier B: {} refs, {} resolved, {} defs tier A missed",
         report.scip_counts.refs, report.scip_counts.resolved, report.scip_counts.only
     );
+    let collisions: u64 = report.scip.iter().map(|i| i.collisions).sum();
+    if collisions > 0 {
+        eprintln!(
+            "  scip collisions: {collisions} symbol(s) defined in more than one document were \
+             not adopted ({} definition(s) keep tier-A identity)",
+            report.scip_counts.collided
+        );
+    }
     if let Some(rate) = report.anchor_rate() {
         eprintln!(
             "  anchored: {}/{} defs ({rate:.1}%)",

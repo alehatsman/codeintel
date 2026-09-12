@@ -269,7 +269,10 @@ and staleness (index mtime vs. newest source mtime).
 
 Multiple `index.scip` files (polyglot repos, one per language) are supported:
 `--scip a.scip --scip b.scip`. They are ingested independently; symbol strings
-are globally unique by construction so no merge logic is needed.
+are unique across indexes by construction so no merge logic is needed. Within
+one index they are not always unique across *documents* — rust-analyzer keys by
+package, not cargo target, so `crate/` and `main().` are defined once per
+binary, test and example — and § The anchor join says what happens then.
 
 ### Ingest
 
@@ -443,6 +446,18 @@ lands on the resolved identity for free. Nothing is rewritten twice.
 
 Ordering requirement: **tier A runs first, entirely, then tier B.** Tier B needs
 tier A's `def_name` index to anchor against.
+
+**A symbol the index defines in more than one document is not adopted.** One
+`SymId` with two definitions violates [01-facts.md](01-facts.md) § `def` (one
+row per definition) and breaks every rule built on it: `at/3` cross-multiplies
+the files and lines, `innermost_at` answers from the other file, `impact_of`
+unions unrelated call graphs, `dead_export` never fires. So ingest collects the
+symbols defined in two or more documents, the join skips them, and tier B
+emits no `def`, `resolved`, `implements` or `extern` for them: the definition
+keeps its tier-A `local` symbol, and `status` reports how many were refused.
+Their `scip_ref` rows stay — they are facts — and join to nothing. Rekeying
+them by document, or matching by name instead, would be the extractor deciding
+what the indexer did not (invariant 1); the fix belongs upstream.
 
 **A file the SCIP inputs did not see is not joined** ([04-storage.md](04-storage.md)
 § Manifest, `scip_hash`): tier B emits nothing for it, and it is extracted as

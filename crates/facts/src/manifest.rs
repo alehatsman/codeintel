@@ -58,6 +58,10 @@ pub struct ScipInput {
     pub size: u64,
     /// How many documents it carried. Zero until it is parsed.
     pub documents: u64,
+    /// Symbols it defines in more than one document, which the anchor join
+    /// refused. Zero until it is parsed.
+    #[serde(default)]
+    pub collisions: u64,
 }
 
 impl ScipInput {

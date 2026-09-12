@@ -55,6 +55,11 @@ impl Anchors {
         };
         let mut at = BTreeMap::new();
         for def in &doc.defs {
+            // Defined elsewhere too: not an identity, a collision. Tier A keeps
+            // its own symbol for this definition.
+            if ingest.collisions.contains(&def.symbol) {
+                continue;
+            }
             let info = ingest.symbols.get(&def.symbol);
             at.insert(
                 (def.line, def.col),
@@ -97,6 +102,10 @@ pub struct Counts {
     pub resolved: usize,
     /// `def` rows for definitions tier A had no counterpart for.
     pub only: usize,
+    /// Definition occurrences whose symbol this index defines in more than
+    /// one document. Not adopted, not emitted; counted so `status` can say
+    /// so (`specs/02-extraction.md` § The anchor join).
+    pub collided: usize,
 }
 
 /// Emit every tier-B fact for one file into its segment.
@@ -130,6 +139,10 @@ pub fn emit(
     let anchors = Anchors::of(ingest, path);
     let known = defined(ingest);
     for def in &doc.defs {
+        if ingest.collisions.contains(&def.symbol) {
+            counts.collided += 1;
+            continue;
+        }
         let resolved = atom(interner, &def.symbol)?;
         if anchors.at(def.line, def.col).is_some() && anchored.iter().any(|(_, s)| *s == def.symbol)
         {
@@ -176,6 +189,9 @@ pub fn emit(
     // `exact` by construction exactly as `scip_ref` is. `implements(S, T,
     // "exact")` is the one-line rule over it in `stdlib.dl`.
     for def in &doc.defs {
+        if ingest.collisions.contains(&def.symbol) {
+            continue;
+        }
         let s = atom(interner, &def.symbol)?;
         for target in ingest
             .symbols

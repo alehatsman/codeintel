@@ -109,6 +109,20 @@ Descriptor suffixes follow SCIP: `/` namespace, `#` type, `.` term, `().` method
 — SCIP's own `local N` symbols are document-scoped, and two files both containing
 `local 4` must not collide.
 
+A trait implementation qualifies its members the way rust-analyzer does
+(`impl#[Config][Handler]handle().`): the trait's final identifier in `[...]`
+between the type and the member, and the implemented type as written after it
+when that is more than the bare name. `impl Display for A` and `impl Debug for
+A` therefore give their two `fmt` methods two symbols, and `impl T for A` and
+`impl T for &A` differ too:
+```
+local src/kinds.rs Config#[Handler]handle().
+local src/kinds.rs Config#[Display]fmt().
+local src/kinds.rs Key#[`Handler for &Key`]handle().
+```
+The `impl` block's own symbol stays the type's, so `parent` still names the
+type.
+
 When both tiers cover a definition, **ingest unifies them**: the tree-sitter def
 adopts the SCIP symbol string as its `SymId` and `resolved(S)` is emitted. There
 is exactly one `def` row per definition, carrying tree-sitter's span and

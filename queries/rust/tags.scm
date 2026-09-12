@@ -77,10 +77,17 @@
     (scoped_type_identifier name: (type_identifier) @trait)
   ]
   type: [
-    (type_identifier) @name
-    (generic_type type: (type_identifier) @name)
-    (scoped_type_identifier name: (type_identifier) @name)
+    (type_identifier) @name @target
+    (generic_type type: (type_identifier) @name) @target
+    (scoped_type_identifier name: (type_identifier) @name) @target
+    (reference_type type: (type_identifier) @name) @target
   ]) @scope.impl
+
+; `@target` is the implemented type as written. A trait impl qualifies its
+; members' symbols with `[Trait]` — `Config#[Display]fmt().`, the shape
+; rust-analyzer uses — and with the target appended when it says more than the
+; bare name (`[Handler for &Key]`), so `impl T for A` and `impl T for &A` give
+; their methods different symbols (specs/01-facts.md § Symbol identity).
 
 ; --- call sites ------------------------------------------------------------
 ;

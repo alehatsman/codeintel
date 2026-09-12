@@ -87,6 +87,11 @@ struct Item {
     /// The trait a `@scope.impl` names, as the grammar's final identifier.
     /// `None` for everything else, an inherent `impl` included.
     trait_name: Option<String>,
+    /// For a `@scope.impl` item, what qualifies it beyond its name: the trait's
+    /// final identifier, plus the `@target` text when that is more than the
+    /// bare name. Rendered as a `[...]` descriptor between the scope and its
+    /// members, so two trait impls for one type give their members two symbols.
+    qualifier: Option<String>,
     sig: String,
     doc: Option<String>,
 }
@@ -124,6 +129,8 @@ struct Tag<'a> {
     trait_name: Option<&'a str>,
     /// The capture was `@scope.impl` rather than `@scope.type`.
     is_impl: bool,
+    /// What qualifies a scope; see [`Item::qualifier`].
+    qualifier: Option<String>,
 }
 
 /// One `@reference.call` occurrence.
@@ -392,6 +399,7 @@ impl Extractor {
             let mut name = None;
             let mut owner = None;
             let mut trait_name = None;
+            let mut target = None;
             for capture in m.captures() {
                 let Some(label) = self.tags.capture_names().get(capture.index as usize) else {
                     continue;
@@ -400,6 +408,7 @@ impl Extractor {
                     "name" => name = Some(capture.node),
                     "owner" => owner = capture.node.utf8_text(src.as_bytes()).ok(),
                     "trait" => trait_name = capture.node.utf8_text(src.as_bytes()).ok(),
+                    "target" => target = capture.node.utf8_text(src.as_bytes()).ok(),
                     label => subject = Some((label, capture.node)),
                 }
             }
@@ -410,6 +419,15 @@ impl Extractor {
                 .utf8_text(src.as_bytes())
                 .unwrap_or_default()
                 .to_string();
+            // As written, whitespace collapsed. The target joins only when it
+            // says more than the name does: `impl T for A` and `impl T for &A`
+            // are two impls and must not share a symbol.
+            let qualifier = trait_name.map(|t| match target {
+                Some(target) if target != text => {
+                    format!("{t} for {}", collapse(target, usize::MAX))
+                }
+                _ => t.to_string(),
+            });
             if label == "reference.call" {
                 occurrences.push(Occurrence {
                     name: text,
@@ -439,6 +457,7 @@ impl Extractor {
                     owner,
                     trait_name,
                     is_impl: !is_def && suffix == "impl",
+                    qualifier,
                 },
             ));
         }
@@ -464,6 +483,7 @@ impl Extractor {
             vis: self.visibility(src, tag.node, tag.name),
             is_impl: tag.is_impl,
             trait_name: tag.trait_name.map(str::to_string),
+            qualifier: tag.qualifier,
             sig: signature(src, sig_start, tag.node.end_byte(), self.lang.sig_stops),
             doc,
         }
@@ -721,6 +741,12 @@ fn promote(mut items: Vec<Item>, parents: &[Option<usize>]) -> Vec<Item> {
 }
 
 /// The symbol for every item, or `None` for one whose kind has no descriptor.
+///
+/// A qualified scope — a trait impl — contributes its qualifier to its
+/// *members'* chains and not to its own: the scope's own symbol stays the
+/// type's, so `parent` still names the type, while `impl Display for A` and
+/// `impl Debug for A` give their two `fmt` methods `A#[Display]fmt().` and
+/// `A#[Debug]fmt().` rather than one symbol with two spans.
 fn symbols_of(path: &str, items: &[Item], parents: &[Option<usize>]) -> Vec<Option<String>> {
     (0..items.len())
         .map(|i| {
@@ -728,6 +754,11 @@ fn symbols_of(path: &str, items: &[Item], parents: &[Option<usize>]) -> Vec<Opti
             let mut at = Some(i);
             while let Some(j) = at {
                 let item = items.get(j)?;
+                if j != i
+                    && let Some(qualifier) = &item.qualifier
+                {
+                    chain.push(format!("[{}]", symbol::escape(qualifier)));
+                }
                 chain.push(symbol::descriptor(item.kind, &item.name)?);
                 at = parents.get(j).copied().flatten();
             }

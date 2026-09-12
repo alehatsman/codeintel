@@ -145,12 +145,12 @@ impl fmt::Display for Schema<'_> {
              lines 1-based, columns 0-based UTF-8 bytes. < and > are integers only.\n  \
              an integer and its string differ: Line = \"42\" never matches. line 0 = n/a.\n  \
              seed impact_of/reach_of with a constant or they go all-pairs.\n  \
-             a symbol column already prints `Name path:line` -- do NOT join def/at\n    \
-             to see where something is. --raw prints the SymId.\n  \
+             a symbol column prints `Name path:line`; do not join def/at for it.\n    \
+             --raw prints the SymId.\n  \
              Prov \"name\" is text matching: method calls x.f() are mostly MISSING.\n    \
-             For precision use the _exact rules; `codeintel status` says whether\n    \
-             a SCIP index is present and fresh.\n\n\
-             EXAMPLES  more in docs/cookbook.md, including conformance rules\n  \
+             For precision use the _exact rules; `codeintel status` says if SCIP\n    \
+             is present and fresh.\n\n\
+             EXAMPLES  more in docs/cookbook.md\n  \
              what does this diff hunk affect?\n  \
              ?- innermost_at(\"src/store.rs\", 142, S), impact_of(S, C),\n     \
              def(C, F, _, N), !is_test(F).\n\n  \

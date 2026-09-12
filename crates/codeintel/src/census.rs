@@ -296,6 +296,14 @@ impl fmt::Display for Report<'_> {
                     census.rows("def")
                 )?;
             }
+            let collisions: u64 = manifest.scip.iter().map(|i| i.collisions).sum();
+            if collisions > 0 {
+                writeln!(
+                    f,
+                    "scip collisions: {collisions} symbol(s) defined in more than one document, \
+                     not adopted; their definitions keep tier-A identity and no `resolved` row"
+                )?;
+            }
             // The same staleness `query` acts on, from the same function. These
             // disagreed: `query` answered `scip-stale` naming two files while
             // this report — the artifact a bug report is supposed to carry —
@@ -367,6 +375,7 @@ impl Report<'_> {
             "path": input.path,
             "tool": input.tool,
             "documents": input.documents,
+            "collisions": input.collisions,
             "mtime": input.mtime,
             "size": input.size,
         })).collect::<Vec<_>>(),

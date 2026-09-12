@@ -115,6 +115,38 @@ fn the_anchor_join_resolves_everything_it_structurally_can() {
     );
 }
 
+/// rust-analyzer keys symbols by package, not cargo target, so `crate/` is
+/// defined in `src/lib.rs` and again in `tests/store_test.rs`. Adopting it
+/// gave one `SymId` two `def` rows in two files. The join now refuses a symbol
+/// defined in more than one document, and `status` says how many.
+#[test]
+fn a_symbol_defined_in_two_documents_is_not_adopted() {
+    let dir = tree();
+    let summary = index(dir.path());
+    assert!(
+        summary.contains("scip collisions: 1 symbol(s)"),
+        "{summary}"
+    );
+
+    let twice = rows(dir.path(), "?- def(S, F, _, _), def(S, G, _, _), F != G.");
+    assert!(twice.is_empty(), "one SymId, two files: {twice:?}");
+    assert!(
+        rows(dir.path(), r#"?- def(S, _, _, _), suffix(S, " crate/")."#).is_empty(),
+        "the colliding symbol was emitted anyway"
+    );
+    // Its references are facts and stay; they just join to no definition.
+    assert!(
+        !rows(
+            dir.path(),
+            r#"?- scip_ref(S, _, _, _, _, _), suffix(S, " crate/")."#
+        )
+        .is_empty()
+    );
+
+    let report = String::from_utf8_lossy(&run(dir.path(), &["status"]).stdout).to_string();
+    assert!(report.contains("scip collisions: 1"), "{report}");
+}
+
 #[test]
 fn tier_a_references_are_bounded_by_what_tier_b_confirms() {
     let dir = tree();

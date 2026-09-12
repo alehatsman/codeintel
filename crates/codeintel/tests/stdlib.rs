@@ -177,6 +177,16 @@ fn local_def_is_definition_within_one_file() {
 }
 
 #[test]
+fn named_is_the_set_of_definition_names() {
+    // One row per distinct name, however many definitions carry it: `open` is
+    // defined twice and `named` holds it once. That is what makes `ambiguous`
+    // count each name once rather than once per definition.
+    assert_eq!(rows(r#"?- named("open")."#), vec!["true"]);
+    assert_eq!(rows(r#"?- named(N), N = "warm"."#), vec!["warm"]);
+    assert!(rows(r#"?- named("no_such_name")."#).is_empty());
+}
+
+#[test]
 fn ambiguous_names_the_collisions() {
     // `open` is exported by both db::conn and net::conn. That is the fixture's
     // reason for existing: tier A cannot pick and must not.

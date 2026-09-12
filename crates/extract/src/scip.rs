@@ -7,7 +7,7 @@
 //!
 //! `specs/02-extraction.md` § Ingest is the contract, field for field.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use protobuf::Message as _;
@@ -164,6 +164,16 @@ pub struct Ingest {
     /// not a thing SCIP states — but the set of symbols it defines is, exactly,
     /// so the complement needs no guess.
     pub externs: BTreeMap<String, (String, String, String)>,
+    /// Symbols this index defines in more than one document.
+    ///
+    /// rust-analyzer keys symbols by package, not by cargo target, so
+    /// `crate/` and `main().` are each defined once per binary, test and
+    /// example target. One `SymId` with two definitions breaks every rule
+    /// that assumes one `def` per symbol — `at/3` cross-multiplies,
+    /// `innermost_at` answers from the wrong file — so the anchor join
+    /// refuses them and tier A keeps its own identity
+    /// (`specs/02-extraction.md` § The anchor join).
+    pub collisions: BTreeSet<String>,
     /// Documents skipped, with the reason. Never silent: an approximate column
     /// breaks every edit built on it, so a document we cannot place exactly is
     /// dropped and reported (`specs/02-extraction.md` § Position normalization).
@@ -211,7 +221,7 @@ impl Ingest {
         for info in &index.external_symbols {
             package_of(&info.symbol, &mut candidates);
         }
-        let defined: std::collections::BTreeSet<&str> = out
+        let defined: BTreeSet<&str> = out
             .docs
             .values()
             .flat_map(|d| d.defs.iter().map(|def| def.symbol.as_str()))
@@ -220,7 +230,27 @@ impl Ingest {
             .into_iter()
             .filter(|(symbol, _)| !defined.contains(symbol.as_str()))
             .collect();
+        out.recount_collisions();
         out
+    }
+
+    /// Recompute [`Self::collisions`] from the documents held now. Called
+    /// after every merge of indexes, since a collision can span two.
+    pub fn recount_collisions(&mut self) {
+        let mut documents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for (path, doc) in &self.docs {
+            for def in &doc.defs {
+                documents
+                    .entry(def.symbol.as_str())
+                    .or_default()
+                    .insert(path.as_str());
+            }
+        }
+        self.collisions = documents
+            .into_iter()
+            .filter(|(_, in_docs)| in_docs.len() > 1)
+            .map(|(symbol, _)| symbol.to_string())
+            .collect();
     }
 
     fn document(

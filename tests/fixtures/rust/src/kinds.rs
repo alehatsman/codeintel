@@ -56,3 +56,25 @@ macro_rules! shout {
         format!("{}!", $x)
     };
 }
+
+/// A trait impl, so `fmt` below has a sibling with the same name.
+impl std::fmt::Display for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("config")
+    }
+}
+
+/// The sibling: same type, same method name, different trait.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("config")
+    }
+}
+
+/// A trait impl on a reference, which is not the same impl as the one on the
+/// type.
+impl Handler for &Key {
+    fn handle(&self, key: &Key) -> bool {
+        !self.is_empty() && !key.is_empty()
+    }
+}
