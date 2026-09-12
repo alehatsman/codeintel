@@ -235,6 +235,16 @@ and feeds the raw form into its next query binds the wrong symbol. One
 consequence worth stating: `--raw` prints the same rows in the same order as the
 default, because it is the same answer in a different notation.
 
+**A goal with no variables prints `true` or nothing.** Truth is one empty row
+and falsehood is none ([03-datalog.md](03-datalog.md) § Evaluation), so printed
+literally the two differ by one invisible newline while both carry `status: ok`.
+The word is the answer. JSON is unchanged — one empty row versus none, which is
+already unambiguous there.
+
+**A symbol whose `Name` is empty renders as its location alone.** SCIP gives a
+crate-root module an empty `display_name`; holding the column open prefixes the
+location with a space and reads as a glitch.
+
 Values are carried structurally — one string per column — until the moment of
 printing. Tab-joining and splitting back apart loses the column boundaries of
 any value containing a tab, which doc comments do.

@@ -80,12 +80,19 @@ impl Sites {
             return raw(engine, atom);
         };
         let (name, file) = (raw(engine, site.name), raw(engine, site.file));
-        match site.line {
+        let where_ = match site.line {
             // A symbol with no span still renders as its name: a bare SymId is
             // no more useful for having no location.
-            None => format!("{name} {file}"),
-            Some(line) => format!("{name} {file}:{}", raw(engine, line)),
+            None => file,
+            Some(line) => format!("{file}:{}", raw(engine, line)),
+        };
+        if name.is_empty() {
+            // A crate-root module has no name. Prefixing the location with a
+            // space to hold an empty column reads as a rendering glitch, and
+            // the location alone is the whole of what is known.
+            return where_;
         }
+        format!("{name} {where_}")
     }
 }
 

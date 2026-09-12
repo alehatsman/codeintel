@@ -418,8 +418,16 @@ fn query_cmd(
     match format {
         Format::Json => println!("{}", query::to_json(&answer)),
         Format::Text => {
-            for row in &answer.rows {
-                println!("{}", row.line(options.raw));
+            // A ground goal has no columns: truth is one empty row and
+            // falsehood is none (`specs/03-datalog.md` § Evaluation). Printed
+            // literally that is a bare newline versus nothing — an answer no
+            // one can see. Say it.
+            if answer.columns.is_empty() && !answer.rows.is_empty() {
+                println!("true");
+            } else {
+                for row in &answer.rows {
+                    println!("{}", row.line(options.raw));
+                }
             }
             // The status goes to stderr so that stdout is exactly the rows —
             // but it is never omitted, because `ok` with zero rows and a

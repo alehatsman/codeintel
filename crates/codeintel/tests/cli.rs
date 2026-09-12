@@ -710,3 +710,51 @@ fn a_rendered_answer_does_not_depend_on_how_the_index_was_built() {
     let (b, _) = query(incremental.path(), wide);
     assert_eq!(a, b, "the byte cap selected a different set");
 }
+
+#[test]
+fn a_ground_goal_says_true_rather_than_printing_nothing_visible() {
+    // A goal with no variables has no columns: truth is one empty row and
+    // falsehood is none. Printed literally that is a bare newline versus
+    // nothing — an answer no one can see, and `status=ok` either way.
+    let dir = tree();
+    index(dir.path());
+
+    let (rows, stderr) = query(dir.path(), r#"?- file("src/store.rs", "rust")."#);
+    assert_eq!(rows, vec!["true"], "{stderr}");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+
+    let (rows, stderr) = query(dir.path(), r#"?- file("src/store.rs", "python")."#);
+    assert!(rows.is_empty(), "{rows:?}");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    // And the hint says which literal was false, so the two are never confused.
+    assert!(stderr.contains("matched 0 rows"), "{stderr}");
+
+    // JSON keeps the tuple shape: one empty row versus none.
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- file("src/store.rs", "rust")."#,
+            "--format",
+            "json",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(json["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json["columns"].as_array().map(Vec::len), Some(0));
+}
+
+#[test]
+fn a_symbol_with_no_name_renders_as_its_location() {
+    // SCIP gives a crate-root module an empty `display_name`. Holding the
+    // empty column open prefixes the location with a space, which reads as a
+    // rendering glitch; the location alone is the whole of what is known.
+    let dir = tree();
+    index(dir.path());
+    let (rows, _) = query(dir.path(), r#"?- def(S, F, K, "")."#);
+    for row in &rows {
+        let symbol = row.split('\t').next().unwrap_or_default();
+        assert!(!symbol.starts_with(' '), "leading space in {row:?}");
+        assert!(!symbol.is_empty(), "empty symbol column in {row:?}");
+    }
+}

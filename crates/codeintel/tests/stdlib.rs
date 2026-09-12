@@ -117,7 +117,8 @@ fn local_def_is_definition_within_one_file() {
 fn ambiguous_names_the_collisions() {
     // `open` is exported by both db::conn and net::conn. That is the fixture's
     // reason for existing: tier A cannot pick and must not.
-    assert_eq!(rows(r#"?- ambiguous("open")."#), vec![""]);
+    // A ground goal: `true` when it holds, nothing when it does not.
+    assert_eq!(rows(r#"?- ambiguous("open")."#), vec!["true"]);
     assert!(rows(r#"?- ambiguous("warm")."#).is_empty());
 }
 
