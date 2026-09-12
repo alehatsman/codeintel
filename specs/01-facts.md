@@ -127,6 +127,11 @@ def("local src/store.rs Store#get().", "src/store.rs", "method", "get").
 ### `def_span(S, StartLine, EndLine, StartByte, EndByte)`
 The **full** definition including body, attributes, and doc comment. Byte range
 is exact and sliceable.
+
+Attributes here means the ones that decorate the definition — Rust's
+`#[derive(Debug)]`, not its `#![allow(...)]`. An inner attribute belongs to the
+item that encloses it, so absorbing it into the span of whatever follows would
+make an edit built on that span delete a crate attribute.
 ```
 def_span("local src/store.rs Store#get().", 42, 57, 1180, 1604).
 ```

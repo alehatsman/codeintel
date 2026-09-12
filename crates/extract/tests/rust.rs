@@ -148,3 +148,25 @@ fn an_impl_block_owns_its_methods() {
         "an impl block is not a definition"
     );
 }
+
+#[test]
+fn an_inner_attribute_stays_out_of_the_first_definition_span() {
+    // `#![allow(dead_code)]` belongs to the crate, not to the struct written
+    // under it. Absorbing it made `innermost_at(F, 1, S)` answer `A`, and an
+    // edit built on that span deleted the crate attribute.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "#![allow(dead_code)]\npub struct A;\n",
+    )
+    .expect("writes");
+    let extracted = extract_tree(dir.path());
+
+    let span = extracted
+        .rows("def_span")
+        .into_iter()
+        .find(|r| r.first().is_some_and(|s| s.ends_with("A#")))
+        .expect("the struct has a span");
+    assert_eq!(span.get(1).map(String::as_str), Some("2"), "{span:?}");
+    assert_eq!(span.get(3).map(String::as_str), Some("21"), "{span:?}");
+}

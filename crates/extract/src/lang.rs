@@ -180,7 +180,11 @@ pub const LANGS: &[Lang] = &[
         // would be honest.
         doc_markers: &["///", "/**"],
         comment_kinds: &["line_comment", "block_comment"],
-        attribute_kinds: &["attribute_item", "inner_attribute_item"],
+        // Outer attributes only. `#![allow(...)]` belongs to the file or module
+        // that encloses it, not to the item written under it, so walking back
+        // over one puts a crate attribute inside the first definition's span
+        // and an edit built on that span deletes it.
+        attribute_kinds: &["attribute_item"],
         // A Rust definition node already contains its own head.
         keyword_kinds: &[],
         sig_stops: &['{', ';', '='],
