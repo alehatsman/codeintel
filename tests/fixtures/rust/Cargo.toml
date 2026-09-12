@@ -1,0 +1,10 @@
+# A real cargo crate, so `rust-analyzer scip .` has something to compile.
+# Excluded from the workspace: it is fixture data, not a member.
+[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"

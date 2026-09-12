@@ -3,7 +3,11 @@ resolver = "3"
 members = ["crates/datalog", "crates/facts", "crates/extract", "crates/codeintel"]
 # The fuzz target needs a nightly toolchain and cargo-fuzz; it is built on
 # demand, never by the gate.
-exclude = ["crates/datalog/fuzz"]
+#
+# `tests/fixtures/rust` is a real cargo crate so that `rust-analyzer scip .` has
+# something to compile — tier B resolves nothing in a pile of loose files. It is
+# fixture data, not a member.
+exclude = ["crates/datalog/fuzz", "tests/fixtures/rust"]
 
 [workspace.package]
 edition = "2024"
