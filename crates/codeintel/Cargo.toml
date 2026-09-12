@@ -9,6 +9,12 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+datalog.workspace = true
+facts.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

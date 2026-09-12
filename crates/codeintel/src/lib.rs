@@ -3,4 +3,10 @@
 //! Thin by construction: five verbs, one MCP tool, and a hard surface budget
 //! asserted in CI. See `specs/05-surface.md`.
 //!
-//! Empty at M0. See `docs/plan.md` M4.
+//! At M1 this crate is the *host*: it supplies the engine's regex builtin and
+//! its dictionary, which is what keeps `crates/datalog` at zero dependencies.
+//! The verbs land at M2 and M4.
+
+pub mod regexes;
+
+pub use regexes::Regexes;
