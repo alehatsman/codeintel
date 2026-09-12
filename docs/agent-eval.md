@@ -146,6 +146,12 @@ score against it. Scoring set B against a live working tree silently measures a
 moving target, which is how a 45/45 and a 42/45 can both be "true" on the same
 afternoon.
 
+**If you reproduce from a copied tree, force the rebuild.** `rsync -a` and
+`cp -a` preserve mtimes, so cargo sees a binary newer than its sources, prints
+`Finished in 0.19s`, and you score with whatever build the copy carried. The
+symptom is a plausible score from the wrong code. `touch` the sources — or copy
+without `-a` — and confirm you saw a real compile before trusting a number.
+
 **Two of set B's questions were replaced before this run.** Q11 and Q13 had
 **empty** reference answers — `depends` on a file with no resolvable references,
 and a module with no children — so they were passable by any query returning
