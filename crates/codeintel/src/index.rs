@@ -187,6 +187,37 @@ pub fn discard(root: &Path) -> Result<u64> {
     Ok(generation.saturating_add(1))
 }
 
+/// Add `.codeintel/` to an existing `.gitignore` that does not already ignore
+/// it, and say so.
+///
+/// `specs/04-storage.md` § Layout: announce it, do not do it silently. A store
+/// committed by accident is a large derived directory in someone's history, and
+/// a `.gitignore` this tool edited without saying so is worse.
+///
+/// # Errors
+/// I/O failure reading or appending to `.gitignore`.
+pub fn ignore_the_store(root: &Path) -> Result<bool> {
+    let path = root.join(".gitignore");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(&path).context("reading .gitignore")?;
+    if text
+        .lines()
+        .any(|line| line.trim().trim_end_matches('/').trim_start_matches('/') == ".codeintel")
+    {
+        return Ok(false);
+    }
+    let separator = if text.ends_with('\n') || text.is_empty() {
+        ""
+    } else {
+        "\n"
+    };
+    std::fs::write(&path, format!("{text}{separator}.codeintel/\n"))
+        .context("appending to .gitignore")?;
+    Ok(true)
+}
+
 fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
     FileEntry {
         seg: segment_name(&candidate.path),

@@ -257,6 +257,37 @@ fn an_incremental_index_equals_a_cold_one_as_fact_sets() {
 }
 
 #[test]
+fn the_store_is_added_to_an_existing_gitignore_and_announced() {
+    let dir = tree();
+    let gitignore = dir.path().join(".gitignore");
+    std::fs::write(&gitignore, "/target\n").expect("writable");
+
+    let out = index(dir.path());
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        stderr.contains("added `.codeintel/` to .gitignore"),
+        "{stderr}"
+    );
+    let text = std::fs::read_to_string(&gitignore).expect("readable");
+    assert_eq!(text, "/target\n.codeintel/\n");
+
+    // Idempotent, and silent the second time.
+    let out = index(dir.path());
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!stderr.contains("added `.codeintel/`"), "{stderr}");
+    assert_eq!(std::fs::read_to_string(&gitignore).expect("readable"), text);
+}
+
+#[test]
+fn no_gitignore_is_not_a_reason_to_create_one() {
+    let dir = tree();
+    let out = index(dir.path());
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!stderr.contains(".gitignore"), "{stderr}");
+    assert!(!dir.path().join(".gitignore").exists());
+}
+
+#[test]
 fn no_index_is_a_status_not_an_empty_answer() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").expect("writable");

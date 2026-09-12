@@ -99,6 +99,10 @@ fn index_cmd(path: &std::path::Path, rebuild: bool, langs: Vec<String>) -> Resul
         generation = index::discard(&root)?;
     }
 
+    if index::ignore_the_store(&root)? {
+        eprintln!("codeintel: added `.codeintel/` to .gitignore — the store is derived");
+    }
+
     let mut lock = Lock::open(&root.join(facts::store::DIR)).context("opening the writer lock")?;
     let held = match lock.try_hold().context("taking the writer lock")? {
         Ok(held) => held,
