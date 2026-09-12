@@ -112,6 +112,8 @@ pub struct Answer {
     /// which on a seeded recursive rule is the difference between a seeded
     /// traversal and all-pairs reachability.
     pub transformed: Vec<String>,
+    /// Why `transformed` holds what it holds (`datalog::Stats::demand`).
+    pub demand: String,
     /// Base relations the goal's dependency closure reaches.
     pub depends: Vec<String>,
     /// Stdlib rules a loaded rule file or the query itself shadowed. Never
@@ -133,6 +135,7 @@ impl Answer {
             elapsed_ms: 0,
             refreshed: 0,
             transformed: Vec::new(),
+            demand: String::new(),
             depends: Vec::new(),
             shadowed: Vec::new(),
         }
@@ -292,6 +295,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         elapsed_ms: result.stats.elapsed_ms,
         refreshed,
         transformed: result.stats.transformed.clone(),
+        demand: result.stats.demand.clone(),
         depends: result.stats.depends.clone(),
         shadowed: result.stats.shadowed.clone(),
     })
@@ -767,6 +771,7 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
             "elapsed_ms": answer.elapsed_ms,
             "refreshed": answer.refreshed,
             "transformed": answer.transformed,
+            "demand": answer.demand,
             "depends": answer.depends,
             "shadowed": answer.shadowed,
         },

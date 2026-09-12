@@ -681,8 +681,9 @@ fn aggregates_over_recursion_agree_with_naive_evaluation() {
     assert_eq!(rows, vec!["4"]);
     assert!(
         result.stats.transformed.iter().any(|n| n == "fanout@bf"),
-        "{:?}",
-        result.stats.transformed
+        "{:?}: {}",
+        result.stats.transformed,
+        result.stats.demand
     );
     // Seeded through a derived predicate that filters on the count.
     let (rows, _) = both_in(|| engine(COUNTED), r#"?- wide("a")."#);
@@ -701,6 +702,61 @@ fn aggregates_over_recursion_agree_with_naive_evaluation() {
         "the nested aggregate dropped the rewrite: {:?}",
         result.stats.transformed
     );
+}
+
+/// Adornment must not depend on where the binder sits in the body. Written
+/// binder-last, `impact_of(S, C)` was adorned free-free, no seed was made,
+/// and the query paid for the all-pairs closure; the planner's later
+/// reordering could not rescue it because the adornment was already fixed.
+#[test]
+fn body_order_does_not_change_the_adornment() {
+    let binder_first = r#"?- calls(S, "a0"), impact_of(S, C)."#;
+    let binder_last = r#"?- impact_of(S, C), calls(S, "a0")."#;
+    let (rows_a, first) = both_in(|| engine(WIDE), binder_first);
+    let (rows_b, last) = both_in(|| engine(WIDE), binder_last);
+    assert_eq!(rows_a, vec!["\"a1\" \"a2\"", "\"a1\" \"a3\""]);
+    assert_eq!(rows_a, rows_b);
+    assert_eq!(first.stats.transformed, last.stats.transformed);
+    assert!(
+        last.stats.transformed.iter().any(|n| n == "impact_of@bf"),
+        "{:?}",
+        last.stats.transformed
+    );
+    assert_eq!(first.stats.derived, last.stats.derived);
+    assert_eq!(last.stats.demand, "applied");
+
+    // Inside a rule body too, not only in the goal.
+    let program = format!("{WIDE}\nreach_from(Seed, C) :- impact_of(Seed, C), calls(Seed, _).\n");
+    let (rows, result) = both_in(|| engine(&program), r#"?- reach_from("a1", C)."#);
+    assert_eq!(rows, vec!["\"a2\"", "\"a3\""]);
+    assert!(
+        result.stats.transformed.iter().any(|n| n == "impact_of@bf"),
+        "{:?}",
+        result.stats.transformed
+    );
+}
+
+/// `stats.demand` distinguishes "nothing to seed" from "tried and dropped".
+#[test]
+fn stats_demand_says_why_the_rewrite_did_or_did_not_apply() {
+    let mut e = engine(WIDE);
+    let free = e
+        .query("?- impact_of(S, C).", &Limits::default())
+        .expect("answers");
+    assert!(free.stats.transformed.is_empty());
+    assert!(
+        free.stats.demand.starts_with("nothing to seed"),
+        "{}",
+        free.stats.demand
+    );
+    let seeded = e
+        .query(r#"?- impact_of("a0", C)."#, &Limits::default())
+        .expect("answers");
+    assert_eq!(seeded.stats.demand, "applied");
+    let plain = e
+        .query_undemanded(r#"?- impact_of("a0", C)."#, &Limits::default())
+        .expect("answers");
+    assert_eq!(plain.stats.demand, "disabled");
 }
 
 /// The rewrite adds a guard literal to every body it touches, so a program
@@ -722,6 +778,11 @@ fn a_rewrite_over_the_planning_limits_falls_back_to_the_plain_program() {
         result.stats.transformed.is_empty(),
         "{:?}",
         result.stats.transformed
+    );
+    assert!(
+        result.stats.demand.contains("planning limits"),
+        "{}",
+        result.stats.demand
     );
     assert_eq!(render(&e, &result), vec!["\"a1\"", "\"a2\"", "\"a3\""]);
 }

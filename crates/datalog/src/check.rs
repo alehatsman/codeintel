@@ -222,7 +222,7 @@ fn term_vars(terms: &[Term]) -> BTreeSet<u16> {
 /// Every variable a literal mentions. For an aggregate assignment, only the
 /// target — the counted term and the goal are *inside*, which is the whole
 /// point of safety rule 4.
-fn literal_vars(lit: &Literal) -> BTreeSet<u16> {
+pub(crate) fn literal_vars(lit: &Literal) -> BTreeSet<u16> {
     match lit {
         Literal::Pos(p) | Literal::Neg(p) => term_vars(&p.args),
         Literal::Compare { lhs, rhs, .. } => term_vars(&[*lhs, *rhs]),

@@ -455,7 +455,7 @@ contract, and the whole transport is ~150 lines. Recorded in
   "truncated": false,
   "hint": null,
   "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": [], "transformed": ["impact_of"],
-             "depends": ["def", "name_ref", "scip_ref"] }
+             "demand": "applied", "depends": ["def", "name_ref", "scip_ref"] }
 }
 ```
 

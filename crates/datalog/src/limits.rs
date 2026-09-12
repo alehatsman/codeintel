@@ -71,6 +71,11 @@ pub struct Stats {
     /// Predicates the demand transformation rewrote, so an unexpectedly slow
     /// query can be diagnosed rather than guessed at.
     pub transformed: Vec<String>,
+    /// Why `transformed` holds what it holds: `applied`, or the reason the
+    /// program ran as written. An empty `transformed` alone conflated
+    /// nothing-to-seed with a rewrite that was tried and dropped, and the
+    /// second is the one that shows up as an unexplained timeout.
+    pub demand: String,
     /// Stdlib rules a query-local rule shadowed. Never silent.
     pub shadowed: Vec<String>,
     /// When the goal derived no rows, the body literal — quoted as the caller

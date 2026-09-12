@@ -129,7 +129,10 @@ impl Xform<'_> {
     fn seed(&mut self, query: &Query) -> Query {
         let mut bound: BTreeSet<u16> = BTreeSet::new();
         let mut body: Vec<Literal> = Vec::new();
-        for lit in &query.body {
+        for i in order(&query.body, &bound) {
+            let Some(lit) = query.body.get(i) else {
+                continue;
+            };
             let rewritten = self.rewrite(lit, &bound, &body, &query.vars, query.span);
             bind(lit, &mut bound);
             body.push(rewritten);
@@ -286,7 +289,10 @@ impl Xform<'_> {
                 }
                 body.push(Literal::Pos(guard));
             }
-            for lit in &rule.body {
+            for i in order(&rule.body, &bound) {
+                let Some(lit) = rule.body.get(i) else {
+                    continue;
+                };
                 let rewritten = self.rewrite(lit, &bound, &body, &rule.vars, rule.span);
                 bind(lit, &mut bound);
                 body.push(rewritten);
@@ -302,6 +308,107 @@ impl Xform<'_> {
             });
         }
     }
+}
+
+/// The order adornment walks a body: most-bound literal first, filters as
+/// soon as their inputs exist, written order as the tie-break.
+///
+/// The written order is not it. `callers(C, S), def(S, _, _, "evaluate")`
+/// walked as written adorns `callers` free-free — nothing is bound yet — so
+/// no seed is made and the query computes every caller of everything, while
+/// the reverse spelling seeds `callers@fb` and derives 36 tuples instead of
+/// 198,025. The planner reorders most-bound-first at run time, but by then
+/// the adornment is fixed. So the walk here mirrors the planner's choice,
+/// without relation sizes: a constant or a bound variable in an argument
+/// counts as bound, and the literal with the most bound arguments goes first.
+/// Safety is still checked on the program as written; this is a cost
+/// decision, and the rewrite is validated again afterwards.
+fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
+    let mut bound = initially.clone();
+    let mut taken = vec![false; body.len()];
+    let mut out = Vec::with_capacity(body.len());
+    // Safety rule 4, as the walk must respect it: an aggregate whose goal
+    // binds a variable the rest of the body also mentions has to follow the
+    // literal that binds it outside, or the rewrite fails `check` and is
+    // dropped. `runnable` alone does not know this — it trusts the written
+    // order the checker already approved.
+    let mentioned: Vec<BTreeSet<u16>> = body.iter().map(crate::check::literal_vars).collect();
+    let waits_on: Vec<BTreeSet<u16>> = body
+        .iter()
+        .enumerate()
+        .map(|(i, lit)| {
+            let Literal::Assign {
+                expr: Expr::Count { goal, .. },
+                ..
+            } = lit
+            else {
+                return BTreeSet::new();
+            };
+            let mut inner = BTreeSet::new();
+            crate::solve::goal_vars(goal, &mut inner);
+            let elsewhere: BTreeSet<u16> = mentioned
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .flat_map(|(_, vars)| vars.iter().copied())
+                .collect();
+            inner.intersection(&elsewhere).copied().collect()
+        })
+        .collect();
+    while out.len() < body.len() {
+        let mut best: Option<(usize, usize)> = None;
+        for (i, lit) in body.iter().enumerate() {
+            if taken.get(i).copied().unwrap_or(true)
+                || !crate::solve::runnable(lit, &bound)
+                || waits_on.get(i).is_some_and(|w| !w.is_subset(&bound))
+            {
+                continue;
+            }
+            // A filter is free and runs as soon as it can; a relation literal
+            // ranks by how many of its arguments are already bound. An
+            // aggregate is neither: it is a sub-evaluation, and everything
+            // that precedes a literal here becomes the body of that literal's
+            // magic rule, so an aggregate placed early puts an aggregate edge
+            // into every seed it precedes — and into a recursive cycle, if
+            // the seeded predicate is one. It ranks as an unbound relation
+            // literal: after anything already narrowed, before nothing else.
+            let rank = match lit {
+                Literal::Pos(p) => p
+                    .args
+                    .iter()
+                    .filter(|t| match t {
+                        Term::Const(_) => true,
+                        Term::Var(v) => bound.contains(v),
+                        Term::Wildcard => false,
+                    })
+                    .count(),
+                Literal::Assign {
+                    expr: Expr::Count { .. },
+                    ..
+                } => 0,
+                _ => usize::MAX,
+            };
+            if best.is_none_or(|(r, _)| rank > r) {
+                best = Some((rank, i));
+            }
+        }
+        let Some((_, pick)) = best else { break };
+        if let Some(slot) = taken.get_mut(pick) {
+            *slot = true;
+        }
+        if let Some(lit) = body.get(pick) {
+            bind(lit, &mut bound);
+        }
+        out.push(pick);
+    }
+    // A safe body always drains; if it did not, keep the rest as written
+    // rather than drop a literal.
+    for (i, done) in taken.iter().enumerate() {
+        if !done {
+            out.push(i);
+        }
+    }
+    out
 }
 
 /// The bound/free pattern of a literal's arguments under `bound`.

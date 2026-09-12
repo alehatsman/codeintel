@@ -670,7 +670,7 @@ fn required_bindings(body: &[Literal]) -> Vec<BTreeSet<u16>> {
 }
 
 /// Every variable an aggregate's goal mentions.
-fn goal_vars(goal: &[Literal], out: &mut BTreeSet<u16>) {
+pub(crate) fn goal_vars(goal: &[Literal], out: &mut BTreeSet<u16>) {
     for lit in goal {
         bind_all(lit, out);
         filter_vars(lit, out);
@@ -715,7 +715,7 @@ fn filter_vars(lit: &Literal, out: &mut BTreeSet<u16>) {
 }
 
 /// True when every input a literal needs is already bound.
-fn runnable(lit: &Literal, bound: &BTreeSet<u16>) -> bool {
+pub(crate) fn runnable(lit: &Literal, bound: &BTreeSet<u16>) -> bool {
     let has = |t: &Term| match t {
         Term::Const(_) => true,
         Term::Var(v) => bound.contains(v),

@@ -212,6 +212,20 @@ Scope for v1:
   Sideways information passing handles this; a transformation scoped to goal
   constants does not. Test this shape explicitly, not just the constant-goal one.
 - Not applied to fully-free goals, where there is nothing to propagate.
+- **Adornment walks each body most-bound-first, not as written.** The planner
+  reorders literals at run time, but adornment is fixed before that, so a
+  binder placed *after* the derived literal it binds would otherwise forfeit
+  the rewrite: `callers(C, S), def(S, _, _, "evaluate")` and its reverse must
+  rewrite identically. The walk mirrors the planner's heuristic without
+  relation sizes — a constant or an already-bound variable counts as bound,
+  filters run as soon as their inputs exist, ties keep written order. Safety
+  is still checked on the program as written (rule 7).
+- **`stats.demand` says why `stats.transformed` holds what it holds**:
+  `applied`, or the reason the program ran as written — nothing to seed, the
+  rewrite failed the safety check, did not stratify with nothing left to back
+  off, backed off too many times, or exceeded the planning limits. An empty
+  `transformed` alone conflated the first with the rest, and the rest are the
+  ones that surface as an unexplained timeout (invariant 5).
 **`stats.depends` names the base relations the goal's dependency closure
 reaches**, taken from the plain program rather than the demand rewrite, so the
 names are relations and not adornments. The engine has no opinion about what

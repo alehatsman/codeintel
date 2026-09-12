@@ -236,12 +236,14 @@ impl Engine {
         // the program above is already safe and already stratified. If the
         // rewrite does not survive the same two checks, evaluate the original
         // rather than reject a query the user wrote correctly.
-        let demanded = demand
-            .then(|| self.demand(&plain, &schema.derived, limits))
-            .flatten();
-        let (combined, schema, strata, transformed) = match demanded {
-            Some(parts) => parts,
-            None => (plain, schema, strata, Vec::new()),
+        let demanded = if demand {
+            self.demand(&plain, &schema.derived, limits)
+        } else {
+            Err("disabled")
+        };
+        let (combined, schema, strata, transformed, why) = match demanded {
+            Ok((program, schema, strata, names)) => (program, schema, strata, names, "applied"),
+            Err(why) => (plain, schema, strata, Vec::new(), why),
         };
         let goal = combined.query.clone().unwrap_or(goal);
 
@@ -261,6 +263,7 @@ impl Engine {
             derived: 0,
             plan: Vec::new(),
             transformed,
+            demand: why.to_string(),
             depends,
             empty_at: None,
         };
@@ -333,17 +336,21 @@ impl Engine {
     /// cycle it broke is asked for by name, those predicates stop being seeded,
     /// and it is attempted again. Bounded by the number of seeded negations, so
     /// it terminates; each attempt is validated, so nothing unsafe escapes.
+    ///
+    /// `Err` carries why the program runs as written, for `Stats::demand`.
     fn demand(
         &self,
         plain: &Program,
         derived: &BTreeSet<String>,
         limits: &Limits,
-    ) -> Option<(Program, Schema, Strata, Vec<String>)> {
+    ) -> std::result::Result<(Program, Schema, Strata, Vec<String>), &'static str> {
         let mut excluded: BTreeSet<String> = BTreeSet::new();
         for _ in 0..MAX_DEMAND_ATTEMPTS {
-            let t = transform(plain, derived, &excluded)?;
+            let Some(t) = transform(plain, derived, &excluded) else {
+                return Err("nothing to seed: no derived literal has a bound argument");
+            };
             let Ok(schema) = check(&t.program, self.base_arities()) else {
-                return None;
+                return Err("rewrite failed the safety check; the program ran as written");
             };
             if let Ok(strata) = stratify(&t.program) {
                 // The rewrite adds a guard literal to every body and splits
@@ -352,11 +359,15 @@ impl Engine {
                 // already passed them: run that rather than reject a query the
                 // user wrote within budget.
                 if check_planning_limits(&t.program, &strata, limits).is_err() {
-                    return None;
+                    return Err("rewrite exceeded the planning limits; the program ran as written");
                 }
-                return Some((t.program, schema, strata, t.names));
+                return Ok((t.program, schema, strata, t.names));
             }
-            let cycle = negative_cycle(&t.program)?;
+            let Some(cycle) = negative_cycle(&t.program) else {
+                return Err(
+                    "rewrite did not stratify and named no cycle; the program ran as written",
+                );
+            };
             let mut progressed = false;
             for name in &t.seeded_negations {
                 if cycle
@@ -367,10 +378,10 @@ impl Engine {
                 }
             }
             if !progressed {
-                return None;
+                return Err("rewrite did not stratify and no seeded negation was left to back off");
             }
         }
-        None
+        Err("rewrite backed off too many times; the program ran as written")
     }
 
     /// Loaded rules minus any a query rule shadows, plus the query's own rules.
