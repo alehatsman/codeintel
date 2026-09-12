@@ -71,4 +71,12 @@ pub struct Stats {
     pub transformed: Vec<String>,
     /// Stdlib rules a query-local rule shadowed. Never silent.
     pub shadowed: Vec<String>,
+    /// The **base** relations the goal's dependency closure reaches, sorted.
+    ///
+    /// The closure, not the literal syntax of the goal. A caller that must know
+    /// whether an answer depends on a relation it could not populate — an index
+    /// built without SCIP, say — cannot get that from the query text: `?-
+    /// impact_of(S, C).` mentions no base relation at all, and answering `ok`
+    /// with zero rows would be a lie it has no way to detect.
+    pub depends: Vec<String>,
 }

@@ -207,6 +207,17 @@ impl Engine {
         let strata = stratify(&plain)?;
         check_planning_limits(&plain, &strata, limits)?;
 
+        // Taken from the *plain* program: the demand rewrite adorns predicate
+        // names (`p@bf`), and a caller asking "does this answer depend on
+        // `scip_ref`?" means the relation, not the adornment.
+        let closure = reachable(&plain);
+        let depends: Vec<String> = self
+            .base
+            .schema()
+            .map(|(name, _)| name.to_string())
+            .filter(|name| closure.contains(name))
+            .collect();
+
         // Demand transformation is a performance step, never a legality one:
         // the program above is already safe and already stratified. If the
         // rewrite does not survive the same two checks, evaluate the original
@@ -236,6 +247,7 @@ impl Engine {
             derived: 0,
             plan: Vec::new(),
             transformed,
+            depends,
         };
 
         let run = Run {
