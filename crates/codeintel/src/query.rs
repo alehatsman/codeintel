@@ -207,7 +207,12 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         if let Err(diagnostic) = engine.load_rules(&src) {
             return Ok(Answer::of(
                 Status::of(diagnostic.status),
-                format!("{}: {}", path.display(), diagnostic.message),
+                format!(
+                    "{}: {}{}",
+                    path.display(),
+                    diagnostic.message,
+                    host_hint(&diagnostic)
+                ),
             ));
         }
     }
@@ -228,7 +233,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         Err(diagnostic) => {
             return Ok(Answer::of(
                 Status::of(diagnostic.status),
-                diagnostic.message.clone(),
+                format!("{}{}", diagnostic.message, host_hint(&diagnostic)),
             ));
         }
     };
@@ -290,6 +295,22 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         depends: result.stats.depends.clone(),
         shadowed: result.stats.shadowed.clone(),
     })
+}
+
+/// What this host adds to an engine diagnostic: the verb or the rule that
+/// fixes it here. The engine names the failure in its own terms and knows no
+/// verb and no rule, which is invariant 6; the sentence that says `codeintel
+/// schema` or `impact_of` belongs to the crate that has them.
+fn host_hint(diagnostic: &datalog::Diagnostic) -> &'static str {
+    match diagnostic.status {
+        datalog::Status::InvalidQuery if diagnostic.message.starts_with("no relation or rule") => {
+            ". check the spelling against `codeintel schema`"
+        }
+        datalog::Status::BudgetExceeded => {
+            ". a seeded form such as `impact_of(Seed, C)` explores the reachable subgraph"
+        }
+        _ => "",
+    }
 }
 
 /// Why an empty result is empty, in one actionable line.

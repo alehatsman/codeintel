@@ -51,9 +51,8 @@ pub struct QueryResult {
 enum Mode {
     /// Re-derive from each relation's delta.
     SemiNaive,
-    /// Re-derive everything from the full relations, every round. Test-only:
-    /// it exists to be compared against, never to answer a real question.
-    #[cfg(test)]
+    /// Re-derive everything from the full relations, every round. It exists
+    /// to be compared against, never to answer a real question.
     Naive,
 }
 
@@ -180,16 +179,20 @@ impl Engine {
     /// that can drop rows silently, and a twin that shares either of them
     /// would agree with the same bug (`specs/03-datalog.md` § Safety rules 7,
     /// § Validation 5).
-    #[cfg(test)]
-    pub(crate) fn query_naive(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
+    ///
+    /// Public so a host can run its own rule library through the same
+    /// comparison; hidden because it is not an API for answering anything.
+    #[doc(hidden)]
+    pub fn query_naive(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
         self.evaluate(src, limits, Mode::Naive, false)
     }
 
-    /// The same query with demand transformation switched off. Test-only: it
-    /// exists so the transformation can be shown to apply — equal tuple counts
-    /// mean it silently did not.
-    #[cfg(test)]
-    pub(crate) fn query_undemanded(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
+    /// The same query with demand transformation switched off. It exists so
+    /// the transformation can be shown to apply — equal tuple counts mean it
+    /// silently did not. Public and hidden for the same reason as
+    /// [`Self::query_naive`].
+    #[doc(hidden)]
+    pub fn query_undemanded(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
         self.evaluate(src, limits, Mode::SemiNaive, false)
     }
 
@@ -242,10 +245,10 @@ impl Engine {
         };
         let goal = combined.query.clone().unwrap_or(goal);
 
-        // Evaluate only what the goal can reach. `rules/stdlib.dl` ships
-        // `reaches/2`, an unseeded all-pairs closure, so without this a scan of
-        // one base relation costs whole-graph reachability — measured at M2 as
-        // a timeout on a 1,070-definition repository.
+        // Evaluate only what the goal can reach. A loaded rule library can
+        // carry an unseeded all-pairs closure, and without this a scan of one
+        // base relation would pay for it — measured by the host at M2 as a
+        // timeout on a 1,070-definition repository.
         let strata = strata.restrict(&reachable(&combined));
 
         let patterns = self.compile_patterns(&combined)?;

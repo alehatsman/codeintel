@@ -414,9 +414,11 @@ may shadow stdlib rules — shadowing is reported in `stats`, never silent.
    output must be byte-identical.
 4. **Limits.** Each limit has a program that provokes it and asserts the exact
    `status` / `cap`.
-5. **Differential.** A naive (non-semi-naive) evaluator lives in
-   `#[cfg(test)]`. Every conformance program is evaluated by both and the
-   results compared. This is the only practical defence against a subtle
+5. **Differential.** A naive (non-semi-naive) evaluator ships in the engine,
+   public and doc-hidden, never used to answer a question. Every conformance
+   program is evaluated by both and the results compared, and the host runs
+   `stdlib.dl` through the same comparison from its own crate, so the engine's
+   tests read no rule library. This is the only practical defence against a subtle
    semi-naive bug, which otherwise manifests as quietly missing rows. The
    naive side runs the program **as written**, with no demand transformation:
    a twin that shared the rewrite would agree with a rewrite that drops a

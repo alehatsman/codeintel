@@ -77,7 +77,7 @@ pub struct Stats {
     /// wrote it — that matched nothing first.
     ///
     /// A valid query returning zero rows is indistinguishable from a typo, a
-    /// wrong constant, a path that was never indexed and a missing SCIP index.
+    /// wrong constant, and a base relation the host never populated.
     /// Evaluation already walks the body literal by literal, so the deepest
     /// position it reached is free, and the literal at that position is the one
     /// that stopped the join (`specs/05-surface.md` § Response contract).
@@ -85,9 +85,9 @@ pub struct Stats {
     /// The **base** relations the goal's dependency closure reaches, sorted.
     ///
     /// The closure, not the literal syntax of the goal. A caller that must know
-    /// whether an answer depends on a relation it could not populate — an index
-    /// built without SCIP, say — cannot get that from the query text: `?-
-    /// impact_of(S, C).` mentions no base relation at all, and answering `ok`
-    /// with zero rows would be a lie it has no way to detect.
+    /// whether an answer depends on a relation it could not populate cannot
+    /// get that from the query text: a goal over a derived predicate mentions
+    /// no base relation at all, and answering `ok` with zero rows would be a
+    /// lie it has no way to detect.
     pub depends: Vec<String>,
 }

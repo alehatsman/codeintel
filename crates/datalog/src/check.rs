@@ -134,8 +134,7 @@ fn known_predicates(body: &[Literal], schema: &Schema) -> Result<()> {
                         pred.span,
                         format!(
                             "no relation or rule named `{}`; it is neither a base relation nor \
-                             a rule head in this program. check the spelling against \
-                             `codeintel schema`",
+                             a rule head in this program",
                             pred.name
                         ),
                     ));

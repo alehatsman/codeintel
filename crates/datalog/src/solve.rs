@@ -170,9 +170,9 @@ impl Solver<'_> {
             return Err(Diagnostic::whole(
                 Status::BudgetExceeded,
                 format!(
-                    "derived more than {} tuples (max_derived_tuples). Bind an argument of the \
-                     traversal — a seeded form such as `impact_of(Seed, C)` explores the reachable \
-                     subgraph instead of every pair",
+                    "derived more than {} tuples (max_derived_tuples). bind an argument of the \
+                     recursive goal to a constant, so evaluation grows outward from that seed \
+                     instead of deriving every pair",
                     self.limits.max_derived_tuples
                 ),
             ));
