@@ -96,28 +96,3 @@ impl datalog::Symbols for Interning<'_> {
         self.0.resolve(a)
     }
 }
-
-/// One row rendered for a human: integers as digits, strings as themselves.
-#[must_use]
-pub fn render_row(engine: &Engine, row: &[u32]) -> String {
-    row.iter()
-        .map(|a| {
-            engine
-                .resolve(*a)
-                .map_or_else(|| a.to_string(), ToString::to_string)
-        })
-        .collect::<Vec<_>>()
-        .join("\t")
-}
-
-/// Every row of a result, rendered and sorted by the printed text.
-///
-/// Sorting here rather than in the engine is `specs/05-surface.md` § `query`:
-/// atom order is insertion order, so a cold index and an incremental one would
-/// print the same rows in a different order.
-#[must_use]
-pub fn render(engine: &Engine, result: &datalog::QueryResult) -> Vec<String> {
-    let mut out: Vec<String> = result.rows.iter().map(|r| render_row(engine, r)).collect();
-    out.sort();
-    out
-}

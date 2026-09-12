@@ -71,6 +71,15 @@ pub struct Stats {
     pub transformed: Vec<String>,
     /// Stdlib rules a query-local rule shadowed. Never silent.
     pub shadowed: Vec<String>,
+    /// When the goal derived no rows, the body literal — quoted as the caller
+    /// wrote it — that matched nothing first.
+    ///
+    /// A valid query returning zero rows is indistinguishable from a typo, a
+    /// wrong constant, a path that was never indexed and a missing SCIP index.
+    /// Evaluation already walks the body literal by literal, so the deepest
+    /// position it reached is free, and the literal at that position is the one
+    /// that stopped the join (`specs/05-surface.md` § Response contract).
+    pub empty_at: Option<String>,
     /// The **base** relations the goal's dependency closure reaches, sorted.
     ///
     /// The closure, not the literal syntax of the goal. A caller that must know

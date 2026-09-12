@@ -248,6 +248,7 @@ impl Engine {
             plan: Vec::new(),
             transformed,
             depends,
+            empty_at: None,
         };
 
         let run = Run {
@@ -273,6 +274,7 @@ impl Engine {
         let mut rows = Relation::new(head.len());
         {
             let empty = BTreeMap::new();
+            let deepest = Cell::new(0usize);
             let solver = Solver {
                 db: Layers {
                     base: &self.base,
@@ -284,11 +286,23 @@ impl Engine {
                 limits,
                 start,
                 derived: &derived,
+                deepest: &deepest,
             };
             stats
                 .plan
                 .push(format!("?-: {}", plan_of(&solver, &goal.body)));
             solver.run(&goal.body, &head, goal.vars.len(), None, &mut rows)?;
+            if rows.is_empty() {
+                stats.empty_at = solver
+                    .plan(&goal.body, None)
+                    .get(deepest.get())
+                    .and_then(|i| goal.body.get(*i))
+                    .map(|lit| {
+                        let (lo, hi) = lit.span();
+                        src.get(lo..hi).unwrap_or_default().trim().to_string()
+                    })
+                    .filter(|text| !text.is_empty());
+            }
         }
         rows.settle();
 
@@ -402,6 +416,7 @@ impl Engine {
     ) -> Result<()> {
         let (schema, strata, patterns, limits, start) =
             (run.schema, run.strata, run.patterns, run.limits, run.start);
+        let unused_depth = Cell::new(0usize);
         for stratum in &strata.order {
             for name in stratum {
                 let arity = schema.arity.get(name).copied().unwrap_or(1);
@@ -434,6 +449,8 @@ impl Engine {
                         limits,
                         start,
                         derived,
+                        // Rule evaluation never reads this; only the goal does.
+                        deepest: &unused_depth,
                     };
                     let seeded = iteration > 0 && run.mode == Mode::SemiNaive;
                     if seeded {

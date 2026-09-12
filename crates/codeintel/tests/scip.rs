@@ -67,8 +67,11 @@ fn index(root: &Path) -> String {
     stderr
 }
 
+/// Always `--raw`: this file asserts what a symbol *is* — the SCIP string the
+/// anchor join settled on — not how it prints. The rendered `Name path:line`
+/// form is `tests/cli.rs`'s subject.
 fn query(root: &Path, program: &str) -> (Vec<String>, String) {
-    let out = run(root, &["query", program]);
+    let out = run(root, &["query", program, "--raw"]);
     let rows = String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(str::to_string)

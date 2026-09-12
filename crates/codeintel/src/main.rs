@@ -55,6 +55,10 @@ enum Command {
         /// Skip auto-refresh.
         #[arg(long)]
         no_refresh: bool,
+        /// Print the underlying atoms instead of `Name path:line`. Use it when
+        /// piping one query's output into another query's literal.
+        #[arg(long)]
+        raw: bool,
     },
 }
 
@@ -91,7 +95,8 @@ fn run() -> Result<ExitCode> {
             format,
             limit,
             no_refresh,
-        } => query_cmd(&program, &path, format, limit, no_refresh),
+            raw,
+        } => query_cmd(&program, &path, format, limit, no_refresh, raw),
     }
 }
 
@@ -255,6 +260,7 @@ fn query_cmd(
     format: Format,
     limit: Option<usize>,
     no_refresh: bool,
+    raw: bool,
 ) -> Result<ExitCode> {
     let source = if program == "-" {
         let mut buffer = String::new();
@@ -269,6 +275,7 @@ fn query_cmd(
     let options = Options {
         limit: limit.unwrap_or_else(|| Options::default().limit),
         no_refresh,
+        raw,
     };
     let answer = query::run(path, &source, &options)?;
 

@@ -11,7 +11,7 @@
 
 use std::process::ExitCode;
 
-use codeintel::{Regexes, load_facts, render};
+use codeintel::{Regexes, load_facts, render_row};
 use datalog::{Engine, Limits, Strings};
 
 const FACTS: &str = include_str!("../../../tests/fixtures/eval/facts.dl");
@@ -36,7 +36,12 @@ fn main() -> ExitCode {
     match engine.query(&query, &Limits::default()) {
         Ok(result) => {
             println!("columns\t{}", result.columns.join("\t"));
-            for row in render(&engine, &result) {
+            // Raw rows: the eval's fact files are hand-written, so there is no
+            // index to resolve a symbol's location against.
+            let mut rows: Vec<String> =
+                result.rows.iter().map(|r| render_row(&engine, r)).collect();
+            rows.sort();
+            for row in rows {
                 println!("{row}");
             }
             println!("rows\t{}", result.rows.len());

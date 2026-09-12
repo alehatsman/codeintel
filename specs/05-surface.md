@@ -156,18 +156,43 @@ stable prefix rather than a re-sorted sample of it.
 
 **Symbol rendering.** A raw `SymId` is a ~68-character SCIP string — 17 tokens,
 unreadable, and impossible for an agent to retype correctly. In text format a
-column holding a symbol atom renders as its `Name`, and where the row also
-carries a file and a line they render adjacent as `path:line`:
+column holding a symbol atom renders as `Name path:line`, with the name and the
+location joined by a **space**, so the column stays one printed field:
 
 ```
-handle_read    src/api/handler.rs:42
-warm_entry     src/cache/warm.rs:118
+?- calls(C, S).
+start src/app.rs:7      open src/db/conn.rs:3
+warm src/store.rs:38    get src/store.rs:19
 ```
+
+**One printed field per column, always.** An earlier draft of this line read
+"where the row also carries a file and a line they render adjacent" — which, on
+the reading where a symbol expands into two tab-separated fields, makes the text
+form wider than `columns` says it is and hands a consumer that splits on tabs a
+ragged table. The space join costs nothing and keeps the TSV honest.
+
+Symbol-ness is **extracted, not guessed**: an atom is a symbol exactly when
+`def` has a row for it, and the location comes from `def_span`. A symbol with no
+`def_span` prints `Name path`; an atom with no `def` row prints as itself.
+Nothing here infers from the shape of a string.
+
+Because the renderer resolves the location itself, `?- calls(C, S).` is already
+a useful answer — a `def(S, F, _, N), at(S, F, L)` tail is for *filtering* on
+those values or binding them, not for seeing where something is. `schema` says
+so, because every join an agent does not have to write is a join it cannot get
+wrong.
 
 `--raw` prints the underlying `SymId` instead. Use it when piping one query's
-output into another query's literal. JSON always carries the raw atom plus a
-`display` field, so a programmatic consumer never parses the pretty form. This
-is presentation only — the tuple is unchanged, and `--raw` is what round-trips.
+output into another query's literal. JSON carries both: `rows` is always the raw
+atoms, one value per column, and `display` is the same rows expanded — so a
+programmatic consumer never parses the pretty form. This is presentation only —
+the tuple is unchanged, and `--raw` is what round-trips.
+
+**The byte cap is measured on the printed text**, not on the engine's estimate
+over raw atoms. Symbol expansion is what the consumer's context window actually
+pays for, and `crates/datalog` cannot account for it without learning what a
+symbol is (invariant 6). It is applied before the sort, so a truncated answer is
+still the engine's stable prefix.
 
 ### `schema`
 

@@ -5,14 +5,16 @@
 //! worst failure this tool has, because it looks like a right one
 //! (`specs/05-surface.md` § `query`).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use datalog::{Engine, Limits};
+use datalog::{Engine, Limits, Relation};
 use facts::{Lock, Store};
 
 use crate::index::{self, Plan};
+use crate::render::Sites;
 use crate::status::Status;
 use crate::{Regexes, render};
 
@@ -39,6 +41,11 @@ pub struct Options {
     pub limit: usize,
     /// Skip auto-refresh, for benchmarking or a deliberately pinned index.
     pub no_refresh: bool,
+    /// Print the underlying atoms instead of `Name path:line`.
+    ///
+    /// What round-trips: the output of one query pasted into the next query's
+    /// literal. The rendered form is for reading, not for feeding back.
+    pub raw: bool,
 }
 
 impl Default for Options {
@@ -46,6 +53,7 @@ impl Default for Options {
         Self {
             limit: Limits::default().max_result_rows,
             no_refresh: false,
+            raw: false,
         }
     }
 }
@@ -59,6 +67,9 @@ pub struct Answer {
     pub columns: Vec<String>,
     /// Rendered rows, sorted lexicographically by their printed text.
     pub rows: Vec<String>,
+    /// The same rows with no symbol expansion — what round-trips into another
+    /// query's literal. Equal to `rows` under `--raw`.
+    pub raw_rows: Vec<String>,
     /// True when a cap dropped rows.
     pub truncated: bool,
     /// Which cap fired.
@@ -85,6 +96,7 @@ impl Answer {
             status,
             columns: Vec::new(),
             rows: Vec::new(),
+            raw_rows: Vec::new(),
             truncated: false,
             cap: None,
             hint: Some(hint.into()),
@@ -131,6 +143,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         Ok(relations) => relations,
         Err(e) => return Ok(Answer::of(Status::Corrupt, e.to_string())),
     };
+    let sites = Sites::of(&relations);
     let (interner, _manifest) = store.into_parts();
     let mut engine = Engine::new(Box::new(interner)).with_regexes(Box::new(Regexes::new()));
     // Declare every base relation, present or not. A relation with no rows is
@@ -142,7 +155,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
             relations
                 .get(rel.name)
                 .cloned()
-                .unwrap_or_else(|| datalog::Relation::new(rel.arity)),
+                .unwrap_or_else(|| Relation::new(rel.arity)),
         );
     }
     engine
@@ -161,11 +174,31 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         }
     };
 
-    if result.truncated {
+    // Rendered first: symbol expansion is what the consumer's context window
+    // pays for, so the byte cap is applied to the printed text and can fire
+    // here even when the engine's estimate over raw atoms did not.
+    let printed = render(
+        &engine,
+        &result,
+        &sites,
+        options.raw,
+        limits.max_result_bytes,
+    );
+    let raw_rows = if options.raw {
+        printed.rows.clone()
+    } else {
+        render(&engine, &result, &sites, true, limits.max_result_bytes).rows
+    };
+    let truncated = result.truncated || printed.truncated;
+    let cap = result
+        .cap
+        .or(printed.truncated.then_some("max_result_bytes"));
+
+    if truncated {
         status = Status::Truncated;
         hint = Some(format!(
             "{} fired; raise it with --limit or narrow the query",
-            result.cap.unwrap_or("a cap")
+            cap.unwrap_or("a cap")
         ));
     } else if status == Status::Ok
         && let Some((scip_status, scip_hint)) = scip.verdict(&result.stats.depends, &langs)
@@ -173,12 +206,21 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         status = scip_status;
         hint = Some(scip_hint);
     }
+    // `hint` is non-null whenever the status is not `ok` **or** the result is
+    // empty. Zero rows from a valid query is indistinguishable from a typo, a
+    // wrong constant and a path that was never indexed, and that is the one
+    // case the status taxonomy cannot separate on its own
+    // (`specs/05-surface.md` § Response contract).
+    if hint.is_none() && printed.rows.is_empty() {
+        hint = Some(empty_hint(&result, &relations));
+    }
     Ok(Answer {
         status,
         columns: result.columns.clone(),
-        rows: render(&engine, &result),
-        truncated: result.truncated,
-        cap: result.cap,
+        rows: printed.rows,
+        raw_rows,
+        truncated,
+        cap,
         hint,
         derived: result.stats.derived,
         elapsed_ms: result.stats.elapsed_ms,
@@ -186,6 +228,32 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         transformed: result.stats.transformed.clone(),
         depends: result.stats.depends.clone(),
     })
+}
+
+/// Why an empty result is empty, in one actionable line.
+///
+/// The engine reports the body literal its join never got past
+/// ([`datalog::Stats::empty_at`]); this adds what the index holds for that
+/// literal's relation, which is what separates "wrong constant" from "that
+/// relation is empty — you need a SCIP index" from "this is not true of your
+/// code".
+fn empty_hint(result: &datalog::QueryResult, relations: &BTreeMap<&str, Relation>) -> String {
+    let Some(literal) = &result.stats.empty_at else {
+        return "the goal derived no rows: this is not true of your code as indexed".to_string();
+    };
+    let name = literal
+        .trim_start_matches('!')
+        .split(['(', ' '])
+        .next()
+        .unwrap_or_default();
+    let held = relations.get(name).map_or(0, Relation::len);
+    if facts::schema::by_name(name).is_some() {
+        return format!(
+            "`{literal}` matched 0 rows; the index holds {held} `{name}` row(s). \
+             everything before it in the join matched"
+        );
+    }
+    format!("`{literal}` matched 0 rows; everything before it in the join matched")
 }
 
 /// What the index knows about its SCIP inputs, and what that means for an
@@ -351,7 +419,11 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
     serde_json::json!({
         "status": answer.status.as_str(),
         "columns": answer.columns,
-        "rows": answer.rows,
+        // The raw atoms, always: a programmatic consumer must never have to
+        // parse the pretty form back apart (`specs/05-surface.md` § Symbol
+        // rendering). `display` is the same rows with symbols expanded.
+        "rows": answer.raw_rows.iter().map(|r| r.split('\t').collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "display": answer.rows.iter().map(|r| r.split('\t').collect::<Vec<_>>()).collect::<Vec<_>>(),
         "truncated": answer.truncated,
         "cap": answer.cap,
         "hint": answer.hint,

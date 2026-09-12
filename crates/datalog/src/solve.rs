@@ -55,6 +55,13 @@ pub struct Solver<'a> {
     pub start: Instant,
     /// Tuples derived so far, for `max_derived_tuples`.
     pub derived: &'a Cell<u64>,
+    /// The deepest position in the literal order any solution path reached.
+    ///
+    /// Only the goal's evaluation looks at this. When the goal derives nothing,
+    /// the literal at this position is the one that matched nothing — which is
+    /// the difference between "not true of your code" and "your query has a
+    /// typo" ([`crate::Stats::empty_at`]).
+    pub deepest: &'a Cell<usize>,
 }
 
 impl core::fmt::Debug for Solver<'_> {
@@ -197,6 +204,9 @@ impl Solver<'_> {
         out: &mut Relation,
     ) -> Result<()> {
         self.budget()?;
+        if k > self.deepest.get() {
+            self.deepest.set(k);
+        }
         let Some(&index) = order.get(k) else {
             return self.emit(head, env, out);
         };

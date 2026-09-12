@@ -134,8 +134,129 @@ fn index_then_query_returns_real_rows() {
 fn the_location_bridge_lands_on_the_right_symbol() {
     let dir = tree();
     index(dir.path());
+    // A symbol column prints as `Name path:line`: the raw SymId below is a
+    // SCIP string no agent can read or retype (`specs/05-surface.md`).
     let (rows, _) = query(dir.path(), r#"?- innermost_at("src/store.rs", 23, S)."#);
-    assert_eq!(rows, vec!["local src/store.rs Store#get()."]);
+    assert_eq!(rows, vec!["get src/store.rs:19"]);
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- innermost_at("src/store.rs", 23, S)."#,
+            "--raw",
+        ],
+    );
+    let raw: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(raw, vec!["local src/store.rs Store#get()."]);
+}
+
+#[test]
+fn raw_output_round_trips_into_the_next_query() {
+    // The reason `--raw` exists: the pretty form is for reading, the raw form
+    // is what a second query can bind as a literal.
+    let dir = tree();
+    index(dir.path());
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- innermost_at("src/store.rs", 23, S)."#,
+            "--raw",
+        ],
+    );
+    let symbol = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert!(!symbol.is_empty(), "no raw row to feed back");
+
+    let (rows, stderr) = query(dir.path(), &format!(r"?- def({symbol:?}, F, K, N)."));
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].starts_with("src/store.rs\t"), "{rows:?}");
+}
+
+#[test]
+fn a_rendered_row_has_exactly_one_field_per_column() {
+    // A symbol's name and location are joined by a space, not a tab, so the
+    // text form is never wider than `columns` says it is — a consumer that
+    // splits on tabs is never handed a ragged table.
+    let dir = tree();
+    index(dir.path());
+    let (rows, _) = query(dir.path(), r#"?- def(S, F, "function", N)."#);
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert_eq!(row.split('\t').count(), 3, "{row}");
+    }
+}
+
+#[test]
+fn an_empty_result_says_which_literal_matched_nothing() {
+    // `ok` with zero rows is indistinguishable from a typo, a wrong constant
+    // and a path that was never indexed unless the answer says which literal
+    // stopped the join (`specs/05-surface.md` § Response contract).
+    let dir = tree();
+    index(dir.path());
+
+    let (rows, stderr) = query(dir.path(), r#"?- file(F, "python")."#);
+    assert!(rows.is_empty(), "{rows:?}");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert!(
+        stderr.contains(r#"`file(F, "python")` matched 0 rows"#),
+        "{stderr}"
+    );
+    assert!(stderr.contains("`file` row(s)"), "{stderr}");
+
+    // The literal named is the first one that matched nothing, not the first
+    // one written: `def` here matches, and the join stops after it.
+    let (rows, stderr) = query(
+        dir.path(),
+        r#"?- def(S, F, "function", N), import(F, "nosuchmodule", _)."#,
+    );
+    assert!(rows.is_empty(), "{rows:?}");
+    assert!(
+        stderr.contains(r#"import(F, "nosuchmodule", _)` matched 0 rows"#),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_non_empty_answer_carries_no_empty_hint() {
+    let dir = tree();
+    index(dir.path());
+    let (rows, stderr) = query(dir.path(), r#"?- def(S, F, "function", N)."#);
+    assert!(!rows.is_empty());
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert!(!stderr.contains("matched 0 rows"), "{stderr}");
+}
+
+#[test]
+fn json_carries_the_raw_atoms_and_the_display_form() {
+    // A programmatic consumer must never have to parse the pretty form back
+    // apart (`specs/05-surface.md` § Symbol rendering).
+    let dir = tree();
+    index(dir.path());
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- def(S, F, "function", N)."#,
+            "--format",
+            "json",
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("the answer is JSON");
+    let rows = json["rows"].as_array().expect("rows");
+    let display = json["display"].as_array().expect("display");
+    assert_eq!(rows.len(), display.len());
+    assert!(!rows.is_empty());
+    assert_ne!(rows[0], display[0], "display is not expanded");
+    assert_eq!(
+        rows[0].as_array().map(Vec::len),
+        json["columns"].as_array().map(Vec::len),
+        "a row is one value per column"
+    );
 }
 
 #[test]
