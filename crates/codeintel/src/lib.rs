@@ -3,12 +3,19 @@
 //! Thin by construction: five verbs, one MCP tool, and a hard surface budget
 //! asserted in CI. See `specs/05-surface.md`.
 //!
-//! At M1 this crate is the *host*: it supplies the engine's regex builtin and
+//! This crate is also the *host*: it supplies the engine's regex builtin and
 //! its dictionary, which is what keeps `crates/datalog` at zero dependencies.
-//! The verbs land at M2 and M4.
+//!
+//! `index` and `query` land here at M2. `schema`, `status` and `mcp` are M4.
 
+pub mod index;
 pub mod load;
+pub mod query;
 pub mod regexes;
+pub mod status;
 
+pub use index::{Plan, Report};
 pub use load::{load_facts, render, render_row};
+pub use query::{Answer, Options};
 pub use regexes::Regexes;
+pub use status::Status;

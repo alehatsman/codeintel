@@ -166,6 +166,17 @@ impl Store {
         Ok(())
     }
 
+    /// Take the dictionary and the manifest out.
+    ///
+    /// The engine owns its dictionary (`datalog::Symbols`), and a query moves
+    /// this one into it after the last commit. Interning a literal a query
+    /// mentions but the corpus does not have is then an in-memory id that is
+    /// never written — which is exactly what the seam promises.
+    #[must_use]
+    pub fn into_parts(self) -> (Interner, Manifest) {
+        (self.interner, self.manifest)
+    }
+
     /// Every base relation named by the manifest, merged and settled.
     ///
     /// Concatenate then settle once, rather than absorbing segment by segment:

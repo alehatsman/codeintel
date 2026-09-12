@@ -27,7 +27,7 @@ pub struct Manifest {
     pub roots: Vec<String>,
     /// The binary that wrote it.
     pub writer_version: String,
-    /// blake3 over the extractor's own inputs; see [`crate::fingerprint`].
+    /// blake3 over the extractor's own inputs — `extract::fingerprint`.
     pub extractor_fingerprint: String,
     /// Bytes of `dict.bin` a reader may trust.
     pub dict_bin_len: u64,
