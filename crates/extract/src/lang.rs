@@ -79,6 +79,15 @@ pub struct Lang {
     pub attribute_kinds: &'static [&'static str],
     /// Characters that end a declaration header, for `def_sig`.
     pub sig_stops: &'static [char],
+    /// The canonical SCIP indexer command, verbatim and copy-pasteable.
+    ///
+    /// `index` prints it for every language it found. Not "no SCIP index
+    /// found" — the literal line, because the gap between tier A and tier B is
+    /// the difference between a symbol map and a call graph and a user must
+    /// never have to go looking for how to close it
+    /// (`specs/02-extraction.md` § Acquisition). It is **not** part of
+    /// [`crate::fingerprint`]: it changes no fact.
+    pub indexer: &'static str,
 }
 
 impl Lang {
@@ -116,6 +125,7 @@ pub const LANGS: &[Lang] = &[Lang {
     comment_kinds: &["line_comment", "block_comment"],
     attribute_kinds: &["attribute_item", "inner_attribute_item"],
     sig_stops: &['{', ';', '='],
+    indexer: "rust-analyzer scip .",
 }];
 
 /// The language for a path, by extension.

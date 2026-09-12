@@ -13,6 +13,8 @@ blake3.workspace = true
 datalog.workspace = true
 facts.workspace = true
 ignore.workspace = true
+protobuf.workspace = true
+scip.workspace = true
 tree-sitter.workspace = true
 tree-sitter-rust.workspace = true
 

@@ -46,6 +46,13 @@ pub enum Error {
         /// Which file.
         path: String,
     },
+    /// A SCIP index that will not read.
+    Scip {
+        /// Where we read it from.
+        path: String,
+        /// The reader's own message.
+        message: String,
+    },
     /// I/O failure.
     Io(std::io::Error),
 }
@@ -71,6 +78,7 @@ impl fmt::Display for Error {
                 f,
                 "{path} is larger than the 268M-line / 268M-byte limit on integer atoms"
             ),
+            Self::Scip { path, message } => write!(f, "{path} is not a SCIP index: {message}"),
             Self::Io(e) => write!(f, "{e}"),
         }
     }

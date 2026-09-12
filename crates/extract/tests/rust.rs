@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use datalog::atom::is_int;
 use extract::lang::{self, KINDS};
-use extract::{Extractor, walk};
+use extract::{Anchors, Extractor, walk};
 use facts::{Interner, RELATIONS, Segment};
 
 /// Where the fixture lives, relative to this crate.
@@ -39,10 +39,10 @@ fn extract_tree(root: &Path) -> Extracted {
     for candidate in found {
         let src = std::fs::read_to_string(&candidate.abs).expect("source is UTF-8");
         let mut extractor = Extractor::new(candidate.lang).expect("extractor");
-        let (segment, _) = extractor
-            .file(&candidate.path, &src, &mut interner)
+        let out = extractor
+            .file(&candidate.path, &src, &mut interner, &Anchors::default())
             .expect("extracts");
-        segments.insert(candidate.path, segment);
+        segments.insert(candidate.path, out.segment);
     }
     Extracted {
         interner,
@@ -349,9 +349,11 @@ fn facts_are_a_function_of_their_own_file() {
         let src = std::fs::read_to_string(fixture().join(path)).expect("source");
         let lang = lang::for_path(path).expect("a language");
         let mut extractor = Extractor::new(lang).expect("extractor");
-        let (alone, _) = extractor.file(path, &src, &mut interner).expect("extracts");
+        let alone = extractor
+            .file(path, &src, &mut interner, &Anchors::default())
+            .expect("extracts");
 
-        let one = BTreeMap::from([(path.clone(), alone)]);
+        let one = BTreeMap::from([(path.clone(), alone.segment)]);
         let same = BTreeMap::from([(path.clone(), segment.clone())]);
         // Atom ids differ between the two dictionaries; the resolved facts must
         // not.

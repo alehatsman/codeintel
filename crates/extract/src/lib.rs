@@ -4,18 +4,23 @@
 //! range or a SCIP field, and cross-file knowledge enters only through rules.
 //! See `specs/02-extraction.md`.
 //!
-//! Tier B and the anchor join land at M3; this is tier A.
+//! Tier A runs first, entirely, then tier B: the anchor join needs tier A's
+//! `def_name` index to match against.
 
 pub mod error;
 pub mod lang;
+pub mod scip;
 pub mod sweep;
 pub mod symbol;
 pub mod tier_a;
+pub mod tier_b;
 pub mod walk;
 
 pub use error::{Error, Result};
 pub use lang::{Export, LANGS, Lang};
-pub use tier_a::{Counts, Extractor};
+pub use scip::Ingest;
+pub use tier_a::{Counts, Extracted, Extractor};
+pub use tier_b::{Anchor, Anchors};
 pub use walk::{Candidate, walk};
 
 /// blake3 over everything that decides what a fact file looks like.

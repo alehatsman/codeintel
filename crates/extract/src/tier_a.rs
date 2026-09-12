@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::lang::{Export, Lang, TYPE_LIKE};
 use crate::sweep::{self, Span};
 use crate::symbol;
+use crate::tier_b::Anchors;
 
 /// Longest `def_sig` we keep. It is a display string, not a parse.
 const SIG_CAP: usize = 512;
@@ -27,6 +28,22 @@ pub struct Counts {
     pub refs: usize,
     /// `import` rows.
     pub imports: usize,
+}
+
+/// One file's tier-A output.
+#[derive(Debug)]
+pub struct Extracted {
+    /// The facts.
+    pub segment: Segment,
+    /// How many, by shape.
+    pub counts: Counts,
+    /// Every definition's byte span and its **final** symbol — the SCIP one
+    /// where the anchor join found a match. Tier B needs both: the spans to
+    /// attribute its references, and the symbols to know which definitions it
+    /// must not emit a second `def` row for.
+    pub defs: Vec<(Span, String)>,
+    /// Definitions that adopted a SCIP identity.
+    pub anchored: usize,
 }
 
 /// A parser and compiled queries for one language, reused across files.
@@ -113,6 +130,13 @@ impl Extractor {
     /// identity in every relation, and it is baked into every symbol this file
     /// synthesizes.
     ///
+    /// `anchors` is what SCIP knows about this file, empty when tier B has
+    /// nothing for it. A definition whose name token SCIP also saw adopts the
+    /// SCIP symbol **here**, before any fact is written, so every row that
+    /// mentions it — `def_span`, `parent`, a reference's `From` — lands on the
+    /// resolved identity for free and nothing is rewritten twice
+    /// (`specs/02-extraction.md` § The anchor join).
+    ///
     /// # Errors
     /// A file that does not parse, a query capture that is not a `Kind`, a
     /// file past the integer-atom limit, or an exhausted dictionary.
@@ -121,7 +145,8 @@ impl Extractor {
         path: &str,
         src: &str,
         interner: &mut Interner,
-    ) -> Result<(Segment, Counts)> {
+        anchors: &Anchors,
+    ) -> Result<Extracted> {
         let tree = self.parser.parse(src, None).ok_or_else(|| Error::Parse {
             path: path.to_string(),
         })?;
@@ -132,10 +157,22 @@ impl Extractor {
         spans.extend(occurrences.iter().map(|o| (o.at, o.at)));
         let parents = sweep::containment(&spans);
         let items = promote(items, &parents);
-        let symbols = symbols_of(path, &items, &parents);
+        let mut symbols = symbols_of(path, &items, &parents);
+        let mut anchored = 0;
+        for (i, item) in items.iter().enumerate() {
+            if let Some(anchor) = anchors.at(item.name_at.0, item.name_at.1)
+                && item.is_def
+                && let Some(slot) = symbols.get_mut(i)
+                && slot.is_some()
+            {
+                *slot = Some(anchor.symbol.clone());
+                anchored += 1;
+            }
+        }
 
         let mut seg = Segment::new();
         let mut counts = Counts::default();
+        let mut defs: Vec<(Span, String)> = Vec::new();
         let file = atom(interner, path)?;
         push(&mut seg, "file", &[file, atom(interner, self.lang.name)?]);
 
@@ -147,6 +184,8 @@ impl Extractor {
                 continue;
             };
             let s = atom(interner, sym)?;
+            let anchor = anchors.at(item.name_at.0, item.name_at.1);
+            defs.push((item.node, sym.clone()));
             counts.defs += 1;
             push(
                 &mut seg,
@@ -174,25 +213,41 @@ impl Extractor {
                 "def_name",
                 &[s, int(path, item.name_at.0)?, int(path, item.name_at.1)?],
             );
+            // Tier B's text is a fallback, never an override: tier A read the
+            // file, so where it found a signature or a doc comment that is the
+            // one with a byte range behind it.
             if !item.sig.is_empty() {
                 push(&mut seg, "def_sig", &[s, atom(interner, &item.sig)?]);
+            } else if let Some(sig) = anchor.and_then(|a| a.sig.as_deref()) {
+                push(&mut seg, "def_sig", &[s, atom(interner, sig)?]);
             }
-            if let Some(doc) = &item.doc {
+            if let Some(doc) = item
+                .doc
+                .as_deref()
+                .or(anchor.and_then(|a| a.doc.as_deref()))
+            {
                 push(&mut seg, "def_doc", &[s, atom(interner, doc)?]);
             }
             if item.exported {
                 push(&mut seg, "exported", &[s]);
             }
-            // Exactly one `parent` row per `def`, guaranteed by the sweep:
-            // the innermost enclosing definition or scope, else the file.
-            let owner = match parents
-                .get(i)
-                .copied()
-                .flatten()
-                .and_then(|j| symbols.get(j))
-            {
-                Some(Some(sym)) => atom(interner, sym)?,
-                _ => file,
+            // Exactly one `parent` row per `def`. `parent` carries the
+            // *semantic* owner, so tier B's answer replaces this one rather
+            // than adding a second row — a Go method is lexically at file
+            // scope and semantically owned by its type
+            // (`specs/02-extraction.md` § Parent precedence). Where tier B has
+            // no answer, the sweep's innermost enclosing item stands.
+            let owner = match anchor.and_then(|a| a.parent.as_deref()) {
+                Some(parent) => atom(interner, parent)?,
+                None => match parents
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .and_then(|j| symbols.get(j))
+                {
+                    Some(Some(sym)) => atom(interner, sym)?,
+                    _ => file,
+                },
             };
             push(&mut seg, "parent", &[s, owner]);
         }
@@ -221,7 +276,12 @@ impl Extractor {
         }
 
         counts.imports = self.emit_imports(src, root, file, interner, &mut seg)?;
-        Ok((seg, counts))
+        Ok(Extracted {
+            segment: seg,
+            counts,
+            defs,
+            anchored,
+        })
     }
 
     /// Run `tags.scm` and turn its matches into items and occurrences.

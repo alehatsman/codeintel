@@ -48,6 +48,18 @@ anyhow = "1"
 # `.codeintel/lock`. std has no flock; this is the smallest crate that has one
 # and it keeps Windows open. No STACK.md entry — research.md §6 records it.
 fd-lock = "4"
+# ── M3: tier B ───────────────────────────────────────────────────────────────
+# `02-extraction.md` § Ingest reads `index.scip`. STACK.md's protobuf default is
+# `prost`; the deviation and its trigger are recorded in research.md §6, and
+# STACK.md now carries a SCIP row of its own. The crate is the schema's
+# canonical binding and carries `parse_symbol` — the descriptor parser
+# § Parent precedence insists on, since a naive rsplit corrupts a backtick-
+# quoted name containing `#`, `.` or `/`.
+scip = "0.10"
+# `scip` deliberately does not re-export its protobuf runtime, so parsing bytes
+# and reading a `symbol_roles` bitset need it by name. Same version the `scip`
+# dependency already resolves to — one runtime, not two.
+protobuf = "3"
 
 [profile.release]
 lto = "thin"
