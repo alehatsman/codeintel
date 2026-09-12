@@ -314,6 +314,36 @@ fn index_reports_what_it_ingested_and_how_well_it_joined() {
 }
 
 #[test]
+fn removing_the_scip_index_drops_the_files_only_it_covered() {
+    // A file the walk never reaches — gitignored here, an unsupported language
+    // in the field — has a segment made of SCIP facts and nothing else. When
+    // `index.scip` goes, so must it: the alternative is `no-scip` beside rows
+    // still marked `exact`.
+    let dir = tree();
+    let ignore = dir.path().join(".gitignore");
+    let mut rules = std::fs::read_to_string(&ignore).unwrap_or_default();
+    rules.push_str("\nsrc/app.rs\n");
+    std::fs::write(&ignore, rules).expect("writes");
+    index(dir.path());
+    assert!(
+        !rows(
+            dir.path(),
+            r#"?- ref(S, "src/app.rs", L, C, X, R, "exact")."#
+        )
+        .is_empty(),
+        "the ignored file is covered by SCIP alone"
+    );
+    assert!(rows(dir.path(), r#"?- name_ref(N, "src/app.rs", L, C, X)."#).is_empty());
+
+    std::fs::remove_file(dir.path().join("index.scip")).expect("removes");
+    index(dir.path());
+
+    assert!(rows(dir.path(), r#"?- file("src/app.rs", L)."#).is_empty());
+    assert!(rows(dir.path(), r#"?- ref(S, F, L, C, X, R, "exact")."#).is_empty());
+    assert!(rows(dir.path(), "?- resolved(S).").is_empty());
+}
+
+#[test]
 fn a_file_edited_after_the_scip_index_reports_scip_stale() {
     let dir = tree();
     index(dir.path());

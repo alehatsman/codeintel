@@ -257,8 +257,10 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
 
     // Files only tier B covers keep their segments across a refresh that did
     // not re-read the SCIP index; without this they look vanished and their
-    // facts are dropped.
-    if !reingest {
+    // facts are dropped. Not when the inputs changed without being re-read,
+    // which is `index.scip` going away: every fact those files hold came from
+    // it, and keeping them would answer `no-scip` beside rows marked `exact`.
+    if !reingest && !scip_changed {
         let kept: Vec<String> = store
             .manifest()
             .files
@@ -317,13 +319,17 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     // queries (specs/05-surface.md § `query`). A language `--lang` left out
     // was not walked, so its files were never `seen`; they are carried forward
     // unchanged rather than mistaken for vanished (specs/05-surface.md
-    // § `index`).
+    // § `index`). A file only tier B covers is not carried by its language:
+    // nothing walks it in any run, and it is `seen` above exactly when its
+    // SCIP input still stands.
     let walked = |lang: &str| plan.langs.is_empty() || plan.langs.iter().any(|l| l == lang);
     let vanished: Vec<String> = store
         .manifest()
         .files
         .iter()
-        .filter(|(path, entry)| !seen.contains(*path) && walked(&entry.lang))
+        .filter(|(path, entry)| {
+            !seen.contains(*path) && (entry.tiers == ["scip"] || walked(&entry.lang))
+        })
         .map(|(path, _)| path.clone())
         .collect();
     for path in vanished {
