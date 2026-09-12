@@ -11,6 +11,10 @@ repository.workspace = true
 [dependencies]
 datalog.workspace = true
 memmap2.workspace = true
+blake3.workspace = true
+fd-lock.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

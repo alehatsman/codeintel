@@ -9,9 +9,13 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+clap.workspace = true
 datalog.workspace = true
+extract.workspace = true
 facts.workspace = true
 regex.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

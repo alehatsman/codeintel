@@ -74,7 +74,14 @@ rel_id      u32 le                          4   index into the relation table
 arity       u32 le                          4
 n_rows      u32 le                          4
 rows        [u32 le; arity * n_rows]        4 * arity * n_rows
+--- trailer ---
+checksum    blake3 of every byte above       32
 ```
+
+The trailer is what § Concurrency's "every segment carries a body checksum"
+means concretely. It sits at the end rather than in the header so the writer
+streams the body once and stamps it, and so the layout above stays the layout a
+reader walks front-to-back.
 
 Rows are sorted by column order and deduplicated **at write time**, so loading
 is concatenate + merge, never sort-from-scratch.

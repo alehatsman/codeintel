@@ -9,6 +9,15 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+blake3.workspace = true
+datalog.workspace = true
+facts.workspace = true
+ignore.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

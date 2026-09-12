@@ -21,6 +21,7 @@ repository = "https://github.com/alehatsman/codeintel"
 [workspace.dependencies]
 datalog = { path = "crates/datalog", version = "0.1.0" }
 facts = { path = "crates/facts", version = "0.1.0" }
+extract = { path = "crates/extract", version = "0.1.0" }
 # `04-storage.md`: the on-disk bytes ARE the in-memory representation, so the
 # dictionary is mapped rather than parsed. STACK.md has no entry for this;
 # research.md §6 records the deviation and its trigger.
@@ -29,6 +30,24 @@ memmap2 = "0.9"
 # transitive dependency of tree-sitter — see research.md §6.
 regex = "1"
 tempfile = "3"
+# ── M2: tier A, storage, and the first two verbs ─────────────────────────────
+# Domain, not a stack choice: research.md §6 records that STACK.md has no entry
+# for tree-sitter, the grammar crates, or `ignore`.
+tree-sitter = "0.27"
+tree-sitter-rust = "0.24"
+ignore = "0.4"
+# `04-storage.md`: segments are named by a content hash, and the manifest's
+# fast path hashes file contents. STACK default for speed-over-interop.
+blake3 = "1"
+# The manifest and `--format json`. STACK defaults.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+# `04-storage.md` § Concurrency: one writer, many readers, an advisory
+# `.codeintel/lock`. std has no flock; this is the smallest crate that has one
+# and it keeps Windows open. No STACK.md entry — research.md §6 records it.
+fd-lock = "4"
 
 [profile.release]
 lto = "thin"
