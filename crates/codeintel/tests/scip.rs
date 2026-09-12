@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, SystemTime};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_codeintel")
@@ -17,11 +18,55 @@ fn fixture() -> PathBuf {
 }
 
 /// A throwaway copy of the fixture tree, `index.scip` included.
+///
+/// The copy is given a *fixed* clock: every source sits at `SOURCE_MTIME` and
+/// `index.scip` one minute after it — the order a real repository is in once
+/// the indexer has run.
+///
+/// `std::fs::copy` does not carry mtimes over; it stamps every file with the
+/// same `now`. Manifest mtimes are whole seconds, and `index` decides whether
+/// the SCIP inputs saw a file with `candidate.mtime <= scip`. So a test that
+/// edits a file within the same second as the copy is told the inputs saw the
+/// new bytes, and tier B anchors against positions that have moved.
+///
+/// That is not hypothetical. It is why
+/// `an_edited_file_is_tier_a_only_until_the_indexer_reruns` read two `def`
+/// rows for one definition on CI — where the whole test finishes in 150ms —
+/// and one on a developer machine slow enough to cross a second boundary.
+/// Pinning the clock removes the race instead of outrunning it.
 fn tree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     copy(&fixture(), dir.path());
     drop(std::fs::remove_file(dir.path().join("expected.facts")));
+    backdate(dir.path(), SOURCE_MTIME);
+    set_mtime(&dir.path().join("index.scip"), SOURCE_MTIME + 60);
     dir
+}
+
+/// Seconds since the epoch every copied source is stamped with. Any fixed past
+/// instant does; this one is readable as 2023-11-14.
+const SOURCE_MTIME: u64 = 1_700_000_000;
+
+/// Stamp every file in the tree, recursively, with `secs`.
+fn backdate(dir: &Path, secs: u64) {
+    for entry in std::fs::read_dir(dir).expect("readable") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            backdate(&path, secs);
+        } else {
+            set_mtime(&path, secs);
+        }
+    }
+}
+
+fn set_mtime(path: &Path, secs: u64) {
+    let when = SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("opens for set_times");
+    file.set_times(std::fs::FileTimes::new().set_modified(when))
+        .expect("sets mtime");
 }
 
 fn copy(from: &Path, to: &Path) {
