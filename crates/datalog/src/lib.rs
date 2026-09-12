@@ -4,5 +4,18 @@
 //! sorted `Vec<u32>`, and every code-intel concept lives above this crate. That
 //! seam is what keeps evaluation testable, and `tests/seam.rs` enforces it.
 //!
-//! Empty at M0 — the skeleton milestone wires the quality gate and the crate
-//! seams only. See `specs/03-datalog.md` and `docs/plan.md` M1.
+//! The dialect is Prolog-flavoured and deliberately small — no functors, no
+//! lists, no cut. See `specs/03-datalog.md` for the grammar, the safety rules
+//! and the evaluation strategy.
+
+pub mod ast;
+pub mod atom;
+pub mod diag;
+pub mod lex;
+pub mod parse;
+pub mod symbols;
+
+pub use atom::{Atom, Term};
+pub use diag::{Diagnostic, Status};
+pub use parse::parse;
+pub use symbols::{Strings, Symbols};
