@@ -171,11 +171,18 @@ impl Engine {
         self.evaluate(src, limits, Mode::SemiNaive, true)
     }
 
-    /// The same query under naive evaluation. The differential-testing twin of
-    /// [`Self::query`]; never used to answer a real question.
+    /// The same query under naive evaluation of the program **as written**:
+    /// no semi-naive deltas and no demand transformation. The
+    /// differential-testing twin of [`Self::query`]; never used to answer a
+    /// real question.
+    ///
+    /// Untransformed on purpose. Semi-naive and demand are the two rewrites
+    /// that can drop rows silently, and a twin that shares either of them
+    /// would agree with the same bug (`specs/03-datalog.md` § Safety rules 7,
+    /// § Validation 5).
     #[cfg(test)]
     pub(crate) fn query_naive(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
-        self.evaluate(src, limits, Mode::Naive, true)
+        self.evaluate(src, limits, Mode::Naive, false)
     }
 
     /// The same query with demand transformation switched off. Test-only: it
@@ -227,7 +234,7 @@ impl Engine {
         // rewrite does not survive the same two checks, evaluate the original
         // rather than reject a query the user wrote correctly.
         let demanded = demand
-            .then(|| self.demand(&plain, &schema.derived))
+            .then(|| self.demand(&plain, &schema.derived, limits))
             .flatten();
         let (combined, schema, strata, transformed) = match demanded {
             Some(parts) => parts,
@@ -327,6 +334,7 @@ impl Engine {
         &self,
         plain: &Program,
         derived: &BTreeSet<String>,
+        limits: &Limits,
     ) -> Option<(Program, Schema, Strata, Vec<String>)> {
         let mut excluded: BTreeSet<String> = BTreeSet::new();
         for _ in 0..MAX_DEMAND_ATTEMPTS {
@@ -335,6 +343,14 @@ impl Engine {
                 return None;
             };
             if let Ok(strata) = stratify(&t.program) {
+                // The rewrite adds a guard literal to every body and splits
+                // strata, so a program at the limit as written can be over it
+                // rewritten. The limits bound what runs, and the plain program
+                // already passed them: run that rather than reject a query the
+                // user wrote within budget.
+                if check_planning_limits(&t.program, &strata, limits).is_err() {
+                    return None;
+                }
                 return Some((t.program, schema, strata, t.names));
             }
             let cycle = negative_cycle(&t.program)?;

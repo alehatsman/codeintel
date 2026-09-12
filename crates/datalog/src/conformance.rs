@@ -39,11 +39,21 @@ fn render(engine: &Engine, result: &QueryResult) -> Vec<String> {
 /// This is the acceptance gate of `docs/plan.md` M1: a semi-naive bug that
 /// drops rows is otherwise invisible until it corrupts a real answer.
 fn both(program: &str, query: &str) -> Vec<String> {
-    let mut fast = engine(program);
+    both_in(|| engine(program), query).0
+}
+
+/// [`both`] over any engine builder, for programs with installed relations.
+///
+/// The fast side is the real thing: semi-naive over the demand-rewritten
+/// program. The slow side is naive over the program as written, so a rewrite
+/// that drops a seed — which the fast side alone cannot notice — disagrees
+/// here. Returns the fast answer and its result, for assertions on `stats`.
+fn both_in(make: impl Fn() -> Engine, query: &str) -> (Vec<String>, QueryResult) {
+    let mut fast = make();
     let quick = fast
         .query(query, &Limits::default())
         .expect("semi-naive answers");
-    let mut slow = engine(program);
+    let mut slow = make();
     let plain = slow
         .query_naive(query, &Limits::default())
         .expect("naive answers");
@@ -52,7 +62,7 @@ fn both(program: &str, query: &str) -> Vec<String> {
     let b = render(&slow, &plain);
     assert_eq!(a, b, "semi-naive and naive disagree on {query:?}");
     assert_eq!(quick.columns, plain.columns);
-    a
+    (a, quick)
 }
 
 // ── the programs ────────────────────────────────────────────────────────────
@@ -641,6 +651,81 @@ fn demand_transformation_agrees_with_naive_evaluation() {
     }
 }
 
+/// Aggregates over recursion, seeded and nested. `GRAPH`'s closure, counted.
+const COUNTED: &str = r#"
+edge("a", "b").
+edge("b", "c").
+edge("c", "d").
+edge("d", "e").
+edge("e", "b").
+node(X) :- edge(X, _).
+node(Y) :- edge(_, Y).
+reaches(X, Y) :- edge(X, Y).
+reaches(X, Z) :- reaches(X, Y), edge(Y, Z).
+fanout(X, N) :- node(X), N = count{ Y : reaches(X, Y) }.
+wide(X) :- fanout(X, N), N > 3.
+deep(X, N) :- node(X), N = count{ Y : edge(X, Y), M = count{ Z : reaches(Y, Z) }, M > 3 }.
+"#;
+
+/// An aggregate over a recursive relation, alone, seeded, and nested — the
+/// aggregate + demand combinations that `both` had never seen.
+#[test]
+fn aggregates_over_recursion_agree_with_naive_evaluation() {
+    // Unseeded: the whole closure, counted per node.
+    assert_eq!(
+        both(COUNTED, "?- fanout(X, N)."),
+        vec!["\"a\" 4", "\"b\" 4", "\"c\" 4", "\"d\" 4", "\"e\" 4"]
+    );
+    // Seeded: the rewrite requests `reaches` plain from inside the `count{}`.
+    let (rows, result) = both_in(|| engine(COUNTED), r#"?- fanout("a", N)."#);
+    assert_eq!(rows, vec!["4"]);
+    assert!(
+        result.stats.transformed.iter().any(|n| n == "fanout@bf"),
+        "{:?}",
+        result.stats.transformed
+    );
+    // Seeded through a derived predicate that filters on the count.
+    let (rows, _) = both_in(|| engine(COUNTED), r#"?- wide("a")."#);
+    assert_eq!(rows, vec![""], "a ground goal that holds is one empty row");
+    // Nested: `reaches` appears only inside the inner `count{}`. The rewrite
+    // has to request it from there, or the rewrite is dropped and the seeded
+    // query silently pays for the whole closure.
+    let (rows, result) = both_in(|| engine(COUNTED), r#"?- deep("a", N)."#);
+    assert_eq!(
+        rows,
+        vec!["1"],
+        "a's one edge target, b, reaches four nodes"
+    );
+    assert!(
+        result.stats.transformed.iter().any(|n| n == "deep@bf"),
+        "the nested aggregate dropped the rewrite: {:?}",
+        result.stats.transformed
+    );
+}
+
+/// The rewrite adds a guard literal to every body it touches, so a program
+/// exactly at `max_body_literals` as written is over it rewritten. The limits
+/// bound what runs: the plain program runs instead, and the answer is the
+/// same.
+#[test]
+fn a_rewrite_over_the_planning_limits_falls_back_to_the_plain_program() {
+    // `impact_of`'s recursive body has two literals as written, three guarded.
+    let limits = Limits {
+        max_body_literals: 2,
+        ..Limits::default()
+    };
+    let mut e = engine(WIDE);
+    let result = e
+        .query(r#"?- impact_of("a0", C)."#, &limits)
+        .expect("the plain program is within the limit");
+    assert!(
+        result.stats.transformed.is_empty(),
+        "{:?}",
+        result.stats.transformed
+    );
+    assert_eq!(render(&e, &result), vec!["\"a1\"", "\"a2\"", "\"a3\""]);
+}
+
 // ── the standard library ────────────────────────────────────────────────────
 
 /// The 15 base relations of `specs/01-facts.md`, empty.
@@ -742,8 +827,10 @@ fn install(e: &mut Engine, name: &str, rows: &[&[&str]]) {
     e.insert_relation(name, rel);
 }
 
-#[test]
-fn the_standard_library_answers_over_hand_written_facts() {
+/// One struct with two methods, one of which calls the other by name. Small
+/// enough to hand-verify, shaped enough to exercise the location bridge,
+/// containment, name resolution and the seeded traversals.
+fn store_fixture() -> Engine {
     let mut e = stdlib_engine();
     install(&mut e, "file", &[&["src/store.rs", "rust"]]);
     install(
@@ -773,59 +860,94 @@ fn the_standard_library_answers_over_hand_written_facts() {
             &["S#put().", "S#"],
         ],
     );
+    // `put` calls `get` by name, in the same file, so rule 1 of `ref` resolves
+    // it without SCIP and the call graph has one edge.
+    install(
+        &mut e,
+        "name_ref",
+        &[&["get", "src/store.rs", "35", "8", "S#put()."]],
+    );
     e.load_rules(include_str!("../../../rules/stdlib.dl"))
         .expect("stdlib loads");
+    e
+}
 
+#[test]
+fn the_standard_library_answers_over_hand_written_facts() {
     // The location bridge: a file:line from a stack trace becomes a symbol.
-    let result = e
-        .query(
-            r#"?- innermost_at("src/store.rs", 15, S)."#,
-            &Limits::default(),
-        )
-        .expect("answers");
-    assert_eq!(
-        render(&e, &result),
-        vec!["\"S#get().\""],
-        "the tightest span wins"
-    );
+    let (rows, _) = both_in(store_fixture, r#"?- innermost_at("src/store.rs", 15, S)."#);
+    assert_eq!(rows, vec!["\"S#get().\""], "the tightest span wins");
 
     // ...and the line that only the struct covers still resolves to the struct.
-    let result = e
-        .query(
-            r#"?- innermost_at("src/store.rs", 5, S)."#,
-            &Limits::default(),
-        )
-        .expect("answers");
-    assert_eq!(render(&e, &result), vec!["\"S#\""]);
+    let (rows, _) = both_in(store_fixture, r#"?- innermost_at("src/store.rs", 5, S)."#);
+    assert_eq!(rows, vec!["\"S#\""]);
 
-    // Containment closure.
-    let result = e
-        .query(r#"?- within("S#get().", A)."#, &Limits::default())
-        .expect("answers");
-    // Ordering is by atom — dictionary order, which is the order the facts
-    // above interned their strings in, not lexicographic order.
-    assert_eq!(render(&e, &result), vec!["\"src/store.rs\"", "\"S#\""]);
+    // Containment closure. Ordering is by atom — dictionary order, which is
+    // the order the facts above interned their strings in, not lexicographic
+    // order.
+    let (rows, _) = both_in(store_fixture, r#"?- within("S#get().", A)."#);
+    assert_eq!(rows, vec!["\"src/store.rs\"", "\"S#\""]);
 
     // Orientation, one round trip.
-    let result = e
-        .query(r#"?- about("S#get().", Rel, A, B, L)."#, &Limits::default())
-        .expect("answers");
+    let (rows, _) = both_in(store_fixture, r#"?- about("S#get().", Rel, A, B, L)."#);
     assert!(
-        render(&e, &result)
-            .iter()
-            .any(|row| row.contains("\"parent\"")),
-        "about reports the parent: {:?}",
-        render(&e, &result)
+        rows.iter().any(|row| row.contains("\"parent\"")),
+        "about reports the parent: {rows:?}"
     );
 
     // A span question, with arithmetic.
-    let result = e
-        .query("?- long_def(S).", &Limits::default())
-        .expect("answers");
+    let (rows, _) = both_in(store_fixture, "?- long_def(S).");
+    assert!(rows.is_empty(), "no definition here is over 80 lines");
+}
+
+/// The combinations `specs/03-datalog.md` § Validation 5 promises and the
+/// two-rule programs above cannot reach: a seeded ground negation, and the
+/// negation-inside-recursion back-off that `impact_of` takes. Each is run
+/// against naive evaluation of the library as written, so a rewrite that drops
+/// a row is a disagreement, not a fast wrong answer.
+#[test]
+fn the_seeded_stdlib_traversals_agree_with_naive_evaluation() {
+    // Seeded ground negation: `!tighter_at(F, L, S)` with every column bound.
+    let (rows, result) = both_in(store_fixture, r#"?- innermost_at("src/store.rs", 15, S)."#);
+    assert_eq!(rows, vec!["\"S#get().\""]);
     assert!(
-        render(&e, &result).is_empty(),
-        "no definition here is over 80 lines"
+        result
+            .stats
+            .transformed
+            .iter()
+            .any(|n| n == "tighter_at@bbb"),
+        "{:?}",
+        result.stats.transformed
     );
+
+    // Negation + demand + recursion: seeding `!ambiguous` makes the rewrite
+    // unstratifiable, the engine backs it off, and the answer must survive.
+    let (rows, result) = both_in(store_fixture, r#"?- def(S, _, _, "get"), impact_of(S, C)."#);
+    assert_eq!(rows, vec!["\"S#get().\" \"S#put().\""], "put calls get");
+    assert!(
+        result.stats.transformed.iter().any(|n| n == "impact_of@bf"),
+        "{:?}",
+        result.stats.transformed
+    );
+    assert!(
+        !result
+            .stats
+            .transformed
+            .iter()
+            .any(|n| n.starts_with("ambiguous@")),
+        "{:?}",
+        result.stats.transformed
+    );
+
+    // Both seeds in one query, which is where the back-off has to be per
+    // predicate to keep either.
+    let (rows, _) = both_in(
+        store_fixture,
+        r#"?- innermost_at("src/store.rs", 35, S), impact_of(S, C)."#,
+    );
+    assert_eq!(rows, vec![] as Vec<String>, "nothing calls put");
+    let (rows, _) = both_in(store_fixture, r#"?- reach_of("S#put().", C)."#);
+    assert_eq!(rows, vec!["\"S#get().\""]);
 }
 
 /// Demand transformation must apply **against the shipped rule library**, not

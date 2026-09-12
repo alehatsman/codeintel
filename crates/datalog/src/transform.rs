@@ -212,16 +212,32 @@ impl Xform<'_> {
                 expr: Expr::Count { goal, .. },
                 ..
             } => {
-                for inner in goal {
-                    if let Literal::Pos(p) | Literal::Neg(p) = inner
-                        && self.derived.contains(&p.name)
-                    {
-                        self.request_plain(&p.name);
-                    }
-                }
+                self.request_inside(goal);
                 lit.clone()
             }
             other => other.clone(),
+        }
+    }
+
+    /// Request, unadorned, every derived predicate an aggregate's goal names,
+    /// however deeply its `count{}`s nest.
+    ///
+    /// Walking one level left a predicate seen only inside a nested aggregate
+    /// unrequested, so its rules were missing from the rewrite, `check`
+    /// rejected the rewrite, and the plain program ran with `transformed`
+    /// empty: rows right, cost unbounded, nothing reported.
+    fn request_inside(&mut self, goal: &[Literal]) {
+        for inner in goal {
+            match inner {
+                Literal::Pos(p) | Literal::Neg(p) if self.derived.contains(&p.name) => {
+                    self.request_plain(&p.name);
+                }
+                Literal::Assign {
+                    expr: Expr::Count { goal, .. },
+                    ..
+                } => self.request_inside(goal),
+                _ => {}
+            }
         }
     }
 

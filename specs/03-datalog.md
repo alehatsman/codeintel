@@ -331,6 +331,12 @@ with the name of the cap that fired** when it bites (invariant 7).
 | `max_strata` | 64 | reject at planning |
 | `max_body_literals` | 32 | reject at planning |
 
+Both planning limits are checked on the program as written and again on the
+demand-rewritten one, which has a guard literal more per body and more strata.
+A rewrite over the limit is dropped and the program as written runs: the
+rewrite is a performance step, and may not turn a query within budget into a
+rejected one.
+
 `max_strata` was 32 in an earlier draft. `rules/stdlib.dl` stratifies into 37,
 so that default rejected every query against the shipped standard library: the
 limit had been set against an imagined rule set rather than the real one.
@@ -411,7 +417,11 @@ may shadow stdlib rules — shadowing is reported in `stats`, never silent.
 5. **Differential.** A naive (non-semi-naive) evaluator lives in
    `#[cfg(test)]`. Every conformance program is evaluated by both and the
    results compared. This is the only practical defence against a subtle
-   semi-naive bug, which otherwise manifests as quietly missing rows.
+   semi-naive bug, which otherwise manifests as quietly missing rows. The
+   naive side runs the program **as written**, with no demand transformation:
+   a twin that shared the rewrite would agree with a rewrite that drops a
+   seed. The stdlib's seeded traversals, and every combination of aggregate,
+   negation, recursion and demand, go through the same comparison.
 6. **stdlib.dl.** Every rule in `rules/stdlib.dl` has a fixture-based test with
    a hand-verified expected answer.
 7. **Fuzzing.** The parser is fuzzed for panics. Parsing untrusted input must
