@@ -336,6 +336,48 @@ Rust only. Walk → parse → extract → segment → load → query.
   manifest and returns `stale`, never `locked` — `locked` is for a second writer
   and is not actionable by a reader.
 
+### What M2 actually cost, and what it found
+
+Shipped: `crates/facts`' relation table, segment format, manifest, store and
+writer lock; `crates/extract`'s language table, walk, containment sweep, symbol
+synthesis and Rust tier A; authored `queries/rust/{tags,imports}.scm`; and the
+`index` and `query` verbs. `tests/fixtures/rust/` and its golden fact file.
+
+**Two of the four M2 questions that mattered were about the engine, not the
+extractor** — and both were found by pointing the finished tier A at this
+repository (52 files, 1,070 definitions, 4,173 `name_ref`s), which is the first
+time anything larger than a hand-written fixture existed.
+
+1. **Every stratum was evaluated, whatever the goal asked for.** `stdlib.dl`
+   ships `reaches/2`, an unseeded all-pairs closure, so `?- def(S, F,
+   "function", N).` — one scan of one base relation — cost whole-graph
+   reachability and hit `max_time_ms`. Fixed by restricting evaluation to the
+   goal's dependency closure ([03-datalog.md](../specs/03-datalog.md)
+   § Evaluation).
+2. **Demand transformation silently stopped applying.** It is validated after
+   rewriting and falls back to the plain program when the rewrite does not
+   stratify, so when seeding `!tighter_at` made `impact_of` unstratifiable, the
+   *whole* query fell back — and the spec's own headline,
+   `?- innermost_at(F, L, S), impact_of(S, C), ..., !is_test(F).`, ran past
+   120 s. The fall-back is now per predicate: 168 ms. M1's gate proved the
+   transformation applied to a two-rule test program; it did not prove it
+   applied to the shipped rule library, and that is now asserted.
+3. **`//!` is not an item's doc comment.** Treating it as a doc marker attached
+   every file header to whichever definition came first.
+4. **`ignore` does not apply `.gitignore` outside a git checkout** unless
+   `require_git(false)` is set, so a worktree indexed all of `target/`.
+
+Two spec conflicts were surfaced rather than reconciled silently: `Union`
+mapping (resolved to `type` in both tiers, [02-extraction.md](../specs/02-extraction.md)
+§ Ingest) and the `ignored` skip count, which is deleted because the `ignore`
+crate does not report what its matchers drop and recovering the figure costs a
+second full traversal ([05-surface.md](../specs/05-surface.md) § `index`).
+
+Deferred to M4 on purpose, and not silently: `--raw`, `--rules`,
+`--expect-empty`, symbol rendering as `Name` + `path:line`, and the
+first-zero-literal `hint` on an empty result. `--scip` is M3. `index` and
+`query` carry `--format`, `--limit` and `--no-refresh` today.
+
 ---
 
 ## M3 — Tier B, one language

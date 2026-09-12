@@ -381,6 +381,7 @@ The whole binary, as specified:
 | `anyhow` | application top level | STACK default |
 | `thiserror` | one error enum per library boundary | STACK default |
 | `ignore` | gitignore-aware walking | no STACK entry |
+| `fd-lock` | the advisory writer lock (`04-storage.md` § Concurrency) | 4.0 — **deviation**, see below |
 
 Dev-dependencies, all STACK defaults: `insta` (golden facts and rendered
 output), `assert_cmd` + `predicates` (CLI), `rstest`, `proptest` (engine
@@ -404,6 +405,12 @@ model backend.
   fixed-width row of `u32`, so the on-disk bytes *are* the in-memory
   representation (§5). Loading is `mmap` plus concatenate; a serialization
   library would be a parse step over data that needs none.
+- **`fd-lock` has no STACK entry.** Trigger: `04-storage.md` § Concurrency
+  requires an advisory `flock` on `.codeintel/lock`, `query`'s auto-refresh is a
+  writer and must take the same one, and std has no file locking at all. It was
+  chosen over `rustix` because it keeps Windows reachable — that spec puts
+  Windows out of scope for v1, and a lock that forecloses it would make the
+  decision permanent for no gain.
 - **`tree-sitter`, the grammar crates, `scip`, `protobuf` and `ignore` have no
   STACK entry.** They are the domain, not a stack choice. Recorded here so the
   next reader does not go looking for a ruling that does not exist.
