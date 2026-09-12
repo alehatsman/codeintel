@@ -92,7 +92,7 @@ impl Solver<'_> {
     /// already bound. A pure function of the rule and the current relation
     /// sizes, both of which are deterministic, so the plan is deterministic.
     pub fn plan(&self, body: &[Literal], delta_at: Option<usize>) -> Vec<usize> {
-        let needs = aggregate_needs(body);
+        let needs = required_bindings(body);
         let mut bound: BTreeSet<u16> = BTreeSet::new();
         let mut taken = vec![false; body.len()];
         let mut order = Vec::with_capacity(body.len());
@@ -599,8 +599,29 @@ fn unify(args: &[Term], row: &[Atom], env: &mut Env, trail: &mut Vec<u16>) -> bo
 /// above the literal that binds `S`, and the aggregate then counts over every
 /// `S` at once. The answer is wrong, not slow, and it is wrong silently — which
 /// is why the check lives in the planner and not in a comment.
-fn aggregate_needs(body: &[Literal]) -> Vec<BTreeSet<u16>> {
+fn required_bindings(body: &[Literal]) -> Vec<BTreeSet<u16>> {
     let mut out = vec![BTreeSet::new(); body.len()];
+
+    // An adorned relation holds only the tuples reachable from its seeds, so a
+    // literal reading one must run with its bound positions bound. The name
+    // carries that contract; see `transform::adornment_of`.
+    for (i, lit) in body.iter().enumerate() {
+        let Literal::Pos(pred) = lit else { continue };
+        let Some(adornment) = crate::transform::adornment_of(&pred.name) else {
+            continue;
+        };
+        let required: BTreeSet<u16> = pred
+            .args
+            .iter()
+            .zip(adornment.chars())
+            .filter(|(_, mark)| *mark == 'b')
+            .filter_map(|(t, _)| if let Term::Var(v) = t { Some(*v) } else { None })
+            .collect();
+        if let Some(slot) = out.get_mut(i) {
+            *slot = required;
+        }
+    }
+
     for (i, lit) in body.iter().enumerate() {
         let Literal::Assign {
             expr: Expr::Count { goal, .. },
@@ -619,7 +640,7 @@ fn aggregate_needs(body: &[Literal]) -> Vec<BTreeSet<u16>> {
             }
         }
         if let Some(slot) = out.get_mut(i) {
-            *slot = inside.intersection(&outside).copied().collect();
+            slot.extend(inside.intersection(&outside).copied());
         }
     }
     out

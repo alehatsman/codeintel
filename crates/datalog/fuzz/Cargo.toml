@@ -1,0 +1,26 @@
+# The libfuzzer campaign. Not a workspace member: it needs a nightly toolchain
+# and `cargo fuzz`, neither of which the gate installs.
+#
+#     cargo +nightly fuzz run parser -- -max_total_time=600
+#
+# `tests/robustness.rs` covers the same property on every commit with a seeded
+# generator, so a machine without cargo-fuzz is not a machine without coverage.
+[package]
+name = "datalog-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+datalog = { path = ".." }
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false

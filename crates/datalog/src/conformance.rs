@@ -527,3 +527,116 @@ fn match_without_a_regex_engine_says_which_builtins_still_work() {
     assert!(diagnostic.message.contains("regex engine"), "{diagnostic}");
     assert!(diagnostic.message.contains("prefix"), "{diagnostic}");
 }
+
+// ── demand transformation ───────────────────────────────────────────────────
+
+/// A wide graph: 12 roots, each a three-hop chain. Seeding from one root must
+/// not cost the other eleven.
+const WIDE: &str = r#"
+calls("a1", "a0"). calls("a2", "a1"). calls("a3", "a2").
+calls("b1", "b0"). calls("b2", "b1"). calls("b3", "b2").
+calls("c1", "c0"). calls("c2", "c1"). calls("c3", "c2").
+calls("d1", "d0"). calls("d2", "d1"). calls("d3", "d2").
+impact_of(Seed, C) :- calls(C, Seed).
+impact_of(Seed, C) :- impact_of(Seed, B), calls(C, B).
+at(S, L) :- calls(S, _), L = 1.
+"#;
+
+/// Answers must be identical with and without the transformation, and the
+/// transformed run must derive strictly fewer tuples. Equal counts mean it
+/// silently did not apply — the failure that otherwise surfaces only as an
+/// unexplained timeout on a big repo.
+fn demand_applies(program: &str, query: &str) -> Vec<String> {
+    let mut fast = engine(program);
+    let with = fast.query(query, &Limits::default()).expect("answers");
+    let mut slow = engine(program);
+    let without = slow
+        .query_undemanded(query, &Limits::default())
+        .expect("answers");
+
+    assert_eq!(
+        render(&fast, &with),
+        render(&slow, &without),
+        "{query:?} changed answer"
+    );
+    assert!(
+        !with.stats.transformed.is_empty(),
+        "{query:?}: nothing was adorned, so the transformation did not apply"
+    );
+    assert!(
+        with.stats.derived < without.stats.derived,
+        "{query:?}: derived {} with the transformation and {} without — equal or worse means it \
+         did not apply",
+        with.stats.derived,
+        without.stats.derived
+    );
+    render(&fast, &with)
+}
+
+#[test]
+fn demand_transformation_applies_to_a_constant_seed() {
+    let rows = demand_applies(WIDE, r#"?- impact_of("a0", C)."#);
+    assert_eq!(rows, vec!["\"a1\"", "\"a2\"", "\"a3\""]);
+}
+
+#[test]
+fn demand_transformation_binds_the_seed_from_an_earlier_literal() {
+    // The headline pattern: the seed comes sideways, not from a goal constant.
+    // A transformation scoped to goal constants does not handle this.
+    let rows = demand_applies(WIDE, r#"?- calls("a1", S), impact_of(S, C)."#);
+    assert_eq!(
+        rows,
+        vec!["\"a0\" \"a1\"", "\"a0\" \"a2\"", "\"a0\" \"a3\""]
+    );
+}
+
+#[test]
+fn demand_transformation_applies_to_a_non_recursive_predicate() {
+    // `symbol_at` in miniature: non-recursive, and the majority of the win.
+    let program = r#"
+span("f", "src/a.rs", 1, 200).
+span("g", "src/a.rs", 40, 60).
+span("h", "src/b.rs", 1, 90).
+symbol_at(F, Line, S) :- span(S, F, A, B), between(A, B, Line).
+"#;
+    let rows = demand_applies(program, r#"?- symbol_at("src/a.rs", 50, S)."#);
+    assert_eq!(rows, vec!["\"f\"", "\"g\""]);
+}
+
+#[test]
+fn a_fully_free_goal_is_left_alone() {
+    let mut e = engine(WIDE);
+    let result = e
+        .query("?- impact_of(S, C).", &Limits::default())
+        .expect("answers");
+    assert!(
+        result.stats.transformed.is_empty(),
+        "nothing to propagate: {:?}",
+        result.stats
+    );
+}
+
+#[test]
+fn demand_transformation_does_not_change_a_negated_answer() {
+    // A derived predicate under `!` is requested unrestricted on purpose:
+    // restricting it would change the answer rather than the cost.
+    let program = r#"
+node("a"). node("b"). node("c").
+edge("a", "b").
+reaches(X, Y) :- edge(X, Y).
+reaches(X, Z) :- reaches(X, Y), edge(Y, Z).
+unreached(X) :- node(X), !reaches(_, X).
+"#;
+    assert_eq!(both(program, "?- unreached(X)."), vec!["\"a\"", "\"c\""]);
+}
+
+#[test]
+fn demand_transformation_agrees_with_naive_evaluation() {
+    for query in [
+        r#"?- impact_of("a0", C)."#,
+        r#"?- calls("a1", S), impact_of(S, C)."#,
+        "?- impact_of(S, C).",
+    ] {
+        both(WIDE, query);
+    }
+}

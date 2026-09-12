@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/datalog", "crates/facts", "crates/extract", "crates/codeintel"]
+# The fuzz target needs a nightly toolchain and cargo-fuzz; it is built on
+# demand, never by the gate.
+exclude = ["crates/datalog/fuzz"]
 
 [workspace.package]
 edition = "2024"

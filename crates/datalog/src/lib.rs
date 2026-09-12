@@ -24,6 +24,7 @@ pub mod relation;
 pub mod solve;
 pub mod strata;
 pub mod symbols;
+pub mod transform;
 
 pub use atom::{Atom, Term};
 pub use db::Db;

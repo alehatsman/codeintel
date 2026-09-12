@@ -21,6 +21,7 @@ use crate::relation::Relation;
 use crate::solve::{Layers, Solver};
 use crate::strata::{Strata, stratify};
 use crate::symbols::Symbols;
+use crate::transform::transform;
 
 /// One answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,17 +160,31 @@ impl Engine {
     /// `invalid-query`, `unstratified`, `timeout` or `budget-exceeded`, each
     /// naming what to change.
     pub fn query(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
-        self.evaluate(src, limits, Mode::SemiNaive)
+        self.evaluate(src, limits, Mode::SemiNaive, true)
     }
 
     /// The same query under naive evaluation. The differential-testing twin of
     /// [`Self::query`]; never used to answer a real question.
     #[cfg(test)]
     pub(crate) fn query_naive(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
-        self.evaluate(src, limits, Mode::Naive)
+        self.evaluate(src, limits, Mode::Naive, true)
     }
 
-    fn evaluate(&mut self, src: &str, limits: &Limits, mode: Mode) -> Result<QueryResult> {
+    /// The same query with demand transformation switched off. Test-only: it
+    /// exists so the transformation can be shown to apply — equal tuple counts
+    /// mean it silently did not.
+    #[cfg(test)]
+    pub(crate) fn query_undemanded(&mut self, src: &str, limits: &Limits) -> Result<QueryResult> {
+        self.evaluate(src, limits, Mode::SemiNaive, false)
+    }
+
+    fn evaluate(
+        &mut self,
+        src: &str,
+        limits: &Limits,
+        mode: Mode,
+        demand: bool,
+    ) -> Result<QueryResult> {
         let start = Instant::now();
         let program = parse(src, self.syms.as_mut())?;
         let Some(goal) = program.query.clone() else {
@@ -180,13 +195,31 @@ impl Engine {
         };
 
         let (rules, shadowed) = self.merge_rules(&program);
-        let combined = Program {
+        let plain = Program {
             rules,
             query: Some(goal.clone()),
         };
-        let schema = check(&combined, self.base_arities())?;
-        let strata = stratify(&combined)?;
-        check_planning_limits(&combined, &strata, limits)?;
+        let schema = check(&plain, self.base_arities())?;
+        let strata = stratify(&plain)?;
+        check_planning_limits(&plain, &strata, limits)?;
+
+        // Demand transformation is a performance step, never a legality one:
+        // the program above is already safe and already stratified. If the
+        // rewrite does not survive the same two checks, evaluate the original
+        // rather than reject a query the user wrote correctly.
+        let demanded = demand
+            .then(|| transform(&plain, &schema.derived))
+            .flatten()
+            .and_then(|t| {
+                let schema = check(&t.program, self.base_arities()).ok()?;
+                let strata = stratify(&t.program).ok()?;
+                Some((t.program, schema, strata, t.names))
+            });
+        let (combined, schema, strata, transformed) = match demanded {
+            Some(parts) => parts,
+            None => (plain, schema, strata, Vec::new()),
+        };
+        let goal = combined.query.clone().unwrap_or(goal);
 
         let patterns = self.compile_patterns(&combined)?;
         let derived = Cell::new(0u64);
@@ -197,7 +230,7 @@ impl Engine {
             elapsed_ms: 0,
             derived: 0,
             plan: Vec::new(),
-            transformed: Vec::new(),
+            transformed,
         };
 
         let run = Run {
