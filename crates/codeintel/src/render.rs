@@ -15,6 +15,7 @@
 //! and splitting back apart loses the column boundaries of any value that
 //! contains a tab, which doc comments do.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 use datalog::atom::Atom;
@@ -115,12 +116,44 @@ pub struct Row {
 }
 
 impl Row {
-    /// The printed line: values separated by tabs.
+    /// The printed line: values separated by tabs, each value's own control
+    /// characters escaped.
+    ///
+    /// Text output promises one row per line and `columns.len()` fields
+    /// (`specs/05-surface.md` § `query`). A `def_doc` holds a whole doc comment
+    /// and so holds newlines, which broke both promises *silently*: one row
+    /// printed as seven lines with ragged field counts, under `status: ok`.
     #[must_use]
     pub fn line(&self, raw: bool) -> String {
         let values = if raw { &self.raw } else { &self.display };
-        values.join("\t")
+        values
+            .iter()
+            .map(|v| escape(v))
+            .collect::<Vec<_>>()
+            .join("\t")
     }
+}
+
+/// A value's control characters, escaped so the row survives printing.
+///
+/// Backslash goes first and is escaped itself, so the mapping is reversible: a
+/// source text containing a literal `\n` and an escaped newline would otherwise
+/// print identically, and a consumer could not tell which it had.
+fn escape(value: &str) -> Cow<'_, str> {
+    if !value.contains(['\\', '\n', '\r', '\t']) {
+        return Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// A rendered result, and whether printing it hit the byte cap.

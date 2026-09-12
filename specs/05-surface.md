@@ -252,6 +252,22 @@ Values are carried structurally — one string per column — until the moment o
 printing. Tab-joining and splitting back apart loses the column boundaries of
 any value containing a tab, which doc comments do.
 
+**At the moment of printing, a value's own control characters are escaped:**
+newline as `\n`, carriage return as `\r`, tab as `\t`, backslash as `\\`. Text
+output promises one row per line and `columns.len()` tab-separated fields; a
+raw newline in a `def_doc` breaks both, and it breaks them *silently* — the
+consumer sees more rows than the query matched, with ragged field counts, and
+nothing in the status or the row count says so. One multi-line doc comment
+turns a single row into seven lines of which six are not rows. That is a
+malformed answer wearing `status: ok`, which is invariant 5, and no amount of
+"read the notes" fixes a format that lies about its own shape.
+
+Backslash is escaped too, so the transformation is reversible: without it, a
+literal `\n` in source text and an escaped newline are the same two characters
+and a consumer cannot tell them apart. JSON is unaffected — it has always
+escaped these — which is why the defect was invisible to anything that checked
+the structured format.
+
 **A truncation hint names a knob that exists.** `--limit` moves
 `max_result_rows` and nothing else, so it is offered only when that is the cap
 that fired; a byte cap says "narrow the query".

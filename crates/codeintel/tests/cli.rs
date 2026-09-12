@@ -830,3 +830,62 @@ fn every_typed_column_is_reachable() {
         assert!(typed.contains(name), "`{name}` is classified but unused");
     }
 }
+
+/// Text output promises one row per line and `columns.len()` tab-separated
+/// fields (`specs/05-surface.md` § `query`). A `def_doc` carries a whole doc
+/// comment, newlines included, and printing it unescaped broke both promises
+/// silently: one matched row printed as seven lines with ragged field counts,
+/// under `status: ok`. JSON was always correct, which is why nothing that
+/// checked the structured format noticed.
+#[test]
+fn a_multi_line_value_stays_one_row() {
+    let dir = tree();
+    index(dir.path());
+
+    // `get` in the fixture has a two-line doc comment, written for exactly this.
+    let (rows, stderr) = query(
+        dir.path(),
+        r#"?- def(S, _, "method", "get"), def_doc(S, D)."#,
+    );
+    assert_eq!(rows.len(), 1, "one match must print one line: {rows:?}");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+
+    let row = &rows[0];
+    assert_eq!(
+        row.split('\t').count(),
+        2,
+        "a 2-column answer must have 2 fields: {row:?}"
+    );
+    assert!(
+        row.contains("\\n"),
+        "the newline must survive as \\n: {row:?}"
+    );
+    assert!(
+        !row.contains('\n') && !row.contains('\r'),
+        "no raw control characters may reach the line: {row:?}"
+    );
+}
+
+/// The escape is reversible, which is why backslash is escaped too. Without it
+/// a source text holding a literal backslash-n and an escaped newline print
+/// identically and a consumer cannot tell them apart.
+#[test]
+fn the_escape_is_reversible() {
+    let dir = tree();
+    std::fs::write(
+        dir.path().join("src/esc.rs"),
+        "/// A doc with a literal \\n inside it.\npub fn escaped() {}\n",
+    )
+    .expect("write");
+    index(dir.path());
+
+    let (rows, _) = query(dir.path(), r#"?- def(S, _, _, "escaped"), def_doc(S, D)."#);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    // The source backslash arrives doubled, so it cannot be confused with the
+    // `\n` an escaped newline would have produced.
+    assert!(
+        rows[0].contains("\\\\n"),
+        "a literal backslash must be doubled: {:?}",
+        rows[0]
+    );
+}
