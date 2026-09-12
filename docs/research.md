@@ -414,6 +414,11 @@ model backend.
   vendoring `scip.proto`, putting `protoc` on the build path, and hand-writing
   that parser. Cost: `protobuf` 3.7 as a second protobuf runtime alongside
   nothing — we have no other. STACK.md now carries a SCIP row of its own.
+- **`scip` costs one duplicate build-time crate.** `protobuf` 3.7 pins
+  `thiserror` 1.x, which pins `syn` 2 while the rest of the stack is on `syn` 3.
+  `.gate/findings.jsonl` reports it as `duplicate-dep`, and it is accepted: both
+  are proc-macro crates, nothing is duplicated at runtime, and the alternative is
+  the `prost` path above. Revisit when `rust-protobuf` moves to `thiserror` 2.
 - **`protobuf` is a direct dependency, not only a transitive one.** Trigger:
   `scip` deliberately does not re-export its runtime, and parsing an index or
   reading a `symbol_roles` bitset needs it by name. Same version `scip`
