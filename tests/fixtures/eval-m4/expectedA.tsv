@@ -11,7 +11,7 @@
 11	10	local src/db/mod.rs conn/|local src/lib.rs app/|local src/lib.rs db/|local src/lib.rs kinds/|local src/lib.rs net/|local src/lib.rs store/|local src/lib.rs ui/|local src/net/mod.rs conn/|local src/ui/mod.rs panel/|rust-analyzer cargo fixture 0.1.0 store/Entry#value.
 12	27	local src/db/mod.rs conn/|local src/lib.rs app/|local src/lib.rs db/|local src/lib.rs kinds/|local src/lib.rs net/|local src/lib.rs store/|local src/lib.rs ui/|local src/net/mod.rs conn/|local src/ui/mod.rs panel/|rust-analyzer cargo fixture 0.1.0 app/start().|rust-analyzer cargo fixture 0.1.0 kinds/BANNER.|rust-analyzer cargo fixture 0.1.0 kinds/Config#|rust-analyzer cargo fixture 0.1.0 kinds/Config#limit.|rust-analyzer cargo fixture 0.1.0 kinds/Handler#|rust-analyzer cargo fixture 0.1.0 kinds/Key#|rust-analyzer cargo fixture 0.1.0 kinds/LIMIT.|rust-analyzer cargo fixture 0.1.0 kinds/Mode#|rust-analyzer cargo fixture 0.1.0 kinds/Word#|rust-analyzer cargo fixture 0.1.0 net/conn/open().|rust-analyzer cargo fixture 0.1.0 store/Entry#|rust-analyzer cargo fixture 0.1.0 store/Entry#value.|rust-analyzer cargo fixture 0.1.0 store/Store#|rust-analyzer cargo fixture 0.1.0 store/detail/helper().|rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().|rust-analyzer cargo fixture 0.1.0 store/impl#[Store]put().|rust-analyzer cargo fixture 0.1.0 store/warm().|rust-analyzer cargo fixture 0.1.0 ui/panel/draw().
 13	1	rust-analyzer cargo fixture 0.1.0 store/Store#entries.
-14	1	local src/store.rs Store#
+14	1	src/store.rs
 15	2	src/app.rs|src/ui/panel.rs
 16	10	src/db/conn.rscore|src/kinds.rsalloc|src/kinds.rscore|src/net/conn.rscore|src/store.rsalloc|src/store.rscore|src/store.rsstd|src/ui/panel.rsalloc|src/ui/panel.rsstd|tests/store_test.rscore
 17	0	

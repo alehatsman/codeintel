@@ -211,6 +211,30 @@ three rounds used it correctly for the question that used to fail. The score
 went *down* from 88/90 to 85/90 because the questions got harder to pass by
 accident, not because the tool got worse.
 
+### Q14's reference answer was wrong, and the agents were right
+
+Set A's Q14 — "what contains `store/impl#[Store]get().`, directly or
+transitively, **up to the file**?" — recorded `local src/store.rs Store#` as the
+answer. That symbol is the `impl` block's stale tier-A id, which after anchoring
+has no `def` row, and the recorded answer never reached the file the question
+explicitly asks for. The reference answer was wrong when it was written; the
+scorer compared a wrong answer against a wrong expectation and called it a pass.
+
+All three set-A rounds wrote the identical, correct query. So fixing the
+extractor (`specs/02-extraction.md` § Parent precedence, rule 3's existence
+check) changed only what that correct query *returns*: now `src/store.rs`.
+**85/90 and 45/45 both stand** — recomputing every set-A reference answer from
+its query moved exactly one line, Q14's, and rescoring all six recorded rounds
+reproduced both totals unchanged. Set B is untouched because it runs tier A only,
+where the `impl` block and its type share a symbol and the parent resolves.
+
+This is the third reference-answer defect this eval has found in itself, after
+the ten empty answers and the moving set-B target. The pattern is consistent: the
+eval is better at finding bugs in the eval than the eval is at finding bugs in
+the tool, and every one of them was invisible until something forced a
+recomputation. A reference answer nobody recomputes is an assertion nobody
+checks.
+
 ## What building the eval found
 
 Two things, before a single agent ran.
