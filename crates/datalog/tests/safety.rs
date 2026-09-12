@@ -195,3 +195,21 @@ fn the_schema_reports_which_relations_are_derived() {
     assert!(!schema.is_derived("edge"));
     assert_eq!(schema.arity.get("live"), Some(&1));
 }
+
+#[test]
+fn an_unknown_predicate_is_rejected_rather_than_silently_empty() {
+    // A typo and "this is not true of your code" are different answers. An
+    // undeclared predicate used to evaluate as an empty derived relation, so
+    // `?- nosuchrelation(X).` came back `ok` with zero rows — indistinguishable
+    // from a correct query about code that has none of the thing asked for.
+    let msg = reject("?- nosuchrelation(X).");
+    assert!(msg.contains("nosuchrelation"), "{msg}");
+    assert!(msg.contains("no relation or rule named"), "{msg}");
+
+    // Inside an aggregate is the same typo one level down.
+    let msg = reject("r(N) :- N = count{ X : nosuchrelation(X) }.");
+    assert!(msg.contains("nosuchrelation"), "{msg}");
+
+    // A forward reference to a rule defined later in the program stays legal.
+    accept("a(X) :- b(X).\nb(X) :- edge(X, _).");
+}

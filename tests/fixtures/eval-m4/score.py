@@ -97,11 +97,11 @@ def questions(path):
 # scores itself correct for free. Ten of set A were silently in this state
 # because the symbol ids had been written by hand and were wrong.
 KNOWN_EMPTY = {
-    # `implements/3` and `extern/4` are zero on this fixture even with SCIP —
-    # no external dependency, and rust-analyzer emits no implementation
-    # relationship for `impl Handler for Config`. Same gap
+    # Q17 asks which types implement a trait. rust-analyzer emits ZERO
+    # relationships for this crate, so there is no implementation edge to find
+    # — measured, not assumed. Same gap
     # `the_rules_with_no_positive_coverage_are_named` pins in tests/stdlib.rs.
-    "A": {"16", "17"},
+    "A": {"17"},
     "B": set(),
 }
 

@@ -209,7 +209,7 @@ impl Ingest {
             out.document(document, root, &mut candidates);
         }
         for info in &index.external_symbols {
-            package_of(info, &mut candidates);
+            package_of(&info.symbol, &mut candidates);
         }
         let defined: std::collections::BTreeSet<&str> = out
             .docs
@@ -276,7 +276,16 @@ impl Ingest {
                 continue;
             }
             self.symbols.insert(symbol, info_of(info, &path));
-            package_of(info, candidates);
+            package_of(&info.symbol, candidates);
+        }
+        // Every symbol this document *references*, not only the ones it
+        // describes. An indexer emits `SymbolInformation` for what the project
+        // defines and leaves the rest — `std`, `core`, `alloc` — as bare
+        // occurrences, so keying `extern` on `SymbolInformation` reported no
+        // external packages at all for a project with no described dependency.
+        // The package is in the symbol string either way.
+        for occurrence in &doc.refs {
+            package_of(&occurrence.symbol, candidates);
         }
         self.docs.insert(path, doc);
     }
@@ -284,8 +293,18 @@ impl Ingest {
 
 /// Record a symbol that names a package, which is how SCIP says where a thing
 /// came from (`specs/01-facts.md` § `extern`).
-fn package_of(info: &SymbolInformation, into: &mut BTreeMap<String, (String, String, String)>) {
-    let Ok(parsed) = scip::symbol::parse_symbol(&info.symbol) else {
+///
+/// A SCIP symbol carries its own package — `<scheme> <manager> <name>
+/// <version> <descriptor>` — so this works on any symbol string and does not
+/// need a `SymbolInformation` to exist for it. That matters: an index
+/// references far more symbols than it describes. `rust-analyzer` emits
+/// `SymbolInformation` for what the project defines and leaves `std`, `core`
+/// and `alloc` as bare occurrences, so keying this on `SymbolInformation`
+/// meant `extern/4` was **empty on every index that had no local dependency
+/// described** — including the fixture, where `HashMap` and `String` are
+/// referenced by name and were reported as no external packages at all.
+fn package_of(symbol: &str, into: &mut BTreeMap<String, (String, String, String)>) {
+    let Ok(parsed) = scip::symbol::parse_symbol(symbol) else {
         return;
     };
     let Some(package) = parsed.package.as_ref() else {
@@ -295,7 +314,7 @@ fn package_of(info: &SymbolInformation, into: &mut BTreeMap<String, (String, Str
         return;
     }
     into.insert(
-        info.symbol.clone(),
+        symbol.to_string(),
         (
             package.manager.clone(),
             package.name.clone(),

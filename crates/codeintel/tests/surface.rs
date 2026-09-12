@@ -63,23 +63,35 @@ fn stdout(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-/// Characters per token. A proxy, not a tokenizer: pulling one in costs a
-/// dependency for a number that only has to be right to within a rule of
-/// thumb. Dense tabular text runs worse than prose, so this is deliberately
-/// the optimistic end and the assertion below leaves headroom for it.
-const CHARS_PER_TOKEN: usize = 4;
+/// The `schema` size ceiling, in **characters**, because characters are what
+/// can be measured here.
+///
+/// `specs/05-surface.md` states the budget in tokens (~1500), and no tokenizer
+/// is available offline — adding one is a dependency for a number that gates
+/// copy length. Estimates of this text span **~1,400 tokens** (4 chars/token,
+/// prose-like) to **~1,750** (a BPE-shaped count that charges per punctuation
+/// mark and per identifier fragment, which is what dense tabular output really
+/// looks like). The honest statement is that the output sits *at* its budget,
+/// not comfortably inside it: `specs/05-surface.md` § `schema` records the band
+/// and the tension it implies with the 40-rule cap.
+///
+/// So this asserts the thing it can: the text does not grow. A change that
+/// pushes past it is a change that has to argue for itself.
+const MAX_SCHEMA_CHARS: usize = 5_700;
 
 #[test]
-fn the_schema_fits_its_token_budget_with_the_rule_list_complete() {
-    // `specs/05-surface.md` § `schema`: ~1500 tokens, measured, with every
-    // rule listed. If it stops fitting, the standard library is too big — cut
-    // rules, not the catalogue.
+fn the_schema_fits_its_size_budget_with_the_rule_list_complete() {
     let dir = tree();
     run(dir.path(), &["index", "."]);
     let text = stdout(dir.path(), &["schema"]);
 
-    let tokens = text.len() / CHARS_PER_TOKEN;
-    assert!(tokens <= 1_500, "{tokens} tokens, {} chars", text.len());
+    assert!(
+        text.len() <= MAX_SCHEMA_CHARS,
+        "schema is {} chars, ceiling is {MAX_SCHEMA_CHARS}. The rule list must \
+         stay complete, so the copy is what gives — or the standard library is \
+         too big and a rule goes.",
+        text.len()
+    );
 
     for rule in schema::rules(schema::STDLIB) {
         assert!(text.contains(&rule.head), "{} is not advertised", rule.head);
@@ -135,7 +147,7 @@ fn the_rule_list_matches_the_rules() {
             rule.1
         );
     }
-    assert_eq!(advertised.len(), 37, "the rule count moved: {advertised:?}");
+    assert_eq!(advertised.len(), 38, "the rule count moved: {advertised:?}");
 }
 
 #[test]
@@ -465,19 +477,16 @@ fn the_mcp_answer_carries_the_status_taxonomy() {
     assert_eq!(bad["structuredContent"]["status"], "invalid-query");
     assert!(bad["structuredContent"]["hint"].is_string(), "{bad}");
 
-    // A relation that does not exist is NOT `invalid-query` today: the engine
-    // treats an undeclared predicate as an empty derived relation, so a typo
-    // comes back `ok` with zero rows. What keeps it from lying outright is the
-    // hint, which names the literal. Pinned here because it is load-bearing —
-    // if this ever becomes `invalid-query`, that is a deliberate engine change
-    // and this assertion is where it announces itself.
+    // A relation that does not exist is `invalid-query`, not `ok` with zero
+    // rows. A typo and "this is not true of your code" are different answers,
+    // and returning the second for the first is the failure invariant 6 names.
     let unknown = &out[3]["result"];
-    assert_eq!(unknown["structuredContent"]["status"], "ok");
+    assert_eq!(unknown["structuredContent"]["status"], "invalid-query");
     assert!(
         unknown["structuredContent"]["hint"]
             .as_str()
             .is_some_and(|h| h.contains("nosuchrelation")),
-        "an unknown relation must at least be named: {unknown}"
+        "the offending name must appear: {unknown}"
     );
 }
 

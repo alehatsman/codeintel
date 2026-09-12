@@ -180,8 +180,11 @@ ref_outside(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
 %% entrypoint(S)  a callable nothing calls. INVERTS on name provenance.
 entrypoint(S) :- def(S, _, K, _), callable(K), !calls(_, S).
 
-%% long_def(S, N)  S spans N > 80 lines. A length, not a score.
-long_def(S, N) :- def_span(S, A, B, _, _), N = B - A, N > 80.
+%% def_lines(S, N)  how many lines S spans. Pick your own threshold.
+def_lines(S, N) :- def_span(S, A, B, _, _), N = B - A.
+
+%% long_def(S)  spans more than 80 lines. The 80 is FIXED -- use def_lines.
+long_def(S) :- def_lines(S, N), N > 80.
 
 %% undocumented_export(S)  exported with no doc comment.
 undocumented_export(S) :- exported(S), !def_doc(S, _).

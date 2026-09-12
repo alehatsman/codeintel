@@ -8,8 +8,8 @@
 8	A	Which exported definitions in crates/datalog carry no doc comment? Bind the symbol id to A.	?- undocumented_export(A), def(A, F, _, _), prefix(F, "crates/datalog/").
 9	A	How many definitions does crates/codeintel/src/query.rs hold? Bind the count to A.	?- A = count{ S : def(S, "crates/codeintel/src/query.rs", _, _) }.
 10	A	Which definition names occur more than once across this repository? Bind the name to A.	?- ambiguous(A).
-11	A	Which files does crates/codeintel/src/schema.rs depend on? Bind the depended-on file to A.	?- depends("crates/codeintel/src/schema.rs", A).
+11	A	Which files does crates/codeintel/examples/eval.rs depend on, in the sense that it references a symbol defined there? Bind the depended-on file to A.	?- depends("crates/codeintel/examples/eval.rs", A).
 12	A	What is the signature of the definition named "load_facts"? Bind it to A.	?- def(S, _, _, "load_facts"), def_sig(S, A).
-13	A	Which definitions are contained, directly or transitively, in the module named "census"? Bind the contained symbol id to A.	?- def(P, _, _, "census"), within(A, P).
+13	A	Which definitions are contained, directly or transitively, in the module named "tests" in crates/codeintel/src/main.rs? Bind the contained symbol id to A.	?- def(M, "crates/codeintel/src/main.rs", "module", "tests"), within(A, M).
 14	A	Which enums does this repository define outside of test files? Bind the symbol id to A.	?- def(A, F, "enum", _), !is_test(F).
 15	A	Every definition whose span covers line 50 of crates/codeintel/src/render.rs. Bind the symbol id to A.	?- symbol_at("crates/codeintel/src/render.rs", 50, A).

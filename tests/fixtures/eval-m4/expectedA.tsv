@@ -13,7 +13,7 @@
 13	1	rust-analyzer cargo fixture 0.1.0 store/Store#entries.
 14	1	local src/store.rs Store#
 15	2	src/app.rs|src/ui/panel.rs
-16	0	
+16	10	src/db/conn.rscore|src/kinds.rsalloc|src/kinds.rscore|src/net/conn.rscore|src/store.rsalloc|src/store.rscore|src/store.rsstd|src/ui/panel.rsalloc|src/ui/panel.rsstd|tests/store_test.rscore
 17	0	
 18	1	rust-analyzer cargo fixture 0.1.0 kinds/Handler#9
 19	1	2

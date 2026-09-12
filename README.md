@@ -137,9 +137,10 @@ fresh agent each time.
 
 The second row is also the no-SCIP number: 43/45 with tier A alone.
 
-Three of the four failures are the same mistake — `long_def(S, N)` reads as a
-rule parameterised by `N` when `N` is an output and the threshold is fixed at
-80. That is a finding about the schema copy, not a score to be proud of, and
+Three of the four failures were the same mistake: `long_def(S, N)` read as a
+rule parameterised by `N`, when `N` was an output and the threshold was fixed at
+80. The fix was to the schema, not the agents — `def_lines(S, N)` now states a
+length with no threshold, so the query those agents wanted exists.
 [docs/agent-eval.md](docs/agent-eval.md) records every failure verbatim.
 
 ## Languages

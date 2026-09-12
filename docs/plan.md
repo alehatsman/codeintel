@@ -635,16 +635,33 @@ printed. The guard as specified guards nothing; `dict_generation` stays as a
 numeric — shorter, and the original motivation — is a query-language change and
 a separate decision.
 
-**One done-when is not met, and is not being counted as met.** "Every rule in
-`stdlib.dl` has a fixture test with a hand-verified answer" holds for 32 of 37.
-`implements/3` and `extern/4` are both **zero rows** on `tests/fixtures/rust/`
-even with `index.scip` present: the fixture has no external dependency, and
-`rust-analyzer scip .` emits no implementation relationship for
-`impl Handler for Config`. So `uses_package`, `uses_package_exact` and the
-`implements` / `implementor` / `extern` arms of `about` are asserted *empty* —
-which tests the plumbing, not the meaning. `the_rules_with_no_positive_coverage_are_named`
-pins the list and fails if any of them starts returning rows. Closing it needs a
-fixture with a real dependency and an implementation SCIP actually emits.
+**`extern/4` was empty because of a bug, not a fixture gap — now fixed.** The
+package was read only off `SymbolInformation`, and an indexer emits those for
+what the *project* defines: `std`, `core` and `alloc` arrive as bare
+occurrences. A SCIP symbol carries its own package in the symbol string, so it
+is now read from referenced symbols too. `extern`, `uses_package` and
+`uses_package_exact` have real answers on the fixture and real assertions.
+
+**One done-when is not met, and is not being counted as met.** `implements/3`
+is zero on `tests/fixtures/rust/`, and this was *measured* rather than assumed:
+`rust-analyzer scip .` emits **zero** `relationships` for this crate — not
+merely none flagged `is_implementation` — so there is no implementation edge to
+read for `impl Handler for Config`. `implements` and the `implements` /
+`implementor` arms of `about` are therefore asserted empty, which tests the
+plumbing and not the meaning; our side of it is covered by `tier_b.rs`'s unit
+tests, which construct the ingest directly. Closing it needs an indexer that
+emits relationships, not a bigger fixture.
+
+**`long_def` was split after the eval blamed it.** Three of the four agent-eval
+failures were agents reading `long_def(S, N)` as parameterised by `N` when `N`
+was an output and 80 was baked in. `def_lines(S, N)` now states the length with
+no threshold and `long_def(S)` is the one opinionated form, so the wrong query
+is unavailable rather than merely documented. 38 rules against a cap of 40.
+
+**An unknown predicate is now `invalid-query`.** It evaluated as an empty
+derived relation, so a typo returned `ok` with zero rows — invariant 6's
+failure. Checked after the seven safety rules so a more specific complaint
+wins; forward references stay legal.
 
 Two artifacts worth keeping, both traced to the module-symbol placement M3
 recorded. `?- within(C, P).` returns a row whose child has an empty name, and

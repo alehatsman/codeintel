@@ -147,21 +147,18 @@ impl fmt::Display for Schema<'_> {
              NOTES\n  \
              lines 1-based, columns 0-based UTF-8 bytes. < and > are integers only.\n  \
              integers and their strings are different atoms: Line = \"42\" never matches.\n  \
-             seed impact_of/reach_of with a constant or they go all-pairs and blow\n    \
-             the budget.\n  \
+             seed impact_of/reach_of with a constant or they go all-pairs.\n  \
              a symbol column already prints `Name path:line` -- do NOT join def/at\n    \
-             just to see where something is. --raw prints the SymId.\n  \
-             Prov \"name\" is tree-sitter text matching: method calls x.f() are mostly\n    \
-             MISSING. For precision use the _exact rules, and run `codeintel status`\n    \
-             to see whether a SCIP index is present and fresh.\n\n\
-             EXAMPLES\n  \
+             to see where something is. --raw prints the SymId.\n  \
+             Prov \"name\" is text matching: method calls x.f() are mostly MISSING.\n    \
+             For precision use the _exact rules; `codeintel status` says whether\n    \
+             a SCIP index is present and fresh.\n\n\
+             EXAMPLES  more in docs/cookbook.md, including conformance rules\n  \
              what does this diff hunk affect?\n  \
              ?- innermost_at(\"src/store.rs\", 142, S), impact_of(S, C),\n     \
              def(C, F, _, N), !is_test(F).\n\n  \
              no module under ui/ may import from db/ -- needs no SCIP index\n  \
-             ?- import(F, M, _), prefix(F, \"src/ui/\"), contains(M, \"db\").\n\n  \
-             exported and unreferenced outside its own file\n  \
-             ?- dead_export(S), def(S, F, _, _), prefix(F, \"src/\").\n",
+             ?- import(F, M, _), prefix(F, \"src/ui/\"), contains(M, \"db\").\n",
         )?;
 
         if !census.indexed {

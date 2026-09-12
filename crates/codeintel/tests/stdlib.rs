@@ -437,14 +437,26 @@ fn entrypoint_is_a_callable_nothing_calls() {
 }
 
 #[test]
-fn long_def_is_a_length_not_a_score() {
+fn def_lines_measures_and_long_def_judges() {
     // Nothing in this fixture is over 80 lines, and the rule says so rather
     // than ranking what is longest. `ok` with zero rows is the answer.
-    assert!(rows("?- long_def(S, N).").is_empty());
+    // `def_lines` states the length and leaves the comparison to the caller.
+    // `long_def` is the one opinionated form, and its 80 is fixed — three of
+    // the four M4 agent-eval failures were `long_def(A, N), N > 60`, a no-op
+    // filter over an already-`> 80` set (`docs/agent-eval.md`).
+    assert!(
+        rows("?- long_def(S).").is_empty(),
+        "nothing here spans 80 lines"
+    );
 
-    // The threshold is the rule's, so a caller who wants another writes one.
-    let over_two = rows("?- def_span(S, A, B, _, _), N = B - A, N > 6.");
-    assert!(!over_two.is_empty(), "the fixture has spans wider than 6");
+    let widest = rows("?- def_lines(S, N), N > 8.");
+    assert!(!widest.is_empty(), "the fixture has spans wider than 8");
+
+    // Every definition has a length, threshold or not.
+    assert_eq!(
+        rows("?- def_lines(S, N).").len(),
+        rows("?- def_span(S, A, B, C, D).").len()
+    );
 }
 
 #[test]
@@ -463,32 +475,62 @@ fn undocumented_export_finds_the_undocumented() {
     assert!(!undocumented.iter().any(|u| u.starts_with("warm ")));
 }
 
+#[test]
+fn extern_and_uses_package_see_the_standard_library() {
+    // The fixture declares no dependency, but it uses `HashMap` and `String`,
+    // and SCIP names the package on the symbol itself. `extern` was empty here
+    // until the package was read off *referenced* symbols rather than only off
+    // the `SymbolInformation` an indexer chooses to emit — and rust-analyzer
+    // emits none for `std`, `core` or `alloc`.
+    let externs = rows("?- extern(S, M, P, V).");
+    assert!(!externs.is_empty(), "no external packages found");
+    assert!(
+        externs.iter().all(|e| e.contains("\tcargo\t")),
+        "the manager should be cargo: {externs:?}"
+    );
+
+    let mut packages: Vec<String> = rows("?- uses_package(F, P).")
+        .iter()
+        .filter_map(|r| r.split('\t').nth(1).map(str::to_string))
+        .collect();
+    packages.sort();
+    packages.dedup();
+    assert_eq!(packages, ["alloc", "core", "std"], "{packages:?}");
+
+    // `src/store.rs` uses `HashMap`, which is `std`.
+    let store = rows(r#"?- uses_package("src/store.rs", P)."#);
+    assert!(store.iter().any(|p| p == "std"), "{store:?}");
+
+    // The `_exact` form is the same set here: all of it came from SCIP.
+    assert_eq!(
+        rows("?- uses_package(F, P)."),
+        rows("?- uses_package_exact(F, P).")
+    );
+
+    // And `about` reports them under the `extern` discriminator.
+    assert!(!rows(r#"?- about(S, "extern", A, B, L)."#).is_empty());
+}
+
 /// The rules this fixture cannot exercise positively, pinned as empty so the
 /// gap is visible rather than assumed covered.
 ///
-/// `implements/3` and `extern/4` are both zero on `tests/fixtures/rust/` even
-/// with `index.scip` present: the fixture has no external dependency, and
-/// `rust-analyzer scip .` emitted no implementation relationship for
-/// `impl Handler for Config`. Every rule below reads one of those two, so its
-/// only honest assertion here is that it returns nothing — which tests the
-/// plumbing and not the meaning. `docs/plan.md` M4 records this as the one
-/// part of "a fixture test per rule" that is not yet met.
+/// **`implements/3` is empty for an upstream reason, and it was measured.**
+/// `rust-analyzer scip .` emits **zero** `relationships` for this crate — not
+/// merely none marked `is_implementation` — so there is no implementation edge
+/// to read for `impl Handler for Config`. Our side of it is exercised by
+/// `tier_b.rs`'s unit tests, which build the ingest directly. Closing this
+/// needs an indexer that emits relationships, not a bigger fixture.
 #[test]
 fn the_rules_with_no_positive_coverage_are_named() {
-    assert!(rows("?- implements(S, T, P).").is_empty());
-    assert!(rows("?- extern(S, M, P, V).").is_empty());
-
     for goal in [
-        "?- uses_package(F, P).",
-        "?- uses_package_exact(F, P).",
+        "?- implements(S, T, P).",
         r#"?- about(S, "implements", A, B, L)."#,
         r#"?- about(S, "implementor", A, B, L)."#,
-        r#"?- about(S, "extern", A, B, L)."#,
     ] {
         assert!(
             rows(goal).is_empty(),
-            "{goal} unexpectedly has rows now — \
-            give it a real assertion and remove it from this list"
+            "{goal} unexpectedly has rows now — give it a real assertion and \
+             remove it from this list"
         );
     }
 }

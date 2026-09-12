@@ -258,12 +258,22 @@ advertised head names a real predicate at its real arity, and every predicate in
 the file is advertised. A rule cannot ship unlisted, and a renamed one cannot
 leave a stale catalogue behind.
 
-**The 1500 is measured, with a stated proxy.** The test divides the rendered
-length by four characters per token rather than running a tokenizer, because
-pulling one in costs a dependency for a number that only has to be right to
-within a rule of thumb. Dense tabular text tokenizes worse than prose, so the
-proxy is the optimistic end and the assertion leaves headroom. Today: 5,526
-characters, ~1,381 tokens, with all 37 rules listed.
+**The 1500 is a band, not a number, and the output sits at the top of it.**
+No tokenizer is available offline and adding one is a dependency for a figure
+that gates copy length. Estimates of this text span **~1,400 tokens** at four
+characters per token — prose-like, and what an earlier draft of this paragraph
+claimed — to **~1,750** under a BPE-shaped count that charges per punctuation
+mark and per identifier fragment, which is what dense tabular output actually
+looks like. Today: **5,599 characters, 38 rules**, and the honest statement is
+that `schema` is *at* its budget rather than inside it.
+
+That matters because it is the constraint the rule cap leans on. The RULES
+section is ~2,900 of those characters — **over half the output** — so the
+~1500-token budget and the 40-rule cap are in real tension, and the next rule
+added spends copy that is not there. The CI assertion is therefore on
+characters, which can be measured, at a ceiling the current output meets: it
+catches growth, which is what it is for. If it fires, the standard library is
+too big — cut rules, not the catalogue.
 
 ```
 START HERE — you have a location, you need a symbol

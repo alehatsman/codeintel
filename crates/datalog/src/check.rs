@@ -103,7 +103,52 @@ pub fn check(program: &Program, base: impl IntoIterator<Item = (String, usize)>)
     if let Some(query) = &program.query {
         check_query(query, &mut schema)?;
     }
+
+    // Last, so that a more specific complaint — an arity that disagrees with
+    // itself, an unbound head variable — is reported instead of this one.
+    // Every predicate a body mentions must exist: a base relation, or a head
+    // defined somewhere in this program. Otherwise a typo is indistinguishable
+    // from a true statement about the code — `?- nosuchrelation(X).` returned
+    // `ok` with zero rows, which is the exact failure invariant 6 is about.
+    // Heads are all registered first, so a forward reference is still legal.
+    for rule in &program.rules {
+        known_predicates(&rule.body, &schema)?;
+    }
+    if let Some(query) = &program.query {
+        known_predicates(&query.body, &schema)?;
+    }
     Ok(schema)
+}
+
+/// Reject a literal naming a predicate nothing defines.
+///
+/// Walks aggregate sub-goals too: `count{ X : nosuchrelation(X) }` is the same
+/// typo one level down.
+fn known_predicates(body: &[Literal], schema: &Schema) -> Result<()> {
+    for literal in body {
+        match literal {
+            Literal::Pos(pred) | Literal::Neg(pred) => {
+                if !schema.base.contains(&pred.name) && !schema.derived.contains(&pred.name) {
+                    return Err(Diagnostic::at(
+                        Status::InvalidQuery,
+                        pred.span,
+                        format!(
+                            "no relation or rule named `{}`; it is neither a base relation nor \
+                             a rule head in this program. check the spelling against \
+                             `codeintel schema`",
+                            pred.name
+                        ),
+                    ));
+                }
+            }
+            Literal::Assign {
+                expr: Expr::Count { goal, .. },
+                ..
+            } => known_predicates(goal, schema)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn check_rule(rule: &Rule, schema: &mut Schema) -> Result<()> {

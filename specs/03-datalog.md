@@ -100,8 +100,17 @@ step budget. We do not take a regex dependency for this.
    positive literal, **or** is the target of an assignment `X = expr` whose
    every variable is already bound, **or** is the output of a generator builtin
    whose inputs are already bound (`between/3`). This is what makes
-   `long_def(S, N) :- def_span(S,A,B,_,_), N = B - A, N > 80.` legal, and
+   `def_lines(S, N) :- def_span(S,A,B,_,_), N = B - A.` legal, and
    `symbol_at` with it.
+
+   **A literal naming a predicate nothing defines is `invalid-query`.** Not a
+   safety rule — an existence one, checked after the seven so that a more
+   specific complaint wins. A predicate must be a base relation or a head
+   somewhere in the same program; forward references stay legal because heads
+   are registered first. Without it an undeclared predicate evaluates as an
+   empty derived relation, so `?- nosuchrelation(X).` answers `ok` with zero
+   rows — indistinguishable from a correct query about code that has none of
+   the thing asked for, which is invariant 6's failure exactly.
 
    Safety is checked on the program **as written**, before any demand
    transformation. A rule that is safe only after the transformation would be

@@ -819,7 +819,7 @@ fn the_standard_library_answers_over_hand_written_facts() {
 
     // A span question, with arithmetic.
     let result = e
-        .query("?- long_def(S, N).", &Limits::default())
+        .query("?- long_def(S).", &Limits::default())
         .expect("answers");
     assert!(
         render(&e, &result).is_empty(),
@@ -927,9 +927,13 @@ fn the_negation_backoff_keeps_what_it_can() {
 /// reached, which is worse than saying nothing.
 #[test]
 fn an_aggregate_does_not_steal_the_empty_literal() {
+    // `r` is defined but disjoint from `p`, so the join stops at it. It has to
+    // *exist*: a literal naming nothing at all is now `invalid-query`, which is
+    // a different defect from a literal that simply matches no rows.
     let program = "\
         p(\"a\"). p(\"b\"). p(\"c\").\n\
-        q(\"a\"). q(\"b\").\n";
+        q(\"a\"). q(\"b\").\n\
+        r(\"z\").\n";
 
     // No aggregate: the second literal is the one that matches nothing.
     let mut e = engine(program);

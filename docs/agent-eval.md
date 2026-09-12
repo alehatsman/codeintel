@@ -117,6 +117,13 @@ show that nothing regressed.
 | **A** — the M1 30, retargeted to real facts | 29/30 | 30/30 | 29/30 | **88/90** | ≥ 24/30 ✅ |
 | **B** — 15 held-out, on a repo no fixture comes from | 15/15 | 14/15 | 14/15 | **43/45** | ≥ 12/15 ✅ |
 
+Two of set B's questions were later found to have **empty** reference answers —
+passable by any query returning nothing — and were rewritten against targets
+that have answers, then re-run with three fresh samples. All three got both
+right, so the totals above hold. The scorer now refuses to run if any reference
+answer is empty outside a named list, which is how that class of hole stops
+being something found by accident.
+
 Set A is `tests/fixtures/rust/` indexed with its committed `index.scip`, so SCIP
 symbol ids and both provenances are in play. Set B is **this repository**, tier A
 only — which doubles as the no-SCIP run: 43/45 with no SCIP index at all.

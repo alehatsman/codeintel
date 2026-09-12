@@ -146,7 +146,7 @@ The 17 that *are* questions:
 | `CallerFiles` | `?- def(S, _, _, "get"), calls(C, S), def(C, F, _, _).` |
 | `UnresolvedInboundForFile` | `?- name_ref(N, "src/store.rs", L, _, _), !def(_, _, _, N).` |
 | `Smells.dead_exports` | `?- dead_export(S), def(S, F, _, N).` |
-| `Smells.long_functions` | `?- long_def(S, Lines), def(S, F, _, N).` |
+| `Smells.long_functions` | `?- def_lines(S, Lines), Lines > 60, def(S, F, _, N).` |
 | `Smells.undocumented` | `?- undocumented_export(S), def(S, F, _, N).` |
 | `TopCentralByDir` | **refused** — see below |
 | `PackageCentrality` | **refused** |
