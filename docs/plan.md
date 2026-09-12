@@ -238,6 +238,36 @@ schema, and the language — and the transcript decides which.
 **If the eval comes in below 24/30, stop and raise it.** That is a human
 decision, not an implementer's.
 
+### What M1 actually cost, and what it found
+
+Shipped: `crates/datalog` (parser, eight safety checks, stratification,
+relations, semi-naive evaluation, demand transformation, builtins, limits),
+`crates/facts`' interner, `rules/stdlib.dl`, and the regex builtin injected from
+`crates/codeintel`.
+
+Four defects, each caught by a gate this plan asked for rather than by review:
+
+1. **The planner hoisted an aggregate above the literal that bound its group
+   variable**, so `N = count{ C : calls(C, S) }` counted over every `S` at once.
+   Wrong, not slow, and silent. Found by the conformance suite.
+2. **`ref_outside/2` in [01-facts.md](../specs/01-facts.md) is not
+   range-restricted** — `F` appears in the head and only in a comparison. The
+   engine rejected its own standard library. Found by the one-line
+   `load_rules(include_str!(...))` gate, which is exactly the class of defect it
+   was added for.
+3. **`max_strata` defaulted to 32 and the stdlib stratifies into 37**, so every
+   query against the shipped rules was rejected at planning.
+4. **The interner's append path rewrote the trailing offset**, so `alpha` and
+   `beta` resolved to `alphabeta`.
+
+The agent eval came in at **88/90 first-attempt** against the 24/30 gate, with
+both failures recorded verbatim in [agent-eval.md](agent-eval.md). One of the
+two was a genuine schema-copy ambiguity (`within(C, A)` never said which
+position is the child); the fix is unmeasured and M4 re-tests it.
+
+Open at the end of M1: `rules/stdlib.dl` holds 37 named predicates against a cap
+of 24 (see M4 below).
+
 ---
 
 ## M2 — Tier A, one language
