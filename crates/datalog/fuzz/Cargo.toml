@@ -5,6 +5,10 @@
 #
 # `tests/robustness.rs` covers the same property on every commit with a seeded
 # generator, so a machine without cargo-fuzz is not a machine without coverage.
+# Its own workspace root: cargo-fuzz builds this manifest directly, and the
+# repo workspace's `exclude` is not enough to stop cargo walking up to it.
+[workspace]
+
 [package]
 name = "datalog-fuzz"
 version = "0.0.0"

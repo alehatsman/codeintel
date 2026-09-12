@@ -104,6 +104,9 @@ defines(F, S) :- def(S, F, _, _).
 at(S, F, L) :- def(S, F, _, _), def_span(S, L, _, _, _).
 
 % === containment closure ===============================================
+% within(Child, Ancestor). The argument order is parent's, and an agent reading
+% only a signature has to be told which is which — one M1 eval sample reversed
+% it (docs/agent-eval.md).
 within(C, P) :- parent(C, P).
 within(C, A) :- parent(C, P), within(P, A).
 

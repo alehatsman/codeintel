@@ -1,0 +1,30 @@
+2	?- def(S, A, _, "warm").
+3	?- innermost_at("src/store.rs", 15, A).
+4	?- symbol_at("src/api.rs", 45, A).
+5	?- def(S, _, _, "scip demo store/Store#get()."), callers(A, S).
+6	?- reach_of("scip demo api/handle_write().", A).
+7	?- impact_of("scip demo cache/Cache#warm().", A).
+8	?- impact_of_exact("scip demo store/Store#put().", A).
+9	?- is_test(A).
+10	?- calls_at(From, A, _, _, _), file_of(From, F), is_test(F).
+11	?- undocumented_export(A).
+12	?- dead_export(A).
+13	?- def(A, _, "method", _), parent(A, "scip demo store/Store#").
+14	?- within(A, "scip demo store/Store#get().").
+15	?- import(A, "crate::store", _).
+16	?- uses_package(A, B).
+17	?- implements(A, "scip demo store/Backend#", _).
+18	?- long_def(A, B).
+19	?- A = count{ X : calls(X, "scip demo store/Store#put().") }.
+20	?- def(A, F, _, _), prefix(F, "src/").
+21	?- innermost_at("src/store.rs", 15, S), impact_of(S, A).
+22	?- exported(A), resolved(A).
+23	?- depends("src/api.rs", A).
+24	?- def_sig("scip demo store/Store#get().", A).
+25	?- about("scip demo store/Store#get().", A, _, _, _).
+26	?- ambiguous(A).
+27	?- entrypoint(A).
+28	?- file(A, _), B = count{ S : defines(A, S) }.
+29	?- def(A, _, _, N), contains(N, "handle").
+30	?- def(A, F, _, _), file(F, "go").
+1	?- def(A, _, "function", _).

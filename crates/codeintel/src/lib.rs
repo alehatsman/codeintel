@@ -7,6 +7,8 @@
 //! its dictionary, which is what keeps `crates/datalog` at zero dependencies.
 //! The verbs land at M2 and M4.
 
+pub mod load;
 pub mod regexes;
 
+pub use load::{load_facts, render, render_row};
 pub use regexes::Regexes;

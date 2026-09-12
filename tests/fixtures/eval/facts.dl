@@ -1,0 +1,231 @@
+% A hand-written fact set for a small polyglot repo: Rust with a SCIP index,
+% Go and TypeScript with tree-sitter only. Written for the M1 agent eval
+% (docs/agent-eval.md), so it is realistic rather than minimal — mixed
+% provenance, one ambiguous name, two dead exports, an extern package, a trait
+% with two implementors, and tests that call into the code under test.
+%
+% Nothing here comes from an extractor. Every row is a fact a real index would
+% hold, written by hand so the eval tests the schema and the language rather
+% than the extractors.
+
+% === files =============================================================
+file("src/lib.rs", "rust").
+file("src/store.rs", "rust").
+file("src/cache.rs", "rust").
+file("src/api.rs", "rust").
+file("tests/store_test.rs", "rust").
+file("cmd/server/main.go", "go").
+file("web/app.ts", "typescript").
+file("web/app.test.ts", "typescript").
+
+% === definitions =======================================================
+% Rust: resolved by SCIP, so the SymId is the SCIP symbol string.
+def("scip demo store/Backend#", "src/store.rs", "trait", "Backend").
+def("scip demo store/Store#", "src/store.rs", "struct", "Store").
+def("scip demo store/Store#get().", "src/store.rs", "method", "get").
+def("scip demo store/Store#put().", "src/store.rs", "method", "put").
+def("scip demo store/Store#evict().", "src/store.rs", "method", "evict").
+def("scip demo store/open().", "src/store.rs", "function", "open").
+def("scip demo cache/Cache#", "src/cache.rs", "struct", "Cache").
+def("scip demo cache/Cache#warm().", "src/cache.rs", "method", "warm").
+def("scip demo cache/hash().", "src/cache.rs", "function", "hash").
+def("scip demo api/handle_read().", "src/api.rs", "function", "handle_read").
+def("scip demo api/handle_write().", "src/api.rs", "function", "handle_write").
+def("scip demo lib/init().", "src/lib.rs", "function", "init").
+def("scip demo tests/test_get().", "tests/store_test.rs", "function", "test_get").
+def("scip demo tests/test_put().", "tests/store_test.rs", "function", "test_put").
+
+% Go and TypeScript: tree-sitter only, so the SymId is path-keyed.
+def("local cmd/server/main.go Server#", "cmd/server/main.go", "struct", "Server").
+def("local cmd/server/main.go Server#Start().", "cmd/server/main.go", "method", "Start").
+def("local cmd/server/main.go serve().", "cmd/server/main.go", "function", "serve").
+def("local cmd/server/main.go main().", "cmd/server/main.go", "function", "main").
+def("local cmd/server/main.go init().", "cmd/server/main.go", "function", "init").
+def("local web/app.ts App#", "web/app.ts", "class", "App").
+def("local web/app.ts App#render().", "web/app.ts", "method", "render").
+def("local web/app.ts boot().", "web/app.ts", "function", "boot").
+def("local web/app.test.ts test_render().", "web/app.test.ts", "function", "test_render").
+
+% === spans (full definition, including doc comment and attributes) ======
+def_span("scip demo store/Backend#", 1, 6, 0, 120).
+def_span("scip demo store/Store#", 8, 40, 140, 980).
+def_span("scip demo store/Store#get().", 12, 18, 220, 400).
+def_span("scip demo store/Store#put().", 20, 28, 420, 700).
+def_span("scip demo store/Store#evict().", 30, 38, 720, 960).
+def_span("scip demo store/open().", 42, 50, 1000, 1240).
+def_span("scip demo cache/Cache#", 5, 30, 80, 760).
+def_span("scip demo cache/Cache#warm().", 10, 22, 160, 520).
+def_span("scip demo cache/hash().", 32, 36, 780, 900).
+def_span("scip demo api/handle_read().", 10, 30, 180, 640).
+def_span("scip demo api/handle_write().", 32, 140, 660, 3200).
+def_span("scip demo lib/init().", 5, 12, 60, 240).
+def_span("scip demo tests/test_get().", 5, 12, 60, 250).
+def_span("scip demo tests/test_put().", 14, 22, 270, 520).
+def_span("local cmd/server/main.go Server#", 12, 16, 180, 300).
+def_span("local cmd/server/main.go Server#Start().", 18, 30, 320, 700).
+def_span("local cmd/server/main.go serve().", 32, 45, 720, 1100).
+def_span("local cmd/server/main.go main().", 1, 10, 0, 160).
+def_span("local cmd/server/main.go init().", 47, 52, 1120, 1260).
+def_span("local web/app.ts App#", 3, 40, 40, 900).
+def_span("local web/app.ts App#render().", 10, 25, 160, 560).
+def_span("local web/app.ts boot().", 42, 55, 920, 1300).
+def_span("local web/app.test.ts test_render().", 3, 12, 30, 260).
+
+% === identifier positions ==============================================
+def_name("scip demo store/Backend#", 1, 10).
+def_name("scip demo store/Store#", 9, 11).
+def_name("scip demo store/Store#get().", 12, 11).
+def_name("scip demo store/Store#put().", 20, 11).
+def_name("scip demo store/Store#evict().", 30, 7).
+def_name("scip demo store/open().", 42, 7).
+def_name("scip demo cache/Cache#", 6, 11).
+def_name("scip demo cache/Cache#warm().", 10, 11).
+def_name("scip demo cache/hash().", 32, 3).
+def_name("scip demo api/handle_read().", 11, 7).
+def_name("scip demo api/handle_write().", 33, 7).
+def_name("scip demo lib/init().", 5, 7).
+def_name("scip demo tests/test_get().", 5, 3).
+def_name("scip demo tests/test_put().", 14, 3).
+def_name("local cmd/server/main.go Server#", 12, 5).
+def_name("local cmd/server/main.go Server#Start().", 18, 17).
+def_name("local cmd/server/main.go serve().", 32, 5).
+def_name("local cmd/server/main.go main().", 1, 5).
+def_name("local cmd/server/main.go init().", 47, 5).
+def_name("local web/app.ts App#", 3, 6).
+def_name("local web/app.ts App#render().", 10, 2).
+def_name("local web/app.ts boot().", 42, 9).
+def_name("local web/app.test.ts test_render().", 3, 9).
+
+% === signatures ========================================================
+def_sig("scip demo store/Backend#", "pub trait Backend").
+def_sig("scip demo store/Store#", "pub struct Store").
+def_sig("scip demo store/Store#get().", "pub fn get(&self, k: &str) -> Option<Entry>").
+def_sig("scip demo store/Store#put().", "pub fn put(&mut self, k: &str, v: Entry)").
+def_sig("scip demo store/Store#evict().", "fn evict(&mut self)").
+def_sig("scip demo store/open().", "pub fn open(path: &Path) -> Result<Store>").
+def_sig("scip demo cache/Cache#", "pub struct Cache").
+def_sig("scip demo cache/Cache#warm().", "pub fn warm(&mut self, keys: &[String])").
+def_sig("scip demo cache/hash().", "fn hash(k: &str) -> u64").
+def_sig("scip demo api/handle_read().", "pub fn handle_read(req: Request) -> Response").
+def_sig("scip demo api/handle_write().", "pub fn handle_write(req: Request) -> Response").
+def_sig("scip demo lib/init().", "pub fn init() -> Result<()>").
+def_sig("local cmd/server/main.go Server#Start().", "func (s *Server) Start(addr string) error").
+def_sig("local web/app.ts App#render().", "render(props: Props): Node").
+
+% === doc comments ======================================================
+def_doc("scip demo store/Backend#", "A pluggable storage backend.").
+def_doc("scip demo store/Store#", "An on-disk key-value store.").
+def_doc("scip demo store/Store#get().", "Reads one entry. Returns None when the key is absent.").
+def_doc("scip demo cache/Cache#", "An in-memory read cache in front of a Store.").
+def_doc("scip demo lib/init().", "Initializes the process-wide store.").
+
+% === semantic containment ==============================================
+parent("scip demo store/Backend#", "src/store.rs").
+parent("scip demo store/Store#", "src/store.rs").
+parent("scip demo store/Store#get().", "scip demo store/Store#").
+parent("scip demo store/Store#put().", "scip demo store/Store#").
+parent("scip demo store/Store#evict().", "scip demo store/Store#").
+parent("scip demo store/open().", "src/store.rs").
+parent("scip demo cache/Cache#", "src/cache.rs").
+parent("scip demo cache/Cache#warm().", "scip demo cache/Cache#").
+parent("scip demo cache/hash().", "src/cache.rs").
+parent("scip demo api/handle_read().", "src/api.rs").
+parent("scip demo api/handle_write().", "src/api.rs").
+parent("scip demo lib/init().", "src/lib.rs").
+parent("scip demo tests/test_get().", "tests/store_test.rs").
+parent("scip demo tests/test_put().", "tests/store_test.rs").
+parent("local cmd/server/main.go Server#", "cmd/server/main.go").
+parent("local cmd/server/main.go Server#Start().", "local cmd/server/main.go Server#").
+parent("local cmd/server/main.go serve().", "cmd/server/main.go").
+parent("local cmd/server/main.go main().", "cmd/server/main.go").
+parent("local cmd/server/main.go init().", "cmd/server/main.go").
+parent("local web/app.ts App#", "web/app.ts").
+parent("local web/app.ts App#render().", "local web/app.ts App#").
+parent("local web/app.ts boot().", "web/app.ts").
+parent("local web/app.test.ts test_render().", "web/app.test.ts").
+
+% === visibility ========================================================
+exported("scip demo store/Backend#").
+exported("scip demo store/Store#").
+exported("scip demo store/Store#get().").
+exported("scip demo store/Store#put().").
+exported("scip demo store/open().").
+exported("scip demo cache/Cache#").
+exported("scip demo cache/Cache#warm().").
+exported("scip demo api/handle_read().").
+exported("scip demo api/handle_write().").
+exported("scip demo lib/init().").
+exported("local cmd/server/main.go Server#").
+exported("local cmd/server/main.go Server#Start().").
+exported("local web/app.ts App#").
+exported("local web/app.ts App#render().").
+exported("local web/app.ts boot().").
+
+% === SCIP-grade identity ===============================================
+% Rust only: the Go and TypeScript tiers have no indexer in this fixture.
+resolved("scip demo store/Backend#").
+resolved("scip demo store/Store#").
+resolved("scip demo store/Store#get().").
+resolved("scip demo store/Store#put().").
+resolved("scip demo store/Store#evict().").
+resolved("scip demo store/open().").
+resolved("scip demo cache/Cache#").
+resolved("scip demo cache/Cache#warm().").
+resolved("scip demo cache/hash().").
+resolved("scip demo api/handle_read().").
+resolved("scip demo api/handle_write().").
+resolved("scip demo lib/init().").
+resolved("scip demo tests/test_get().").
+resolved("scip demo tests/test_put().").
+
+% === imports ===========================================================
+import("src/lib.rs", "crate::store", "").
+import("src/lib.rs", "crate::cache", "").
+import("src/api.rs", "crate::store", "").
+import("src/api.rs", "crate::cache", "").
+import("src/store.rs", "serde", "").
+import("tests/store_test.rs", "crate::store", "").
+import("cmd/server/main.go", "net/http", "").
+import("web/app.ts", "./util/retry", "retry").
+import("web/app.test.ts", "./app", "").
+
+% === third-party packages ==============================================
+extern("scip serde 1.0.0 serde/Serialize#", "cargo", "serde", "1.0.0").
+extern("scip serde 1.0.0 serde/Deserialize#", "cargo", "serde", "1.0.0").
+
+% === implementations ===================================================
+implements("scip demo store/Store#", "scip demo store/Backend#", "exact").
+implements("scip demo cache/Cache#", "scip demo store/Backend#", "exact").
+
+% === resolved occurrences (tier B) =====================================
+% Definition sites carry Role "def", so "every place this symbol occurs" is one
+% relation and not two.
+scip_ref("scip demo store/Store#", "src/store.rs", 9, 11, "src/store.rs", "def").
+scip_ref("scip demo store/Store#get().", "src/store.rs", 12, 11, "scip demo store/Store#", "def").
+scip_ref("scip demo store/Store#put().", "src/store.rs", 20, 11, "scip demo store/Store#", "def").
+scip_ref("scip demo store/Store#evict().", "src/store.rs", 30, 7, "scip demo store/Store#", "def").
+scip_ref("scip demo store/open().", "src/store.rs", 42, 7, "src/store.rs", "def").
+scip_ref("scip demo cache/Cache#warm().", "src/cache.rs", 10, 11, "scip demo cache/Cache#", "def").
+scip_ref("scip demo cache/hash().", "src/cache.rs", 32, 3, "src/cache.rs", "def").
+
+% uses
+scip_ref("scip demo store/Store#get().", "src/api.rs", 15, 12, "scip demo api/handle_read().", "read").
+scip_ref("scip demo store/Store#put().", "src/api.rs", 40, 8, "scip demo api/handle_write().", "read").
+scip_ref("scip demo cache/Cache#warm().", "src/api.rs", 45, 8, "scip demo api/handle_write().", "read").
+scip_ref("scip demo cache/hash().", "src/cache.rs", 15, 10, "scip demo cache/Cache#warm().", "read").
+scip_ref("scip demo store/Store#evict().", "src/store.rs", 25, 8, "scip demo store/Store#put().", "read").
+scip_ref("scip demo store/open().", "src/lib.rs", 8, 4, "scip demo lib/init().", "read").
+scip_ref("scip demo store/Store#get().", "tests/store_test.rs", 8, 10, "scip demo tests/test_get().", "read").
+scip_ref("scip demo store/Store#put().", "tests/store_test.rs", 18, 10, "scip demo tests/test_put().", "read").
+scip_ref("scip serde 1.0.0 serde/Serialize#", "src/store.rs", 3, 10, "src/store.rs", "read").
+scip_ref("scip serde 1.0.0 serde/Deserialize#", "src/store.rs", 3, 22, "src/store.rs", "read").
+
+% === unresolved occurrences (tier A) ===================================
+% Go and TypeScript: an identifier, a position, and the definition it sits in.
+% It names no symbol; resolution is stdlib.dl's job.
+name_ref("serve", "cmd/server/main.go", 8, 4, "local cmd/server/main.go main().").
+name_ref("Start", "cmd/server/main.go", 40, 6, "local cmd/server/main.go serve().").
+name_ref("init", "cmd/server/main.go", 6, 4, "local cmd/server/main.go main().").
+name_ref("render", "web/app.ts", 50, 10, "local web/app.ts boot().").
+name_ref("render", "web/app.test.ts", 8, 6, "local web/app.test.ts test_render().").
+name_ref("boot", "web/app.test.ts", 5, 6, "local web/app.test.ts test_render().").

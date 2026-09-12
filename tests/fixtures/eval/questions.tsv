@@ -1,0 +1,30 @@
+1	A	List every function definition in the repository. Bind the symbol id to A.	?- def(A, _, "function", _).
+2	A	Which file defines the symbol named "warm"? Bind the file path to A.	?- def(_, A, _, "warm").
+3	A	Which definition encloses line 15 of src/store.rs most tightly? Bind its symbol id to A.	?- innermost_at("src/store.rs", 15, A).
+4	A	Every definition whose span covers line 45 of src/api.rs. Bind the symbol id to A.	?- symbol_at("src/api.rs", 45, A).
+5	A	Who calls the symbol "scip demo store/Store#get()."? Bind the calling symbol id to A.	?- calls(A, "scip demo store/Store#get().").
+6	A	What does "scip demo api/handle_write()." call, directly or transitively? Bind each callee's symbol id to A.	?- reach_of("scip demo api/handle_write().", A).
+7	A	If "scip demo cache/Cache#warm()." changed, what could be affected, transitively? Bind each affected symbol id to A.	?- impact_of("scip demo cache/Cache#warm().", A).
+8	A	The same blast radius for "scip demo store/Store#put()." but counting only compiler-resolved evidence. Bind each affected symbol id to A.	?- impact_of_exact("scip demo store/Store#put().", A).
+9	A	Which files in this repository are test files? Bind the path to A.	?- is_test(A).
+10	A	Which symbols are called from code that lives in a test file? Bind the called symbol id to A.	?- calls(C, A), def(C, F, _, _), is_test(F).
+11	A	Which exported symbols have no doc comment? Bind the symbol id to A.	?- undocumented_export(A).
+12	A	Which exported symbols are never referenced outside the file that defines them? Bind the symbol id to A.	?- dead_export(A).
+13	A	Which methods belong to the type "scip demo store/Store#"? Bind the method's symbol id to A.	?- parent(A, "scip demo store/Store#"), def(A, _, "method", _).
+14	A	What contains "scip demo store/Store#get()." — directly or transitively, up to the file? Bind each container to A.	?- within("scip demo store/Store#get().", A).
+15	A	Which files import the module written as "crate::store"? Bind the importing file to A.	?- import(A, "crate::store", _).
+16	A,B	Which third-party packages does each file use? Bind the file to A and the package name to B.	?- uses_package(A, B).
+17	A	Which types implement "scip demo store/Backend#"? Bind the implementing symbol id to A.	?- implements(A, "scip demo store/Backend#", _).
+18	A,B	Which definitions span more than 80 lines? Bind the symbol id to A and the length to B.	?- long_def(A, B).
+19	A	How many distinct symbols call "scip demo store/Store#put()."? Bind the count to A.	?- A = count{ C : calls(C, "scip demo store/Store#put().") }.
+20	A	Which definitions live in a file whose path starts with "src/"? Bind the symbol id to A.	?- def(A, F, _, _), prefix(F, "src/").
+21	A	You have a stack frame pointing at src/store.rs line 15 and no symbol name. Report everything that is transitively affected by the definition at that location. Bind each affected symbol id to A.	?- innermost_at("src/store.rs", 15, S), impact_of(S, A).
+22	A	Which exported symbols also carry SCIP-grade identity? Bind the symbol id to A.	?- exported(A), resolved(A).
+23	A	Which files does src/api.rs depend on, in the sense that it references a symbol defined there? Bind the depended-on file to A.	?- depends("src/api.rs", A).
+24	A	What is the declared signature of "scip demo store/Store#get()."? Bind it to A.	?- def_sig("scip demo store/Store#get().", A).
+25	A	Which kinds of fact does the orientation relation report for "scip demo store/Store#get()."? Bind the discriminator to A.	?- about("scip demo store/Store#get().", A, _, _, _).
+26	A	Which definition names are used by more than one definition in this repository? Bind the name to A.	?- ambiguous(A).
+27	A	Which callable definitions are called by nothing at all? Bind the symbol id to A.	?- entrypoint(A).
+28	A,B	How many definitions does each file hold? Bind the file to A and the count to B.	?- file(A, _), B = count{ S : def(S, A, _, _) }.
+29	A	Which definitions have a name containing "handle"? Bind the symbol id to A.	?- def(A, _, _, N), contains(N, "handle").
+30	A	Which definitions live in a Go file? Bind the symbol id to A.	?- def(A, F, _, _), file(F, "go").

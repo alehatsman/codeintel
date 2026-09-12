@@ -1,0 +1,30 @@
+1	12	local cmd/server/main.go init().|local cmd/server/main.go main().|local cmd/server/main.go serve().|local web/app.test.ts test_render().|local web/app.ts boot().|scip demo api/handle_read().|scip demo api/handle_write().|scip demo cache/hash().|scip demo lib/init().|scip demo store/open().|scip demo tests/test_get().|scip demo tests/test_put().
+2	1	src/cache.rs
+3	1	scip demo store/Store#get().
+4	1	scip demo api/handle_write().
+5	2	scip demo api/handle_read().|scip demo tests/test_get().
+6	4	scip demo cache/Cache#warm().|scip demo cache/hash().|scip demo store/Store#evict().|scip demo store/Store#put().
+7	1	scip demo api/handle_write().
+8	2	scip demo api/handle_write().|scip demo tests/test_put().
+9	2	tests/store_test.rs|web/app.test.ts
+10	4	local web/app.ts App#render().|local web/app.ts boot().|scip demo store/Store#get().|scip demo store/Store#put().
+11	10	local cmd/server/main.go Server#|local cmd/server/main.go Server#Start().|local web/app.ts App#|local web/app.ts App#render().|local web/app.ts boot().|scip demo api/handle_read().|scip demo api/handle_write().|scip demo cache/Cache#warm().|scip demo store/Store#put().|scip demo store/open().
+12	9	local cmd/server/main.go Server#|local cmd/server/main.go Server#Start().|local web/app.ts App#|scip demo api/handle_read().|scip demo api/handle_write().|scip demo cache/Cache#|scip demo lib/init().|scip demo store/Backend#|scip demo store/Store#
+13	3	scip demo store/Store#evict().|scip demo store/Store#get().|scip demo store/Store#put().
+14	2	scip demo store/Store#|src/store.rs
+15	3	src/api.rs|src/lib.rs|tests/store_test.rs
+16	1	src/store.rs serde
+17	2	scip demo cache/Cache#|scip demo store/Store#
+18	1	scip demo api/handle_write(). 108
+19	1	2
+20	12	scip demo api/handle_read().|scip demo api/handle_write().|scip demo cache/Cache#|scip demo cache/Cache#warm().|scip demo cache/hash().|scip demo lib/init().|scip demo store/Backend#|scip demo store/Store#|scip demo store/Store#evict().|scip demo store/Store#get().|scip demo store/Store#put().|scip demo store/open().
+21	2	scip demo api/handle_read().|scip demo tests/test_get().
+22	10	scip demo api/handle_read().|scip demo api/handle_write().|scip demo cache/Cache#|scip demo cache/Cache#warm().|scip demo lib/init().|scip demo store/Backend#|scip demo store/Store#|scip demo store/Store#get().|scip demo store/Store#put().|scip demo store/open().
+23	2	src/cache.rs|src/store.rs
+24	1	pub fn get(&self, k: &str) -> Option<Entry>
+25	6	caller|defined|doc|parent|sig|test
+26	1	init
+27	7	local cmd/server/main.go main().|local web/app.test.ts test_render().|scip demo api/handle_read().|scip demo api/handle_write().|scip demo lib/init().|scip demo tests/test_get().|scip demo tests/test_put().
+28	8	cmd/server/main.go 5|src/api.rs 2|src/cache.rs 3|src/lib.rs 1|src/store.rs 6|tests/store_test.rs 2|web/app.test.ts 1|web/app.ts 3
+29	2	scip demo api/handle_read().|scip demo api/handle_write().
+30	5	local cmd/server/main.go Server#|local cmd/server/main.go Server#Start().|local cmd/server/main.go init().|local cmd/server/main.go main().|local cmd/server/main.go serve().
