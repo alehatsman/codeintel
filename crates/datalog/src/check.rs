@@ -161,7 +161,23 @@ fn check_rule(rule: &Rule, schema: &mut Schema) -> Result<()> {
     let bound = check_body(&rule.body, schema, &ctx, &BTreeSet::new())?;
 
     for arg in &rule.head.args {
-        let Term::Var(v) = arg else { continue };
+        let v = match arg {
+            Term::Var(v) => v,
+            // A head column with no value to emit derives nothing at all, and
+            // does it silently — invariant 5's failure exactly.
+            Term::Wildcard => {
+                return Err(Diagnostic::at(
+                    Status::InvalidQuery,
+                    rule.head.span,
+                    format!(
+                        "rule `{name}`: `_` in a rule head has no value to emit, so the rule \
+                         derives no rows at all. Name the column with a variable bound in the \
+                         body, or drop it from the head"
+                    ),
+                ));
+            }
+            Term::Const(_) => continue,
+        };
         if bound.contains(v) {
             continue;
         }
@@ -325,8 +341,22 @@ fn step(
             for side in [*lo, *hi] {
                 require_bound(side, bound, vars, *span, rule, 7, "as a bound of `between`")?;
             }
-            if let Term::Var(v) = out {
-                bound.insert(*v);
+            match out {
+                Term::Var(v) => {
+                    bound.insert(*v);
+                }
+                // The grammar (03-datalog.md § Grammar) says the output is a
+                // var. A `_` there generates into nowhere: every row fails.
+                Term::Wildcard => {
+                    return Err(Diagnostic::at(
+                        Status::InvalidQuery,
+                        *span,
+                        "`between`'s third argument must be a variable; `between(Lo, Hi, _)` \
+                         binds nothing and yields no rows. Name the output, or write a pair of \
+                         comparisons if you meant a range check",
+                    ));
+                }
+                Term::Const(_) => {}
             }
         }
         Literal::Assign { target, expr, span } => {

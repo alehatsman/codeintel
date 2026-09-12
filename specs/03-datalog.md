@@ -63,7 +63,7 @@ hot(S, N) :- def(S, _, "function", _), N = count{ C : calls(C, S) }, N > 10.
 | `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms ([01-facts.md](01-facts.md) § Integers). |
 | `X < Y`, `<=`, `>`, `>=` | **integers only**, checked at runtime: both operands must fall in the integer id range ([01-facts.md](01-facts.md) § Integers), else `invalid-query`. Comparing string atoms is an error, not a byte comparison — string atom ids are allocation-ordered, so comparing them would give results that change between runs. |
 | `X = A + B` (`-`, `*`, `/`) | integer arithmetic. Division by zero → error. Overflow → error. |
-| `between(Lo, Hi, X)` | **generator.** `Lo` and `Hi` must be bound integers; binds `X` to each integer in `Lo..=Hi` inclusive, ascending. If `X` is already bound it degrades to a range check. This is the only builtin that produces bindings rather than filtering them, and it is what makes `symbol_at` range-restricted without flow-sensitive safety analysis ([01-facts.md](01-facts.md) § The location bridge). `Lo > Hi` yields nothing. |
+| `between(Lo, Hi, X)` | **generator.** `Lo` and `Hi` must be bound integers; binds `X` to each integer in `Lo..=Hi` inclusive, ascending. If `X` is already bound it degrades to a range check. This is the only builtin that produces bindings rather than filtering them, and it is what makes `symbol_at` range-restricted without flow-sensitive safety analysis ([01-facts.md](01-facts.md) § The location bridge). `Lo > Hi` yields nothing. `X` must be a variable, per the grammar above: `between(Lo, Hi, _)` is `invalid-query`, not a silently empty generator. |
 | `match(S, "re")` | regex over the string behind atom `S`. Second argument must be a literal. |
 | `prefix(S, "p")`, `suffix(S, "s")`, `contains(S, "c")` | cheaper string tests; prefer these over `match` where they suffice. |
 | `count{ X : goal }` | number of distinct bindings of `X` satisfying `goal` |
@@ -85,7 +85,10 @@ step budget. We do not take a regex dependency for this.
 ### Safety rules — checked before evaluation, reported as errors
 
 1. **Range restriction.** Every variable in a rule head appears in a positive
-   body literal of that rule.
+   body literal of that rule. A `_` in a rule head is `invalid-query` for the
+   same reason: the column has no value to emit, so the rule derives nothing at
+   all rather than deriving rows with a hole. `_` stays legal in a body literal
+   and in a query head position, where it means "any value, do not bind it".
 2. **Negation safety.** Every variable inside `!atom(...)` appears in a positive
    literal earlier in the same body.
 3. **Comparison safety.** Both sides of a comparison are bound by an earlier

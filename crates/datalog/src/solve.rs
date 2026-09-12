@@ -271,6 +271,8 @@ impl Solver<'_> {
                     // nothing is the safe reading if it somehow does.
                     None => return Ok(()),
                 },
+                // `check` rejects `_` in a head; emitting nothing is the safe
+                // reading if one somehow reaches here.
                 Term::Wildcard => return Ok(()),
             }
         }
@@ -448,6 +450,7 @@ impl Solver<'_> {
                 Ok(())
             };
         }
+        // Unbound and not a variable means `_`, which `check` rejects.
         let Term::Var(v) = target else { return Ok(()) };
         for value in lo..=hi {
             self.budget()?;

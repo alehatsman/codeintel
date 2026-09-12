@@ -46,6 +46,19 @@ fn rule_1_accepts_a_head_variable_bound_by_the_body() {
 }
 
 #[test]
+fn rule_1_rejects_a_wildcard_in_a_rule_head() {
+    // `has(S, _)` derived nothing at all, silently — invariant 5.
+    let msg = reject("has(S, _) :- edge(_, S).");
+    assert!(msg.contains("`_` in a rule head"), "{msg}");
+    assert!(msg.contains("no rows"), "{msg}");
+}
+
+#[test]
+fn rule_1_leaves_a_wildcard_in_the_body_alone() {
+    accept("r(X) :- edge(X, _).");
+}
+
+#[test]
 fn rule_2_negation_safety() {
     let msg = reject("r(X) :- edge(X, _), !edge(Y, X).");
     assert!(msg.contains("`Y`"), "{msg}");
@@ -170,6 +183,14 @@ fn rule_7_between_requires_bound_endpoints() {
     let msg = reject("r(L) :- edge(A, _), between(A, B, L).");
     assert!(msg.contains("`B`"), "{msg}");
     assert!(msg.contains("bound of `between`"), "{msg}");
+}
+
+#[test]
+fn rule_7_between_rejects_a_wildcard_output() {
+    // The grammar says the third argument is a var. `_` generated into
+    // nowhere, so every row failed and the query answered ok with no rows.
+    let msg = reject("w(S) :- def_span(S, A, B, _, _), between(A, B, _).");
+    assert!(msg.contains("third argument must be a variable"), "{msg}");
 }
 
 #[test]

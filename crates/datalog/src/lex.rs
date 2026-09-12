@@ -233,7 +233,10 @@ impl Lexer<'_> {
 
     fn string(&mut self, from: usize) -> Result<()> {
         self.at += 1; // opening quote
-        let mut text = String::new();
+        // Bytes, not chars: a multi-byte character arrives one byte at a time,
+        // and decoding per byte would replace each with U+FFFD. The buffer is
+        // valid UTF-8 at the end because `src` is and the escapes are ASCII.
+        let mut text: Vec<u8> = Vec::new();
         loop {
             let Some(b) = self.peek() else {
                 return Err(self.err(from, "unterminated string literal: no closing `\"`"));
@@ -247,10 +250,10 @@ impl Lexer<'_> {
                     };
                     self.at += 1;
                     match esc {
-                        b'"' => text.push('"'),
-                        b'\\' => text.push('\\'),
-                        b'n' => text.push('\n'),
-                        b't' => text.push('\t'),
+                        b'"' => text.push(b'"'),
+                        b'\\' => text.push(b'\\'),
+                        b'n' => text.push(b'\n'),
+                        b't' => text.push(b'\t'),
                         other => {
                             let c = char::from(other);
                             return Err(self.err(
@@ -263,20 +266,12 @@ impl Lexer<'_> {
                         }
                     }
                 }
-                // Multi-byte UTF-8 passes through one byte at a time; the bytes
-                // are contiguous in the source so the string rebuilds intact.
-                _ => text.push_str(&String::from_utf8_lossy(&[b])),
+                _ => text.push(b),
             }
         }
-        // `from_utf8_lossy` per byte mangles multi-byte characters, so rebuild
-        // the payload from the source range when it holds any.
-        let raw = self
-            .src
-            .get(from + 1..self.at.saturating_sub(1))
-            .unwrap_or_default();
-        if !raw.is_ascii() && !raw.contains(&b'\\') {
-            text = String::from_utf8_lossy(raw).into_owned();
-        }
+        let Ok(text) = String::from_utf8(text) else {
+            return Err(self.err(from, "string literal is not valid UTF-8"));
+        };
         self.push(Kind::Str(text), from);
         Ok(())
     }
@@ -385,6 +380,16 @@ mod tests {
         assert_eq!(
             kinds("\"héllo\""),
             vec![Kind::Str("héllo".into()), Kind::End]
+        );
+    }
+
+    #[test]
+    fn non_ascii_survives_alongside_an_escape() {
+        // Decoding byte by byte turned each multi-byte character into U+FFFD,
+        // and the whole-slice rebuild was skipped when an escape was present.
+        assert_eq!(
+            kinds(r#""naïve\n""#),
+            vec![Kind::Str("naïve\n".into()), Kind::End]
         );
     }
 
