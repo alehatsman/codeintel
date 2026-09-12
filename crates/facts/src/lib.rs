@@ -41,7 +41,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     file.flush()?;
     file.sync_all()?;
     drop(file);
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path)?;
+    // The rename is durable only once the directory entry is. Without this a
+    // crash can keep the bytes and lose the name.
+    if let Some(dir) = path.parent() {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// `blake3:<hex>` over some bytes — a file's content hash, or a fingerprint.
@@ -50,14 +56,17 @@ pub fn content_hash(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
-/// The segment file name for a repo-relative path.
+/// The segment file name for a segment's encoded bytes.
 ///
-/// Hashing the path rather than escaping it keeps every segment name a fixed
-/// length and flat, with no directory tree to create and no path-length limit
-/// to hit. The manifest is what maps it back.
+/// Content-addressed, not path-addressed: a changed file gets a new segment
+/// file instead of overwriting the old one under the same name, so the
+/// manifest that names the old bytes keeps naming them until it is replaced
+/// (`specs/04-storage.md` § Concurrency). Fixed length and flat, with no
+/// directory tree to create and no path-length limit to hit; the manifest is
+/// what maps it back to a path.
 #[must_use]
-pub fn segment_name(path: &str) -> String {
-    format!("{}.bin", blake3::hash(path.as_bytes()).to_hex())
+pub fn segment_name(bytes: &[u8]) -> String {
+    format!("{}.bin", blake3::hash(bytes).to_hex())
 }
 
 #[cfg(test)]
@@ -80,11 +89,11 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_name_is_a_function_of_the_path() {
-        assert_eq!(segment_name("src/a.rs"), segment_name("src/a.rs"));
-        assert_ne!(segment_name("src/a.rs"), segment_name("src/b.rs"));
+    fn a_segment_name_is_a_function_of_the_bytes() {
+        assert_eq!(segment_name(b"CIF1 a"), segment_name(b"CIF1 a"));
+        assert_ne!(segment_name(b"CIF1 a"), segment_name(b"CIF1 b"));
         assert!(
-            Path::new(&segment_name("src/a.rs"))
+            Path::new(&segment_name(b"CIF1 a"))
                 .extension()
                 .is_some_and(|ext| ext == "bin")
         );

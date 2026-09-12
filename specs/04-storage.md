@@ -18,7 +18,7 @@ That property is what buys the simplicity below. We are not a database.
   manifest.json          index metadata + per-file segment table
   dict.bin               string interner, append-only
   dict.idx               offset table into dict.bin
-  seg/<blake3-of-path>.bin   one segment per source file
+  seg/<blake3-of-bytes>.bin  one segment per source file, named by its content
 ```
 
 **There is no `seg/_scip.bin`.** An earlier draft put facts from SCIP documents
@@ -169,7 +169,8 @@ it now is one character.
 names segments but does not name dictionary extents, so a reader that loads a
 new manifest and mmaps a dictionary mid-append can read an offset past the end
 of its mapping. Recovery from a torn append is truncation to the recorded
-length.
+length: a reader bounds its view to the recorded extents, and a writer
+truncates both files to them before it appends.
 
 **`dict_generation` increments on `--rebuild`.** `--rebuild` renumbers every
 atom, and `query --raw` hands raw atom ids to the caller. Without a generation
@@ -215,14 +216,22 @@ able to see that.
 
 - `codeintel index` writes each new or changed segment to `seg/<hash>.bin.tmp`,
   **`fsync`s it**, and renames it into place; then writes `manifest.json.tmp`,
-  `fsync`s it, and renames it **last**. The `fsync` is not optional: without it
+  `fsync`s it, and renames it **last**. `<hash>` is blake3 of the segment's
+  own bytes, not of the source path: a changed file gets a *new* segment file,
+  the one the old manifest names is untouched until the new manifest is in
+  place, and it is unlinked only after. A vanished file's segment is likewise
+  unlinked after the commit that drops its entry. Every rename is followed by
+  an `fsync` of the directory, without which a crash can keep the file and
+  lose its name. The `fsync` is not optional: without it
   a power loss can land the manifest rename while segment data is still in page
   cache, and the result is a manifest naming a **zero-filled** segment. Atom `0`
   is the *integer* zero ([01-facts.md](01-facts.md) § Integers), so those bytes
   decode as well-formed facts asserting that every symbol lives at line 0,
   column 0 — no error, no status, a silently wrong answer. The manifest is the only thing that names segments, so a reader sees
-  either the old index or the new one, never a mix. Orphaned `.tmp` files from a
-  crashed run are removed at the start of the next one.
+  either the old index or the new one, never a mix. A crash before the
+  manifest rename leaves the old manifest naming files that all still exist,
+  plus orphans — `.tmp` files and segments no manifest names — which the next
+  writer removes under the lock before it writes anything.
 - Readers `mmap` segments named by the manifest they loaded. A concurrent
   reindex may unlink those segments; the mapping stays valid on POSIX until the
   reader closes it.
@@ -233,6 +242,12 @@ able to see that.
   with no tmp+rename, so interleaved appends put `dict.idx` offsets out of step
   with `dict.bin` bytes and every atom past that point resolves to the wrong
   string, with no checksum to notice.
+- `--rebuild` takes the writer lock first and discards under it, and
+  `.codeintel/lock` survives the discard: a second writer opening a fresh lock
+  file would not contend with the first. A refresh re-reads the manifest after
+  taking the lock — one read to decide whether to refresh, one under the lock
+  to build on — so a refresh that lost a race never commits a manifest built
+  from a copy another writer has already replaced.
 - A **reader** that cannot take the lock does not fail. It reads the current
   manifest and returns `status: "stale"`. `locked` is for a second writer;
   telling a reader "locked" is not actionable.
@@ -252,7 +267,7 @@ the README rather than half-supporting it.
 - **No WAL, no transactions.** Crash recovery is `fsync` + rename ordering +
   per-segment checksums + dictionary extents in the manifest, above. A crashed
   index leaves the previous manifest pointing at valid, checksummed segments,
-  plus orphaned `.tmp` files that the next run removes.
+  plus orphans — `.tmp` files and unnamed segments — that the next run removes.
 - **`.codeintel/` must be excluded from file sync.** mmap over a Dropbox/iCloud
   partial write or an SMB/NFS truncation raises `SIGBUS`, which no status code
   can report. One line in the README.

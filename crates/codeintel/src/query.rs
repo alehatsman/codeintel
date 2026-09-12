@@ -667,6 +667,16 @@ fn refresh(
         ));
     };
 
+    // The manifest was read before the lock. A writer that committed in
+    // between named segments this copy does not, and a refresh built on this
+    // copy would commit a manifest that orphans them. Re-read now, and reopen
+    // only if it moved: a reopen rebuilds the dictionary map, and the JSON
+    // compare is cheap.
+    let current = facts::Manifest::open(store.dir()).context("re-reading the manifest")?;
+    if current.as_ref() != Some(store.manifest()) {
+        *store = Store::open(root, &extract::fingerprint()).context("reopening the index")?;
+    }
+
     // The SCIP inputs the index was built with, carried forward. Without them
     // an auto-refresh looks like "the SCIP index disappeared", re-extracts the
     // tree tier-A-only, and silently deletes every tier-B fact — the index

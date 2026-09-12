@@ -1,11 +1,13 @@
 //! The store on disk: `.codeintel/` — dictionary, segments, manifest.
 //!
 //! One writer, many readers. Writing a file's facts is: encode the segment,
-//! `fsync` it, rename it into place. Committing is: append the dictionary,
-//! then `fsync` and rename the manifest **last**, because the manifest is the
-//! only thing that names segments (`specs/04-storage.md` § Concurrency).
+//! `fsync` it, rename it into place under a name derived from its bytes.
+//! Committing is: append the dictionary, then `fsync` and rename the manifest
+//! **last**, because the manifest is the only thing that names segments — and
+//! only then unlink the segments it stopped naming
+//! (`specs/04-storage.md` § Concurrency).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Result;
 use std::path::{Path, PathBuf};
 
@@ -32,6 +34,10 @@ pub struct Store {
     manifest: Manifest,
     /// True once this run has an index on disk to compare against.
     existing: bool,
+    /// Segments the manifest stopped naming this run. Unlinked after commit,
+    /// never before: until the new manifest is in place, the old one names
+    /// them and a reader may be opening them.
+    retired: BTreeSet<String>,
 }
 
 impl Store {
@@ -47,12 +53,18 @@ impl Store {
         let dir = root.join(DIR);
         let manifest = Manifest::open(&dir)?;
         let existing = manifest.is_some();
+        // Only what the manifest recorded is trusted: anything past those
+        // extents is a torn append from a crashed run.
+        let (bin_len, idx_len) = manifest
+            .as_ref()
+            .map_or((0, 0), |m| (m.dict_bin_len, m.dict_idx_len));
         Ok(Self {
-            interner: Interner::open(&dir)?,
+            interner: Interner::open_to(&dir, bin_len, idx_len)?,
             manifest: manifest.unwrap_or_else(|| Manifest::new(&root, fingerprint.to_string())),
             root,
             dir,
             existing,
+            retired: BTreeSet::new(),
         })
     }
 
@@ -101,19 +113,39 @@ impl Store {
         &mut self.interner
     }
 
-    /// Remove `.tmp` files left by a crashed run.
+    /// Remove what a crashed run left behind: `.tmp` files, and segments the
+    /// manifest does not name.
+    ///
+    /// A writer calls this under the lock before it writes. Readers never do:
+    /// a segment this manifest does not name may be one a newer manifest
+    /// does, and only the lock holder knows there is no newer manifest.
     ///
     /// # Errors
-    /// I/O failure reading the segment directory.
-    pub fn sweep_tmp(&self) -> Result<usize> {
+    /// I/O failure reading the store directory.
+    pub fn sweep(&self) -> Result<usize> {
+        let mut swept = 0;
+        let manifest_tmp = self.dir.join(format!("{}.tmp", crate::manifest::MANIFEST));
+        if manifest_tmp.exists() {
+            std::fs::remove_file(&manifest_tmp)?;
+            swept += 1;
+        }
         let seg = self.dir.join(SEG);
         if !seg.exists() {
-            return Ok(0);
+            return Ok(swept);
         }
-        let mut swept = 0;
+        let named: BTreeSet<&str> = self
+            .manifest
+            .files
+            .values()
+            .map(|e| e.seg.as_str())
+            .collect();
         for entry in std::fs::read_dir(&seg)? {
             let path = entry?.path();
-            if path.extension().is_some_and(|e| e == "tmp") {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if path.extension().is_some_and(|e| e == "tmp") || !named.contains(name) {
                 std::fs::remove_file(&path)?;
                 swept += 1;
             }
@@ -123,37 +155,41 @@ impl Store {
 
     /// Write one file's facts and record it in the manifest.
     ///
+    /// `entry.seg` is set here, from the segment's bytes. A previous segment
+    /// for `path` is left in place until [`Self::commit`]: the manifest on
+    /// disk still names it.
+    ///
     /// # Errors
     /// I/O failure, or a segment too large to encode.
-    pub fn put(&mut self, path: &str, segment: &mut Segment, entry: FileEntry) -> Result<()> {
+    pub fn put(&mut self, path: &str, segment: &mut Segment, mut entry: FileEntry) -> Result<()> {
         let bytes = segment.encode()?;
+        entry.seg = crate::segment_name(&bytes);
         let dir = self.dir.join(SEG);
         std::fs::create_dir_all(&dir)?;
         crate::atomic_write(&dir.join(&entry.seg), &bytes)?;
-        self.manifest.files.insert(path.to_string(), entry);
+        if let Some(previous) = self.manifest.files.insert(path.to_string(), entry) {
+            self.retired.insert(previous.seg);
+        }
         Ok(())
     }
 
-    /// Drop a vanished file: its segment and its manifest entry.
+    /// Drop a vanished file from the manifest; its segment goes at
+    /// [`Self::commit`].
     ///
     /// A refresh that only added would leave a deleted file's facts answering
-    /// queries (`specs/05-surface.md` § `query`).
-    ///
-    /// # Errors
-    /// I/O failure other than the segment already being gone.
-    pub fn forget(&mut self, path: &str) -> Result<bool> {
+    /// queries (`specs/05-surface.md` § `query`). Unlinking here, before the
+    /// commit, would leave a crashed run's manifest naming a file that is
+    /// gone, and the index unreadable until `rm -rf`.
+    pub fn forget(&mut self, path: &str) -> bool {
         let Some(entry) = self.manifest.files.remove(path) else {
-            return Ok(false);
+            return false;
         };
-        let seg = self.dir.join(SEG).join(&entry.seg);
-        match std::fs::remove_file(&seg) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
-            Err(e) => Err(e),
-        }
+        self.retired.insert(entry.seg);
+        true
     }
 
-    /// Flush the dictionary, then write the manifest last.
+    /// Flush the dictionary, write the manifest last, then unlink the
+    /// segments it stopped naming.
     ///
     /// # Errors
     /// I/O failure appending the dictionary or writing the manifest.
@@ -163,6 +199,25 @@ impl Store {
         self.manifest.dict_idx_len = len_of(&self.dir.join("dict.idx"))?;
         self.manifest.save(&self.dir)?;
         self.existing = true;
+        // Only now. A crash anywhere above leaves the old manifest naming
+        // files that all still exist. A retired name the new manifest names
+        // again — the same bytes re-extracted — is not touched.
+        let named: BTreeSet<&str> = self
+            .manifest
+            .files
+            .values()
+            .map(|e| e.seg.as_str())
+            .collect();
+        for seg in std::mem::take(&mut self.retired) {
+            if named.contains(seg.as_str()) {
+                continue;
+            }
+            match std::fs::remove_file(self.dir.join(SEG).join(&seg)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
         Ok(())
     }
 
@@ -233,11 +288,11 @@ fn len_of(path: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::segment_name;
+    use crate::intern::Dict;
 
-    fn entry(path: &str) -> FileEntry {
+    fn entry(_path: &str) -> FileEntry {
         FileEntry {
-            seg: segment_name(path),
+            seg: String::new(),
             mtime: 1,
             size: 2,
             hash: "blake3:00".to_string(),
@@ -284,10 +339,151 @@ mod tests {
         store.put("a.rs", &mut seg, entry("a.rs")).expect("writes");
         store.commit().expect("commits");
 
-        assert!(store.forget("a.rs").expect("forgets"));
+        assert!(store.forget("a.rs"));
         store.commit().expect("commits");
         assert!(store.load().expect("loads").is_empty());
-        assert!(!store.forget("a.rs").expect("no-op"));
+        assert!(!store.forget("a.rs"));
+    }
+
+    /// One file's segment, written with `rows` in its `def_span` relation.
+    fn write(store: &mut Store, path: &str, rows: &[[u32; 4]]) -> String {
+        let f = store.intern(path).expect("atom");
+        let lang = store.intern("rust").expect("atom");
+        let mut seg = Segment::new();
+        assert!(seg.push("file", &[f, lang]));
+        for [a, b, c, d] in rows {
+            assert!(seg.push("def_span", &[f, *a, *b, *c, *d]));
+        }
+        store.put(path, &mut seg, entry(path)).expect("writes");
+        store.manifest().files[path].seg.clone()
+    }
+
+    fn segment_files(dir: &Path) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(dir.join(DIR).join(SEG))
+            .map(|entries| {
+                entries
+                    .filter_map(std::result::Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn a_changed_file_keeps_its_old_segment_until_commit() {
+        // The manifest on disk names the old bytes until the new manifest
+        // replaces it, so the old bytes must exist until then
+        // (`specs/04-storage.md` § Concurrency).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+        let old = write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+        store.commit().expect("commits");
+
+        let new = write(&mut store, "a.rs", &[[1, 3, 0, 20]]);
+        assert_ne!(old, new, "different bytes, different name");
+        assert_eq!(segment_files(dir.path()), {
+            let mut both = vec![old.clone(), new.clone()];
+            both.sort();
+            both
+        });
+
+        store.commit().expect("commits");
+        assert_eq!(segment_files(dir.path()), vec![new]);
+        let rows = store.load().expect("loads");
+        assert_eq!(rows["def_span"].len(), 1);
+        assert_eq!(rows["def_span"].row(0).map(|r| r[2]), Some(3));
+    }
+
+    #[test]
+    fn the_same_bytes_again_are_the_same_segment_and_nothing_is_unlinked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+        let first = write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+        store.commit().expect("commits");
+        let again = write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+        assert_eq!(first, again);
+        store.commit().expect("commits");
+        assert_eq!(segment_files(dir.path()), vec![first]);
+        assert_eq!(store.load().expect("loads")["def_span"].len(), 1);
+    }
+
+    #[test]
+    fn a_forgotten_file_keeps_its_segment_until_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+        let seg = write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+        store.commit().expect("commits");
+
+        assert!(store.forget("a.rs"));
+        assert_eq!(segment_files(dir.path()), vec![seg]);
+        store.commit().expect("commits");
+        assert!(segment_files(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_crashed_run_leaves_a_readable_index_and_orphans_the_next_writer_sweeps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let committed = {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            let seg = write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+            // A run that wrote and forgot, then died before its commit.
+            write(&mut store, "a.rs", &[[1, 3, 0, 20]]);
+            write(&mut store, "b.rs", &[[5, 6, 0, 30]]);
+            store.forget("a.rs");
+            seg
+        };
+        std::fs::write(dir.path().join(DIR).join("manifest.json.tmp"), b"{ torn").expect("writes");
+
+        let store = Store::open(dir.path(), "blake3:test").expect("reopens");
+        let rows = store.load().expect("the old manifest still loads");
+        assert_eq!(rows["def_span"].row(0).map(|r| r[2]), Some(2));
+        assert_eq!(
+            store.sweep().expect("sweeps"),
+            3,
+            "two orphans and a manifest"
+        );
+        assert_eq!(segment_files(dir.path()), vec![committed]);
+        assert_eq!(store.sweep().expect("sweeps"), 0);
+    }
+
+    #[test]
+    fn a_torn_dictionary_append_is_cut_at_the_recorded_extents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let alpha = {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            let alpha = store.intern("alpha").expect("atom");
+            write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+            alpha
+        };
+        // A crash mid-append: three bytes of a string and its offset landed,
+        // nothing else did, and no manifest records them.
+        let bin = dir.path().join(DIR).join("dict.bin");
+        let idx = dir.path().join(DIR).join("dict.idx");
+        let mut data = std::fs::read(&bin).expect("bin");
+        let end = data.len() as u64 + 3;
+        data.extend_from_slice(b"bet");
+        std::fs::write(&bin, &data).expect("writes");
+        let mut table = std::fs::read(&idx).expect("idx");
+        table.extend_from_slice(&end.to_le_bytes());
+        std::fs::write(&idx, &table).expect("writes");
+
+        let mut store = Store::open(dir.path(), "blake3:test").expect("reopens past the tear");
+        assert_eq!(store.resolve(alpha), Some("alpha"));
+        let beta = store.intern("beta").expect("atom");
+        assert_eq!(store.resolve(beta), Some("beta"));
+        store.commit().expect("commits over the tear");
+
+        let store = Store::open(dir.path(), "blake3:test").expect("reopens");
+        assert_eq!(
+            store.resolve(beta),
+            Some("beta"),
+            "the tear was cut, not read through"
+        );
+        Dict::open(&dir.path().join(DIR)).expect("the whole file validates now");
     }
 
     #[test]
@@ -301,8 +497,8 @@ mod tests {
         store.put("a.rs", &mut seg, entry("a.rs")).expect("writes");
         store.commit().expect("commits");
 
-        std::fs::remove_file(dir.path().join(DIR).join(SEG).join(segment_name("a.rs")))
-            .expect("removes");
+        let seg = store.manifest().files["a.rs"].seg.clone();
+        std::fs::remove_file(dir.path().join(DIR).join(SEG).join(seg)).expect("removes");
         let err = store.load().expect_err("a named segment must exist");
         assert!(err.to_string().contains("codeintel index"), "{err}");
     }
@@ -314,7 +510,7 @@ mod tests {
         let seg = dir.path().join(DIR).join(SEG);
         std::fs::create_dir_all(&seg).expect("mkdir");
         std::fs::write(seg.join("abc.bin.tmp"), b"junk").expect("writes");
-        assert_eq!(store.sweep_tmp().expect("sweeps"), 1);
-        assert_eq!(store.sweep_tmp().expect("sweeps"), 0);
+        assert_eq!(store.sweep().expect("sweeps"), 1);
+        assert_eq!(store.sweep().expect("sweeps"), 0);
     }
 }

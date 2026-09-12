@@ -35,6 +35,9 @@ const IDX: &str = "dict.idx";
 #[derive(Debug)]
 pub struct Dict {
     bin: Mmap,
+    /// Bytes of `bin` a reader may trust. The mapping can run past this after
+    /// a torn append; nothing past it is ever read.
+    bin_len: usize,
     /// Start offsets, `len() + 1` of them; entry `i` spans `starts[i]..starts[i + 1]`.
     starts: Vec<u64>,
 }
@@ -47,21 +50,42 @@ impl Dict {
     /// offset table, an offset past the end of the data, or a span that is not
     /// UTF-8. Each is reported rather than read through.
     pub fn open(dir: &Path) -> Result<Option<Self>> {
+        Self::open_to(dir, u64::MAX, u64::MAX)
+    }
+
+    /// Open the dictionary trusting only the first `bin_len` bytes of the data
+    /// and `idx_len` bytes of the offset table — the extents the manifest
+    /// recorded at its last commit.
+    ///
+    /// A crash mid-append leaves both files longer than any manifest says.
+    /// Bounding the view to the recorded extents is the recovery
+    /// (`specs/04-storage.md` § Manifest); the writer truncates the files to
+    /// the same extents before it appends. Extents of zero mean no dictionary
+    /// worth reading, whatever is on disk.
+    ///
+    /// # Errors
+    /// As [`Self::open`]. A file *shorter* than its extent is corrupt.
+    pub fn open_to(dir: &Path, bin_len: u64, idx_len: u64) -> Result<Option<Self>> {
         let (bin_path, idx_path) = (dir.join(BIN), dir.join(IDX));
-        if !bin_path.exists() || !idx_path.exists() {
+        if !bin_path.exists() || !idx_path.exists() || idx_len == 0 {
             return Ok(None);
         }
         let bin = map(&bin_path)?;
         let idx = map(&idx_path)?;
-        if idx.len() % 8 != 0 {
+        let bin_len = usize::try_from(bin_len).map_or(bin.len(), |n| n.min(bin.len()));
+        let idx_len = usize::try_from(idx_len).map_or(idx.len(), |n| n.min(idx.len()));
+        if idx_len % 8 != 0 {
             return Err(corrupt(format!(
-                "{IDX} is {} bytes, which is not a whole number of u64 offsets",
-                idx.len()
+                "{IDX} is {idx_len} bytes, which is not a whole number of u64 offsets"
             )));
         }
-        let (offsets, _) = idx.as_chunks::<8>();
+        let (offsets, _) = idx.get(..idx_len).unwrap_or_default().as_chunks::<8>();
         let starts: Vec<u64> = offsets.iter().copied().map(u64::from_le_bytes).collect();
-        let dict = Self { bin, starts };
+        let dict = Self {
+            bin,
+            bin_len,
+            starts,
+        };
         dict.validate()?;
         Ok(Some(dict))
     }
@@ -72,7 +96,7 @@ impl Dict {
     /// cache that has been truncated should say so on the first query instead
     /// of handing back a different string than it stored.
     fn validate(&self) -> Result<()> {
-        let total = self.bin.len() as u64;
+        let total = self.bin_len as u64;
         let mut previous = 0u64;
         for (i, start) in self.starts.iter().enumerate() {
             if *start < previous {
@@ -111,10 +135,10 @@ impl Dict {
         self.len() == 0
     }
 
-    /// Bytes of string data.
+    /// Bytes of string data a reader may trust.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.bin.len()
+        self.bin_len
     }
 
     /// The string behind a string atom.
@@ -126,7 +150,7 @@ impl Dict {
     fn resolve_index(&self, i: usize) -> Option<&str> {
         let start = usize::try_from(*self.starts.get(i)?).ok()?;
         let end = usize::try_from(*self.starts.get(i + 1)?).ok()?;
-        core::str::from_utf8(self.bin.get(start..end)?).ok()
+        core::str::from_utf8(self.bin.get(..self.bin_len)?.get(start..end)?).ok()
     }
 
     /// Every string, in id order.
@@ -146,6 +170,9 @@ pub struct Interner {
     dict: Option<Dict>,
     added: Vec<String>,
     by_text: HashMap<String, Atom>,
+    /// Extents the files are cut back to before the next append, when this
+    /// interner was opened against a manifest's record of them.
+    trusted: Option<(u64, u64)>,
 }
 
 impl Interner {
@@ -155,8 +182,23 @@ impl Interner {
     /// # Errors
     /// I/O failure, or a malformed dictionary; see [`Dict::open`].
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
-        let dir = dir.into();
-        let dict = Dict::open(&dir)?;
+        Self::open_with(dir.into(), None)
+    }
+
+    /// Open the dictionary trusting only the recorded extents; see
+    /// [`Dict::open_to`]. A flush first truncates both files to them.
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    pub fn open_to(dir: impl Into<PathBuf>, bin_len: u64, idx_len: u64) -> Result<Self> {
+        Self::open_with(dir.into(), Some((bin_len, idx_len)))
+    }
+
+    fn open_with(dir: PathBuf, trusted: Option<(u64, u64)>) -> Result<Self> {
+        let dict = match trusted {
+            Some((bin_len, idx_len)) => Dict::open_to(&dir, bin_len, idx_len)?,
+            None => Dict::open(&dir)?,
+        };
         let mut by_text = HashMap::new();
         if let Some(d) = &dict {
             for (i, text) in d.iter().enumerate() {
@@ -171,6 +213,7 @@ impl Interner {
             dict,
             added: Vec::new(),
             by_text,
+            trusted,
         };
         // `01-facts.md`: the empty string is the missing-value atom, and it is
         // STR_MIN. Reserving it here means no caller has to remember to.
@@ -250,7 +293,6 @@ impl Interner {
         // and a remap is needed after the append regardless.
         self.dict = None;
 
-        let fresh = !bin_path.exists();
         let mut bin = OpenOptions::new()
             .create(true)
             .append(true)
@@ -259,6 +301,14 @@ impl Interner {
             .create(true)
             .append(true)
             .open(&idx_path)?;
+        // A torn append from a crashed run is cut off here, so the new
+        // strings start exactly where the manifest says the old ones end
+        // (`specs/04-storage.md` § Manifest).
+        if let Some((bin_len, idx_len)) = self.trusted.take() {
+            bin.set_len(bin_len)?;
+            idx.set_len(idx_len)?;
+        }
+        let fresh = idx.metadata()?.len() == 0;
         let mut offset = bin.metadata()?.len();
         if fresh {
             // Entry `i` spans `starts[i]..starts[i + 1]`, so a dictionary of `n`

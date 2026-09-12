@@ -251,11 +251,6 @@ fn index_cmd(
     let root = path
         .canonicalize()
         .with_context(|| format!("{} does not exist", path.display()))?;
-    let mut generation = 0;
-    if rebuild {
-        generation = index::discard(&root)?;
-    }
-
     if index::ignore_the_store(&root)? {
         eprintln!("codeintel: added `.codeintel/` to .gitignore — the store is derived");
     }
@@ -275,6 +270,12 @@ fn index_cmd(
         }
     };
 
+    // Under the lock, not before it: a concurrent auto-refresh that took the
+    // lock first would otherwise write into the directory being deleted.
+    let mut generation = 0;
+    if rebuild {
+        generation = index::discard(&root)?;
+    }
     let mut store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
     if rebuild {
         store.manifest_mut().dict_generation = generation;

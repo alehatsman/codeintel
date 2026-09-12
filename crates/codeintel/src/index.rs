@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use extract::scip::Ingest;
 use extract::walk::{Candidate, Skips};
 use extract::{Anchors, Counts, Extractor, tier_b, walk};
-use facts::{FileEntry, ScipInput, Store, segment_name};
+use facts::{FileEntry, ScipInput, Store};
 
 /// The SCIP index `index` reads when `--scip` is not given.
 pub const DEFAULT_SCIP: &str = "index.scip";
@@ -107,7 +107,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     let root = store.root().to_path_buf();
     let mut report = Report::default();
 
-    store.sweep_tmp().context("sweeping .tmp files")?;
+    store.sweep().context("sweeping what a crashed run left")?;
     let (found, skips) = walk(&root);
     report.skips = skips;
 
@@ -303,7 +303,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
                 path,
                 &mut segment,
                 FileEntry {
-                    seg: segment_name(path),
+                    seg: String::new(), // `put` names it from the bytes
                     mtime: mtime_of(&meta),
                     size: meta.len(),
                     hash: String::new(),
@@ -333,7 +333,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         .map(|(path, _)| path.clone())
         .collect();
     for path in vanished {
-        if store.forget(&path).context("dropping a vanished file")? {
+        if store.forget(&path) {
             report.removed += 1;
         }
     }
@@ -361,7 +361,23 @@ pub fn discard(root: &Path) -> Result<u64> {
         .flatten()
         .map_or(0, |m| m.dict_generation);
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
+        // Everything but the lock. The caller holds it, and a second writer
+        // that opened a fresh lock file would not contend with an fd on the
+        // unlinked one (`specs/04-storage.md` § Concurrency).
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
+        {
+            let path = entry?.path();
+            if path.file_name().is_some_and(|n| n == facts::lock::LOCK) {
+                continue;
+            }
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            }
+            .with_context(|| format!("removing {}", path.display()))?;
+        }
     }
     Ok(generation.saturating_add(1))
 }
@@ -476,7 +492,7 @@ fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
 
 fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
     FileEntry {
-        seg: segment_name(&candidate.path),
+        seg: String::new(), // `put` names it from the bytes
         mtime: candidate.mtime,
         size: candidate.size,
         hash: hash.to_string(),
