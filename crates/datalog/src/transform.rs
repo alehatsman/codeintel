@@ -34,7 +34,7 @@
 //! same safety and stratification checks as the original, and the fixpoint of
 //! that loop is the most demand this program can carry.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use crate::ast::{Expr, Literal, Pred, Program, Query, Rule};
 use crate::atom::Term;
@@ -335,15 +335,4 @@ fn bind(lit: &Literal, bound: &mut BTreeSet<u16>) {
         Literal::Assign { target, .. } => add(target),
         Literal::Neg(_) | Literal::Compare { .. } | Literal::Str { .. } => {}
     }
-}
-
-/// Arity per relation in a transformed program, for creating empty relations.
-#[must_use]
-pub fn arities(program: &Program) -> BTreeMap<String, usize> {
-    let mut out = BTreeMap::new();
-    for rule in &program.rules {
-        out.entry(rule.head.name.clone())
-            .or_insert(rule.head.args.len());
-    }
-    out
 }

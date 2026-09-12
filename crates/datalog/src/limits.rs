@@ -45,12 +45,11 @@ impl Default for Limits {
 impl Limits {
     /// The names a `cap` field can carry, for a consumer that wants to switch
     /// on them rather than parse prose.
-    pub const CAPS: [&'static str; 4] = [
-        "max_result_rows",
-        "max_result_bytes",
-        "max_derived_tuples",
-        "max_time_ms",
-    ];
+    /// Only the two truncating limits are here. `max_derived_tuples` and
+    /// `max_time_ms` abort the query with a diagnostic rather than trim an
+    /// answer, so they never appear in `cap`, and listing them told a consumer
+    /// to switch on a value it would never see.
+    pub const CAPS: [&'static str; 2] = ["max_result_rows", "max_result_bytes"];
 }
 
 /// What one evaluation cost. Not part of the answer, so timings here do not
@@ -65,6 +64,9 @@ pub struct Stats {
     /// How many strata ran.
     pub strata: usize,
     /// The literal order chosen per rule, as `head/arity: lit, lit, ...`.
+    ///
+    /// Bounded. A plan that hit the bound ends with a `(plan truncated at N
+    /// rules)` entry rather than simply stopping.
     pub plan: Vec<String>,
     /// Predicates the demand transformation rewrote, so an unexpectedly slow
     /// query can be diagnosed rather than guessed at.

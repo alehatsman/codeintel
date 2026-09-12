@@ -51,6 +51,30 @@ pub fn fingerprint() -> String {
         for marker in lang.doc_markers {
             hasher.update(marker.as_bytes());
         }
+        // The rest of the row. `04-storage.md` § Manifest says the whole
+        // `lang.rs` table, and it means it: changing `sig_stops` or
+        // `attribute_kinds` changes `def_sig` and `def_span` for every file,
+        // but with them omitted the fix reached only re-touched ones.
+        for kind in lang
+            .comment_kinds
+            .iter()
+            .chain(lang.attribute_kinds)
+            .chain(lang.keyword_kinds)
+        {
+            hasher.update(kind.as_bytes());
+        }
+        for stop in lang.sig_stops {
+            hasher.update(stop.to_string().as_bytes());
+        }
+    }
+    // The shared tables are as much the extractor as the per-language rows.
+    // `indexer` is deliberately absent from all of this: it changes no fact.
+    for name in lang::KINDS.iter().chain(lang::ROLES).chain(lang::TYPE_LIKE) {
+        hasher.update(name.as_bytes());
+    }
+    for (from, to) in scip::KIND_MAP {
+        hasher.update(from.as_bytes());
+        hasher.update(to.as_bytes());
     }
     format!("blake3:{}", hasher.finalize().to_hex())
 }

@@ -622,9 +622,12 @@ fn unify(args: &[Term], row: &[Atom], env: &mut Env, trail: &mut Vec<u16>) -> bo
 fn required_bindings(body: &[Literal]) -> Vec<BTreeSet<u16>> {
     let mut out = vec![BTreeSet::new(); body.len()];
 
-    // An adorned relation holds only the tuples reachable from its seeds, so a
-    // literal reading one must run with its bound positions bound. The name
-    // carries that contract; see `transform::adornment_of`.
+    // An adorned relation holds only the tuples its seeds demanded — `p@bf` is
+    // `p` intersected with the seeded bindings — so reading one with its bound
+    // positions unbound scans every seeded tuple and filters afterwards. Same
+    // answer, computed wide: this wait is a cost constraint, unlike the
+    // aggregate one above, and it is kept because that width is exactly what
+    // the demand transformation exists to remove. See `transform::adornment_of`.
     for (i, lit) in body.iter().enumerate() {
         let Literal::Pos(pred) = lit else { continue };
         let Some(adornment) = crate::transform::adornment_of(&pred.name) else {

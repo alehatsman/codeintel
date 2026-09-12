@@ -81,7 +81,7 @@ the ones that get broken by a well-meaning commit:
 ## Before adding anything, answer these
 
 1. Can it be a Datalog rule in `rules/stdlib.dl`? → Then it is one.
-2. Does it add a CLI verb or MCP tool? → The budget is 6 and 1. What are you
+2. Does it add a CLI verb or MCP tool? → The budget is 5 and 1. What are you
    deleting?
 3. Does it need a new dependency? → Justify it in research.md §6.
 4. Does it compute a number that ranks code? → No. See invariant 4.

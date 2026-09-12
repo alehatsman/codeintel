@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::atom::Atom;
 use crate::relation::Relation;
 
 /// Named relations, base and derived alike.
@@ -23,17 +22,6 @@ impl Db {
         self.rels.insert(name.into(), relation);
     }
 
-    /// Add one tuple to `name`, creating the relation at that arity if needed.
-    ///
-    /// Returns false when the row's width disagrees with the existing arity.
-    pub fn push(&mut self, name: &str, row: &[Atom]) -> bool {
-        let rel = self
-            .rels
-            .entry(name.to_string())
-            .or_insert_with(|| Relation::new(row.len().max(1)));
-        rel.push(row)
-    }
-
     /// The relation, if the store has one.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&Relation> {
@@ -45,13 +33,6 @@ impl Db {
         self.rels
             .entry(name.to_string())
             .or_insert_with(|| Relation::new(arity))
-    }
-
-    /// Sort and deduplicate every relation.
-    pub fn settle(&mut self) {
-        for rel in self.rels.values_mut() {
-            rel.settle();
-        }
     }
 
     /// Every relation name and arity, in name order.

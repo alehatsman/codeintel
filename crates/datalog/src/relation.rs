@@ -160,12 +160,6 @@ impl Relation {
         out.settle();
         out
     }
-
-    /// Drop every tuple, keeping the allocation and the arity.
-    pub fn clear(&mut self) {
-        self.data.clear();
-        self.sorted = true;
-    }
 }
 
 #[cfg(test)]

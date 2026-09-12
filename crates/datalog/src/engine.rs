@@ -23,6 +23,10 @@ use crate::strata::{Strata, negative_cycle, reachable, stratify};
 use crate::symbols::Symbols;
 use crate::transform::transform;
 
+/// Rule plans kept in [`Stats::plan`]. Past this the plan carries a truncation
+/// marker instead of more rules — `stats` is a diagnostic, not a transcript.
+const PLAN_CAP: usize = 64;
+
 /// One answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -464,12 +468,21 @@ impl Engine {
                             )?;
                         }
                     } else {
-                        if iteration == 0 && stats.plan.len() < 64 {
-                            stats.plan.push(format!(
-                                "{}/{arity}: {}",
-                                rule.head.name,
-                                plan_of(&solver, &rule.body)
-                            ));
+                        if iteration == 0 {
+                            // Invariant 5: a truncated plan says so. A reader
+                            // who cannot tell a 64-rule plan from a 64-rule
+                            // prefix is reading a different query's shape.
+                            match stats.plan.len() {
+                                0..PLAN_CAP => stats.plan.push(format!(
+                                    "{}/{arity}: {}",
+                                    rule.head.name,
+                                    plan_of(&solver, &rule.body)
+                                )),
+                                PLAN_CAP => stats
+                                    .plan
+                                    .push(format!("(plan truncated at {PLAN_CAP} rules)")),
+                                _ => {}
+                            }
                         }
                         solver.run(&rule.body, &rule.head.args, rule.vars.len(), None, out)?;
                     }

@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 ///
 /// `Union` maps to `type`, not `enum`. Tier A's `kind_remap` agrees, so the
 /// anchor join never has to reconcile a kind.
-const KIND_MAP: &[(&str, &str)] = &[
+pub(crate) const KIND_MAP: &[(&str, &str)] = &[
     ("Function", "function"),
     ("Macro", "macro"),
     ("Method", "method"),

@@ -416,7 +416,16 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
 /// Multiple indexes are ingested independently — symbol strings are globally
 /// unique by construction, so there is no merge logic beyond concatenation
 /// (`specs/02-extraction.md` § Acquisition).
+///
+/// Sorted and deduplicated exactly as [`stat_scip`] sorts its inputs. `tool`
+/// and any symbol two indexes both describe are last-wins, so reading in CLI
+/// order made `--scip a --scip b` and `--scip b --scip a` write different
+/// manifests from the same files.
 fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<Ingest> {
+    let mut paths: Vec<&PathBuf> = paths.iter().collect();
+    let key = |p: &PathBuf| p.display().to_string().replace('\\', "/");
+    paths.sort_by_key(|p| key(p));
+    paths.dedup_by_key(|p| key(p));
     let mut merged = Ingest::default();
     for path in paths {
         let absolute = absolute(root, path);

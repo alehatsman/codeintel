@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Cmp, Expr, Literal, Pred, Program, Query, Rule};
+use crate::ast::{Expr, Literal, Pred, Program, Query, Rule};
 use crate::atom::Term;
 use crate::diag::{Diagnostic, Result, Status};
 
@@ -496,10 +496,4 @@ fn var_name(vars: &[String], v: u16) -> String {
     vars.get(usize::from(v))
         .cloned()
         .unwrap_or_else(|| format!("?{v}"))
-}
-
-/// True when this comparison is one the runtime restricts to integers.
-#[must_use]
-pub const fn is_integer_comparison(op: Cmp) -> bool {
-    !op.is_identity()
 }
