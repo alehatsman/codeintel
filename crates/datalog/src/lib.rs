@@ -10,12 +10,16 @@
 
 pub mod ast;
 pub mod atom;
+pub mod check;
 pub mod diag;
 pub mod lex;
 pub mod parse;
+pub mod relation;
+pub mod strata;
 pub mod symbols;
 
 pub use atom::{Atom, Term};
 pub use diag::{Diagnostic, Status};
 pub use parse::parse;
+pub use relation::Relation;
 pub use symbols::{Strings, Symbols};
