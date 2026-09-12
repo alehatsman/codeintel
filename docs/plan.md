@@ -370,6 +370,20 @@ printed command is copy-pasteable and the user runs it.
    the dimension that actually grows; asserting only the three that do not makes
    the founding thesis unfalsifiable.
 
+   **Open conflict, to be resolved here.** `rules/stdlib.dl` shipped at M1 with
+   **37** named predicates, and every one of them is specified in
+   [01-facts.md](../specs/01-facts.md) § Derived relations. So the cap and the
+   fact schema disagree, and they have disagreed since both were written. M4
+   either cuts rules or amends the cap with a written reason — but it does not
+   get to leave the assertion out, because that is the only budget the founding
+   thesis is falsifiable against.
+
+6. Render rows in lexicographic order of their printed text
+   ([05-surface.md](../specs/05-surface.md) § `query`), after the row cap. The
+   engine sorts by atom, which is insertion order, and a cold index and an
+   incremental one number the same string differently — so engine order alone
+   would make output depend on how the index was built.
+
 **Done when**
 - Every rule in `stdlib.dl` has a fixture test with a hand-verified answer.
 - Every question in [research.md](research.md) §1a's 34-method list is

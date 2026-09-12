@@ -245,7 +245,15 @@ rather than per tuple.
 Non-negotiable (invariant 8, [00-overview.md](00-overview.md)).
 
 - All relations sorted by column order; iteration follows storage order.
-- Query results sorted by the goal's term order before output.
+- Query results sorted by the goal's term order before output. **Term order is
+  atom order, which is dictionary order — insertion order, not lexicographic.**
+  It is total and deterministic for a given index, but a cold index and an
+  incrementally-updated one assign different ids to the same string
+  ([docs/plan.md](../docs/plan.md) M2, incremental equivalence), so the same
+  repo state can print the same rows in a different order. **The surface layer
+  therefore sorts rendered rows by their printed text** before output
+  ([05-surface.md](05-surface.md)); the engine's atom order is the cheap,
+  stable internal one.
 - Literal reordering by the cost heuristic is a **pure function of the rule and
   the current relation sizes**, and relation sizes are deterministic, so the
   plan is deterministic.

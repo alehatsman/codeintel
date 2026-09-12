@@ -117,8 +117,18 @@ the assumed case, not the exception.
 
 Text format is TSV-ish, one row per line, aligned, designed to be read by a
 human and grepped by an agent. JSON is
-`{ status, columns, rows, truncated, cap, stats }`. Row-order is the engine's
-deterministic order ([03-datalog.md](03-datalog.md) § Determinism).
+`{ status, columns, rows, truncated, cap, stats }`.
+
+**Row order is lexicographic over the rendered row**, applied here rather than
+in the engine. The engine's own order is by atom, which is dictionary order —
+insertion order ([03-datalog.md](03-datalog.md) § Determinism). That is total
+and deterministic for one index, but a cold index and an incrementally-updated
+one assign different atom ids to the same string, so the same repo state would
+print the same rows in a different order depending on how the index was built.
+Sorting the rendered text costs one sort per query and makes invariant 8 hold
+across index paths, which is the property a consumer actually relies on. The
+sort runs **after** the row cap, so a truncated result is still the engine's
+stable prefix rather than a re-sorted sample of it.
 
 **Symbol rendering.** A raw `SymId` is a ~68-character SCIP string — 17 tokens,
 unreadable, and impossible for an agent to retype correctly. In text format a
