@@ -34,6 +34,10 @@ enum Command {
         /// Restrict to these languages. Repeatable.
         #[arg(long = "lang")]
         langs: Vec<String>,
+        /// A SCIP index to ingest. Repeatable. Defaults to `./index.scip` if
+        /// one is there.
+        #[arg(long = "scip")]
+        scip: Vec<PathBuf>,
     },
     /// Evaluate a Datalog program against the index.
     Query {
@@ -79,7 +83,8 @@ fn run() -> Result<ExitCode> {
             path,
             rebuild,
             langs,
-        } => index_cmd(&path, rebuild, langs),
+            scip,
+        } => index_cmd(&path, rebuild, langs, scip),
         Command::Query {
             program,
             path,
@@ -90,7 +95,12 @@ fn run() -> Result<ExitCode> {
     }
 }
 
-fn index_cmd(path: &std::path::Path, rebuild: bool, langs: Vec<String>) -> Result<ExitCode> {
+fn index_cmd(
+    path: &std::path::Path,
+    rebuild: bool,
+    langs: Vec<String>,
+    scip: Vec<PathBuf>,
+) -> Result<ExitCode> {
     let root = path
         .canonicalize()
         .with_context(|| format!("{} does not exist", path.display()))?;
@@ -122,12 +132,25 @@ fn index_cmd(path: &std::path::Path, rebuild: bool, langs: Vec<String>) -> Resul
     if rebuild {
         store.manifest_mut().dict_generation = generation;
     }
+    // `--scip` if given, else `./index.scip` when it is there. Never implicit
+    // beyond that: nothing is executed, only read.
+    let scip = if scip.is_empty() {
+        let default = root.join(index::DEFAULT_SCIP);
+        if default.exists() {
+            vec![PathBuf::from(index::DEFAULT_SCIP)]
+        } else {
+            Vec::new()
+        }
+    } else {
+        scip
+    };
     let report = index::refresh(
         &mut store,
         &Plan {
             rebuild,
             langs,
             deadline: None,
+            scip,
         },
     )?;
     drop(held);
@@ -159,10 +182,71 @@ fn index_cmd(path: &std::path::Path, rebuild: bool, langs: Vec<String>) -> Resul
         // single most confusing failure this tool can have.
         eprintln!("  skipped: {}", skipped.join(", "));
     }
-    // Tier B is M3. Until then, say so with the command that closes the gap
-    // rather than leaving the user to find it.
-    eprintln!("  no SCIP index ingested (tier B lands at M3): rust-analyzer scip .");
+    report_scip(&report);
     Ok(ExitCode::SUCCESS)
+}
+
+/// The tier-B half of the summary: what was ingested, how well it joined, and
+/// — when nothing was — the exact command that would close the gap.
+fn report_scip(report: &index::Report) {
+    if report.scip.is_empty() {
+        let mut langs: Vec<&str> = report
+            .langs
+            .iter()
+            .filter_map(|name| extract::lang::by_name(name).map(|l| l.indexer))
+            .collect();
+        langs.sort_unstable();
+        langs.dedup();
+        if langs.is_empty() {
+            eprintln!("  no SCIP index: tier A only, so every reference is provenance \"name\"");
+            return;
+        }
+        // The literal line, not a description of one.
+        eprintln!(
+            "  no SCIP index: tier A only, so every reference is provenance \"name\". build one:"
+        );
+        for command in langs {
+            eprintln!("    {command}");
+        }
+        return;
+    }
+
+    for input in &report.scip {
+        eprintln!(
+            "  scip: {} ({}) — {} documents",
+            input.path,
+            if input.tool.is_empty() {
+                "unknown tool"
+            } else {
+                &input.tool
+            },
+            input.documents
+        );
+    }
+    eprintln!(
+        "  tier B: {} refs, {} resolved, {} defs tier A missed",
+        report.scip_counts.refs, report.scip_counts.resolved, report.scip_counts.only
+    );
+    if let Some(rate) = report.anchor_rate() {
+        eprintln!(
+            "  anchored: {}/{} defs ({rate:.1}%)",
+            report.anchored, report.counts.defs
+        );
+    }
+    if !report.scip_skipped.is_empty() {
+        // Never silent: an approximate column breaks every edit built on it.
+        eprintln!("  scip skipped {} document(s):", report.scip_skipped.len());
+        for (path, why) in report.scip_skipped.iter().take(5) {
+            eprintln!("    {path}: {why}");
+        }
+    }
+    if !report.scip_stale.is_empty() {
+        eprintln!(
+            "  status=scip-stale — {} file(s) changed after the SCIP index was built; their \
+             `name_ref` rows are fresh and their `scip_ref` rows are not",
+            report.scip_stale.len()
+        );
+    }
 }
 
 fn query_cmd(

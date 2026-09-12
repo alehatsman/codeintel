@@ -20,6 +20,12 @@ pub enum Status {
     /// Sources changed and the refresh was skipped, ran out of time, or the
     /// schema does not match.
     Stale,
+    /// The goal's dependency closure reaches a relation only SCIP populates,
+    /// and no SCIP index was ingested.
+    NoScip,
+    /// Sources changed after the SCIP index was built, so `name_ref` is fresh
+    /// and `scip_ref` is not.
+    ScipStale,
     /// Parse or safety failure.
     InvalidQuery,
     /// Negation cycle.
@@ -43,6 +49,8 @@ impl Status {
             Self::Truncated => "truncated",
             Self::NoIndex => "no-index",
             Self::Stale => "stale",
+            Self::NoScip => "no-scip",
+            Self::ScipStale => "scip-stale",
             Self::InvalidQuery => "invalid-query",
             Self::Unstratified => "unstratified",
             Self::Timeout => "timeout",
@@ -54,11 +62,17 @@ impl Status {
 
     /// True when the query actually ran, whatever else happened.
     ///
-    /// `stale` and `truncated` are answers about a known-imperfect index, not
-    /// failures: the caller gets rows and is told what is wrong with them.
+    /// `stale`, `truncated`, `no-scip` and `scip-stale` are answers about a
+    /// known-imperfect index, not failures: the caller gets rows and is told
+    /// what is wrong with them. `no-scip` in particular is the difference
+    /// between "your code does not do this" and "this index cannot see it",
+    /// which is invariant 6 in its sharpest form.
     #[must_use]
     pub const fn answered(self) -> bool {
-        matches!(self, Self::Ok | Self::Truncated | Self::Stale)
+        matches!(
+            self,
+            Self::Ok | Self::Truncated | Self::Stale | Self::NoScip | Self::ScipStale
+        )
     }
 
     /// The status a `datalog` diagnostic maps to.
@@ -94,6 +108,8 @@ mod tests {
             Status::Truncated,
             Status::NoIndex,
             Status::Stale,
+            Status::NoScip,
+            Status::ScipStale,
             Status::InvalidQuery,
             Status::Unstratified,
             Status::Timeout,
@@ -110,11 +126,14 @@ mod tests {
     }
 
     #[test]
-    fn only_the_three_that_carry_rows_count_as_answered() {
+    fn only_the_statuses_that_carry_rows_count_as_answered() {
         assert!(Status::Ok.answered());
         assert!(Status::Truncated.answered());
         assert!(Status::Stale.answered());
+        assert!(Status::NoScip.answered());
+        assert!(Status::ScipStale.answered());
         assert!(!Status::NoIndex.answered());
         assert!(!Status::Locked.answered());
+        assert!(!Status::Corrupt.answered());
     }
 }

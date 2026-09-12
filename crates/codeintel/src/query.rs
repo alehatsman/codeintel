@@ -22,6 +22,16 @@ pub const STDLIB: &str = include_str!("../../../rules/stdlib.dl");
 /// How long auto-refresh may take before the answer is `stale`.
 pub const MAX_REFRESH_MS: u64 = 2_000;
 
+/// Base relations only tier B can populate.
+///
+/// A goal whose dependency **closure** reaches one of these, against an index
+/// with no SCIP, gets `no-scip` rather than `ok` with zero rows. The closure,
+/// not the literal syntax: `?- impact_of(S, C).` mentions none of them, and the
+/// README's own headline query would otherwise return `ok` and nothing on a
+/// fresh install — the exact failure invariant 6 exists to prevent
+/// (`docs/plan.md` M3).
+pub const SCIP_BACKED: &[&str] = &["scip_ref", "resolved", "implements", "extern"];
+
 /// What the caller asked for.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -65,6 +75,8 @@ pub struct Answer {
     /// which on a seeded recursive rule is the difference between a seeded
     /// traversal and all-pairs reachability.
     pub transformed: Vec<String>,
+    /// Base relations the goal's dependency closure reaches.
+    pub depends: Vec<String>,
 }
 
 impl Answer {
@@ -80,6 +92,7 @@ impl Answer {
             elapsed_ms: 0,
             refreshed: 0,
             transformed: Vec::new(),
+            depends: Vec::new(),
         }
     }
 }
@@ -111,6 +124,8 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
     }
 
     let (mut status, mut hint, refreshed) = refresh(&mut store, root, options)?;
+    let scip = ScipState::of(store.manifest());
+    let langs = indexers(store.manifest());
 
     let relations = match store.load() {
         Ok(relations) => relations,
@@ -152,6 +167,11 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
             "{} fired; raise it with --limit or narrow the query",
             result.cap.unwrap_or("a cap")
         ));
+    } else if status == Status::Ok
+        && let Some((scip_status, scip_hint)) = scip.verdict(&result.stats.depends, &langs)
+    {
+        status = scip_status;
+        hint = Some(scip_hint);
     }
     Ok(Answer {
         status,
@@ -164,7 +184,94 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         elapsed_ms: result.stats.elapsed_ms,
         refreshed,
         transformed: result.stats.transformed.clone(),
+        depends: result.stats.depends.clone(),
     })
+}
+
+/// What the index knows about its SCIP inputs, and what that means for an
+/// answer.
+#[derive(Debug, Default)]
+struct ScipState {
+    /// True when no SCIP index was ingested.
+    absent: bool,
+    /// Indexed files modified after the newest SCIP input was built.
+    stale: Vec<String>,
+}
+
+impl ScipState {
+    fn of(manifest: &facts::Manifest) -> Self {
+        let Some(newest) = manifest.scip.iter().map(|i| i.mtime).max() else {
+            return Self {
+                absent: true,
+                stale: Vec::new(),
+            };
+        };
+        Self {
+            absent: false,
+            stale: manifest
+                .files
+                .iter()
+                .filter(|(_, entry)| entry.mtime > newest)
+                .map(|(path, _)| path.clone())
+                .collect(),
+        }
+    }
+
+    /// The status this answer deserves, or `None` when SCIP has nothing to say
+    /// about it.
+    fn verdict(&self, depends: &[String], langs: &[&'static str]) -> Option<(Status, String)> {
+        if !depends.iter().any(|d| SCIP_BACKED.contains(&d.as_str())) {
+            return None;
+        }
+        let commands = if langs.is_empty() {
+            "build a SCIP index for this repository".to_string()
+        } else {
+            format!("run: {}", langs.join(" && "))
+        };
+        if self.absent {
+            return Some((
+                Status::NoScip,
+                format!(
+                    "this query depends on {}, which only a SCIP index populates; the answer \
+                     above is what tier A alone can see. {commands}",
+                    depends
+                        .iter()
+                        .filter(|d| SCIP_BACKED.contains(&d.as_str()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ));
+        }
+        if self.stale.is_empty() {
+            return None;
+        }
+        let mut named: Vec<&str> = self.stale.iter().map(String::as_str).take(5).collect();
+        if self.stale.len() > named.len() {
+            named.push("...");
+        }
+        Some((
+            Status::ScipStale,
+            format!(
+                "{} file(s) changed after the SCIP index was built, so their `name_ref` rows are \
+                 fresh and their `scip_ref` rows are not: {}. {commands}",
+                self.stale.len(),
+                named.join(", ")
+            ),
+        ))
+    }
+}
+
+/// The indexer command for every language the index holds files in.
+fn indexers(manifest: &facts::Manifest) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = manifest
+        .files
+        .values()
+        .filter_map(|entry| extract::lang::by_name(&entry.lang).map(|l| l.indexer))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Bring the index up to date, within the refresh budget.
@@ -238,6 +345,7 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
             "elapsed_ms": answer.elapsed_ms,
             "refreshed": answer.refreshed,
             "transformed": answer.transformed,
+            "depends": answer.depends,
         },
     })
 }

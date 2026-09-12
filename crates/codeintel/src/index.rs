@@ -7,13 +7,17 @@
 //! its work and paying the full budget forever.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use extract::scip::Ingest;
 use extract::walk::{Candidate, Skips};
-use extract::{Counts, Extractor, walk};
-use facts::{FileEntry, Store, segment_name};
+use extract::{Anchors, Counts, Extractor, tier_b, walk};
+use facts::{FileEntry, ScipInput, Store, segment_name};
+
+/// The SCIP index `index` reads when `--scip` is not given.
+pub const DEFAULT_SCIP: &str = "index.scip";
 
 /// What to do.
 #[derive(Debug, Clone, Default)]
@@ -24,6 +28,13 @@ pub struct Plan {
     pub langs: Vec<String>,
     /// Stop starting new files after this instant and report the rest stale.
     pub deadline: Option<Instant>,
+    /// SCIP indexes to ingest. Empty means tier A only.
+    ///
+    /// All-or-nothing by specification: a SCIP index carries cross-file
+    /// references, so a changed one invalidates the reference graph globally
+    /// and every file is re-extracted (`specs/04-storage.md`
+    /// § Incremental reindex).
+    pub scip: Vec<PathBuf>,
 }
 
 /// What happened.
@@ -43,6 +54,19 @@ pub struct Report {
     pub stale: Vec<String>,
     /// Facts produced, by shape.
     pub counts: Counts,
+    /// Tier-B facts produced, by shape.
+    pub scip_counts: tier_b::Counts,
+    /// Tier-A definitions that adopted a SCIP identity.
+    pub anchored: usize,
+    /// Languages found in the tree, so `index` can name the indexer for each.
+    pub langs: BTreeSet<String>,
+    /// SCIP inputs ingested.
+    pub scip: Vec<ScipInput>,
+    /// SCIP documents dropped, with the reason.
+    pub scip_skipped: Vec<(String, &'static str)>,
+    /// Indexed files modified after the newest SCIP input was built. Their
+    /// `name_ref` rows are fresh and their `scip_ref` rows are not.
+    pub scip_stale: Vec<String>,
     /// Wall time.
     pub elapsed_ms: u128,
 }
@@ -52,6 +76,24 @@ impl Report {
     #[must_use]
     pub fn is_stale(&self) -> bool {
         !self.stale.is_empty()
+    }
+
+    /// How many tier-A definitions adopted a SCIP identity, as a percentage.
+    ///
+    /// The anchor rate is the health metric for the join: a drop means it is
+    /// drifting, and `index` prints it so that the drop is visible before a
+    /// query built on it is wrong (`specs/02-extraction.md` § Validation).
+    #[must_use]
+    pub fn anchor_rate(&self) -> Option<f64> {
+        (self.counts.defs > 0 && !self.scip.is_empty()).then(|| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a percentage for a human; the counts are in the millions at most"
+            )]
+            {
+                self.anchored as f64 * 100.0 / self.counts.defs as f64
+            }
+        })
     }
 }
 
@@ -79,18 +121,33 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     let fingerprint = extract::fingerprint();
     let extractor_changed = store.manifest().extractor_fingerprint != fingerprint;
 
+    let (ingest, inputs) = read_scip(&root, &plan.scip)?;
+    // SCIP is all-or-nothing: a reference that *disappeared* from a document
+    // leaves no evidence anywhere else, so there is nothing to drive its
+    // removal per-document. A changed input re-extracts everything
+    // (specs/04-storage.md § Incremental reindex).
+    let scip_changed = store.manifest().scip != inputs;
+    let invalidated = extractor_changed || scip_changed;
+    report.scip.clone_from(&inputs);
+    report.scip_skipped.clone_from(&ingest.skipped);
+    let newest_scip = inputs.iter().map(|i| i.mtime).max();
+
     let mut extractors: HashMap<&'static str, Extractor> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
 
     for candidate in wanted {
         seen.insert(candidate.path.clone());
+        report.langs.insert(candidate.lang.name.to_string());
         if plan.deadline.is_some_and(|d| Instant::now() >= d) {
             report.stale.push(candidate.path);
             continue;
         }
         let known = store.manifest().files.get(&candidate.path);
+        if newest_scip.is_some_and(|scip| candidate.mtime > scip) {
+            report.scip_stale.push(candidate.path.clone());
+        }
         if !plan.rebuild
-            && !extractor_changed
+            && !invalidated
             && known.is_some_and(|e| e.looks_unchanged(candidate.mtime, candidate.size))
         {
             report.unchanged += 1;
@@ -104,7 +161,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             continue;
         };
         let hash = facts::content_hash(&bytes);
-        if !plan.rebuild && !extractor_changed && known.is_some_and(|e| e.hash == hash) {
+        if !plan.rebuild && !invalidated && known.is_some_and(|e| e.hash == hash) {
             // Touched but not changed: refresh the fast-path fields so the next
             // run does not hash it again.
             let mut entry = known
@@ -131,17 +188,80 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
                     .with_context(|| format!("preparing the {} extractor", candidate.lang.name))?,
             ),
         };
-        let (mut segment, counts) = extractor
-            .file(&candidate.path, &src, store.interner_mut())
+        // Tier A runs first, entirely, then tier B — the join needs tier A's
+        // `def_name` index to anchor against (specs/02-extraction.md).
+        let anchors = Anchors::of(&ingest, &candidate.path);
+        let mut extracted = extractor
+            .file(&candidate.path, &src, store.interner_mut(), &anchors)
             .with_context(|| format!("extracting {}", candidate.path))?;
-        report.counts.defs += counts.defs;
-        report.counts.refs += counts.refs;
-        report.counts.imports += counts.imports;
+        report.counts.defs += extracted.counts.defs;
+        report.counts.refs += extracted.counts.refs;
+        report.counts.imports += extracted.counts.imports;
+        report.anchored += extracted.anchored;
 
-        let entry = new_entry(&candidate, &hash);
+        let scip_counts = tier_b::emit(
+            &mut extracted.segment,
+            &ingest,
+            &candidate.path,
+            Some(&src),
+            &extracted.defs,
+            store.interner_mut(),
+        )
+        .with_context(|| format!("ingesting SCIP facts for {}", candidate.path))?;
+        add(&mut report.scip_counts, scip_counts);
+
+        let mut entry = new_entry(&candidate, &hash);
+        if !anchors.is_empty() || scip_counts.refs > 0 {
+            entry.tiers.push("scip".to_string());
+        }
+        let mut segment = extracted.segment;
         store
             .put(&candidate.path, &mut segment, entry)
             .with_context(|| format!("writing the segment for {}", candidate.path))?;
+        report.indexed += 1;
+    }
+
+    // Files only tier B covers: an unsupported language, or one the walk does
+    // not reach. They get an ordinary per-file segment rather than the single
+    // `_scip.bin` blob in specs/04-storage.md § Layout — see the note there.
+    for (path, doc) in &ingest.docs {
+        if seen.contains(path) || plan.deadline.is_some_and(|d| Instant::now() >= d) {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(root.join(path)) else {
+            // SCIP names a file that is not here. Emitting facts about it would
+            // answer questions about source nobody can open.
+            continue;
+        };
+        seen.insert(path.clone());
+        let mut segment = facts::Segment::new();
+        let file = store.intern(path).context("the dictionary is full")?;
+        let lang = store.intern(&doc.lang).context("the dictionary is full")?;
+        segment.push("file", &[file, lang]);
+        let scip_counts = tier_b::emit(
+            &mut segment,
+            &ingest,
+            path,
+            std::fs::read_to_string(root.join(path)).ok().as_deref(),
+            &[],
+            store.interner_mut(),
+        )
+        .with_context(|| format!("ingesting SCIP facts for {path}"))?;
+        add(&mut report.scip_counts, scip_counts);
+        store
+            .put(
+                path,
+                &mut segment,
+                FileEntry {
+                    seg: segment_name(path),
+                    mtime: mtime_of(&meta),
+                    size: meta.len(),
+                    hash: String::new(),
+                    lang: doc.lang.clone(),
+                    tiers: vec!["scip".to_string()],
+                },
+            )
+            .with_context(|| format!("writing the segment for {path}"))?;
         report.indexed += 1;
     }
 
@@ -161,6 +281,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     }
 
     store.manifest_mut().extractor_fingerprint = fingerprint;
+    store.manifest_mut().scip = inputs;
     store.commit().context("committing the index")?;
     report.elapsed_ms = started.elapsed().as_millis();
     Ok(report)
@@ -218,6 +339,55 @@ pub fn ignore_the_store(root: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// Read every SCIP input and merge them.
+///
+/// Multiple indexes are ingested independently — symbol strings are globally
+/// unique by construction, so there is no merge logic beyond concatenation
+/// (`specs/02-extraction.md` § Acquisition). A missing input is not an error:
+/// `./index.scip` is a default, and its absence just means tier A only.
+fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, Vec<ScipInput>)> {
+    let mut merged = Ingest::default();
+    let mut inputs = Vec::new();
+    for path in paths {
+        let absolute = if path.is_absolute() {
+            path.clone()
+        } else {
+            root.join(path)
+        };
+        let Ok(meta) = std::fs::metadata(&absolute) else {
+            continue;
+        };
+        let one = Ingest::read(&absolute, root)
+            .with_context(|| format!("reading {}", absolute.display()))?;
+        inputs.push(ScipInput {
+            path: path.display().to_string().replace('\\', "/"),
+            tool: one.tool.clone(),
+            mtime: mtime_of(&meta),
+            documents: one.docs.len() as u64,
+        });
+        merged.tool = one.tool;
+        merged.docs.extend(one.docs);
+        merged.symbols.extend(one.symbols);
+        merged.externs.extend(one.externs);
+        merged.skipped.extend(one.skipped);
+    }
+    inputs.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok((merged, inputs))
+}
+
+fn mtime_of(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
+fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
+    into.refs += counts.refs;
+    into.resolved += counts.resolved;
+    into.only += counts.only;
+}
+
 fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
     FileEntry {
         seg: segment_name(&candidate.path),
@@ -225,7 +395,6 @@ fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
         size: candidate.size,
         hash: hash.to_string(),
         lang: candidate.lang.name.to_string(),
-        // Tier B lands at M3; nothing here has a SCIP counterpart yet.
         tiers: vec!["ts".to_string()],
     }
 }
