@@ -117,9 +117,30 @@ Read in this order.
 | [specs/03-datalog.md](specs/03-datalog.md) | Query language, engine, evaluation, limits |
 | [specs/04-storage.md](specs/04-storage.md) | Interner, segments, incremental reindex |
 | [specs/05-surface.md](specs/05-surface.md) | CLI and MCP contracts |
+| [docs/cookbook.md](docs/cookbook.md) | Conformance rules, orientation, dex's 34 methods as queries |
 | [docs/plan.md](docs/plan.md) | Ordered milestones with done-when criteria |
 | [docs/research.md](docs/research.md) | Findings, rejected options, evidence |
+| [docs/agent-eval.md](docs/agent-eval.md) | Can an agent actually write this Datalog? Measured. |
 | [CLAUDE.md](CLAUDE.md) | Rules for agents implementing this |
+
+## Can an agent actually use it?
+
+That is the load-bearing bet, so it is measured rather than asserted. An agent
+reads `codeintel schema` and nothing else, writes one query per question, and is
+scored on the set of values its query returns. Three samples per question, a
+fresh agent each time.
+
+| Set | Score | Index |
+|---|---:|---|
+| 30 questions, real extracted facts | **88/90** | `tests/fixtures/rust/` with SCIP |
+| 15 held-out questions, a repo no fixture comes from | **43/45** | this repository, **no SCIP** |
+
+The second row is also the no-SCIP number: 43/45 with tier A alone.
+
+Three of the four failures are the same mistake — `long_def(S, N)` reads as a
+rule parameterised by `N` when `N` is an output and the threshold is fixed at
+80. That is a finding about the schema copy, not a score to be proud of, and
+[docs/agent-eval.md](docs/agent-eval.md) records every failure verbatim.
 
 ## Languages
 

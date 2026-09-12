@@ -100,3 +100,96 @@ an identified cause in the copy, is not evidence that the schema is wrong.
 - **The questions name symbol ids verbatim.** A real agent would have to find
   them first — usually with `innermost_at` or a `def` lookup, which Q21 does
   cover end to end.
+
+---
+
+# Agent eval — M4
+
+The M1 eval ran against hand-written facts and a hand-written schema page. This
+one runs against **real extracted facts** and the **generated** `codeintel
+schema`, which is the thing M4 built. Two sets, because a re-run alone would only
+show that nothing regressed.
+
+## Result
+
+| Set | Round 1 | Round 2 | Round 3 | Total | Gate |
+|---|---:|---:|---:|---:|---|
+| **A** — the M1 30, retargeted to real facts | 29/30 | 30/30 | 29/30 | **88/90** | ≥ 24/30 ✅ |
+| **B** — 15 held-out, on a repo no fixture comes from | 15/15 | 14/15 | 14/15 | **43/45** | ≥ 12/15 ✅ |
+
+Set A is `tests/fixtures/rust/` indexed with its committed `index.scip`, so SCIP
+symbol ids and both provenances are in play. Set B is **this repository**, tier A
+only — which doubles as the no-SCIP run: 43/45 with no SCIP index at all.
+
+88/90 is exactly M1's score. The schema got longer and the facts got real, and
+the number did not move.
+
+## Method
+
+Unchanged from M1 except for the target. Fresh agent per group, three questions
+each, questions re-partitioned between rounds so no context saw the same
+grouping twice. Each agent read one file — the generated `schema` output — and
+was told to use no other tool. Scoring is `tests/fixtures/eval-m4/score.py`,
+which runs the real binary with `--raw` and compares the **set of values in the
+question's answer variables**. Answers as submitted are in `runs/`.
+
+## The four failures, verbatim
+
+**Three of the four are one mistake**, and it is not the one I expected.
+
+**A-Q13, round 1** — *Which fields belong to the type named "Store"?*
+
+```prolog
+?- def(T, _, "type", "Store"), def(A, _, "field", _), parent(A, T).
+```
+
+`Store` is a `struct`, not a `type`. The schema lists both kinds with their
+counts from this very index, so the information was on screen. The other two
+samples of Q13 both used `def(P, _, _, "Store")` — leaving `Kind` unbound, which
+is the more robust form and the one I would write.
+
+**A-Q18, round 3** — *Which definitions span more than 8 lines?*
+
+```prolog
+?- long_def(A, B).
+```
+
+**B-Q7, rounds 2 and 3** — *Name every definition that is more than 60 lines long.*
+
+```prolog
+?- long_def(A, N), N > 60.
+```
+
+The same error twice, from two independent agents: `long_def/2` has the
+threshold **baked in at 80**, so `long_def(A, N), N > 60` is a no-op filter over
+an already-`> 80` set, and `long_def(A, B)` answers a question about 8 with the
+answer for 80. The round-1 and round-2 samples of A-Q18 both wrote the explicit
+form, `?- def_span(A, S, E, _, _), B = E - S, B > 8.`
+
+**Do not pre-commit to a diagnosis** — but the transcript points at the schema
+rather than the agent. `long_def(S, N)` presents as a rule parameterised by `N`,
+because `N` is in its signature; `N` is an *output*. Three of four failures in
+this eval, from three different agents, are that one line of copy being
+misreadable. The cheap fixes are a doc line that says the threshold is fixed at
+80, or a `def_lines(S, N)` rule with no threshold at all that leaves the
+comparison to the caller — the second is strictly more useful and costs one of
+the three remaining slots under the rule cap. **Not decided here.**
+
+## What building the eval found
+
+Two things, before a single agent ran.
+
+**Ten of thirty expected answers came back empty**, because the retargeted
+questions quoted symbol ids I had written by hand and got wrong — the real one is
+`store/impl#[Store]get().`, not `store/Store#get().`. A question whose correct
+answer is "no rows" is passed by any query that returns nothing, so a third of
+set A was scoring itself as correct for free. Now two are empty, both the known
+`implements`/`extern` coverage gap.
+
+**A real defect, in tier B rather than M4.** `parent(S)` for a method inside an
+`impl` block points at `local src/store.rs Store#`, which has **no `def` row**.
+Every other parent edge in the index carries a resolved SCIP id. So `within/2`
+and `about(S, "parent", ...)` join to nothing for any method in an `impl`, and
+`tests/stdlib.rs`'s containment test sailed past it because it used module
+nesting. Recorded in [plan.md](plan.md); not fixed inside M4, because parent
+precedence is tier-B ingest and has blast radius.

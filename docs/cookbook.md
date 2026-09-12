@@ -106,11 +106,30 @@ deliberately unseeded pair; use them only on a small tree.
 
 ## 3. The dex 34, as rules
 
-[research.md](research.md) §1a lists the 34 store methods of `~/projects/dex`,
-each 20–60 lines of SQL plus a result struct plus an MCP wrapper plus a CLI
-mirror. Here they are. **The claim being tested is that none of them needs
-code** — and where one does not survive at all, that is said rather than
-papered over.
+`~/projects/dex`'s `internal/store/store_graph.go` exposes **34 methods**.
+[research.md](research.md) §1a names 17 of them and elides the rest; the counts
+below were taken from the file itself, because a claim about 34 methods that
+only ever shows 17 is not checkable.
+
+**Of the 34: 17 are not questions at all, 13 are Datalog rules, 4 are refused.**
+
+The 17 that are not questions are the write path (`GraphUpsertNodes`,
+`GraphUpsertEdges`, `GraphPruneUnseen`, `SetNodeVecs`, `GraphSetCentrality`),
+epoch and maintenance bookkeeping (`GraphMaxEpoch`, `GraphSeenTime`,
+`GraphStats`, `GraphScale`), bulk dump (`GraphAllNodes`, `GraphAllEdges`),
+embeddings (`NodeKNN`, `NodeVecCount`, `NodesNeedingEmbed`), chunk retrieval
+(`ChunksByPaths`) and edit spans (`SymbolEditSpanByID`,
+`SymbolEditSpansByName`). Here the write path is `codeintel index` plus the
+manifest, the bookkeeping is `codeintel status`, and embeddings and chunk
+retrieval are a different product — `NodeKNN` takes a query vector.
+**Out of scope is a third category, distinct from refused.**
+
+Several of those are one-liners here anyway, which is worth saying because it
+makes the table shorter rather than longer: `SymbolEditSpansByName` is
+`?- def(S, _, _, "get"), def_span(S, L1, C1, L2, C2).`, `GraphAllNodes` is
+`?- def(S, F, K, N).`, and `GraphStats` is `codeintel status`.
+
+The 17 that *are* questions:
 
 | dex method | here |
 |---|---|
@@ -135,10 +154,12 @@ papered over.
 | `GraphCommunities` | **refused** |
 | `Smells` *as a ranked list* | **refused** as a ranking; the three above are the facts under it |
 
-Every answered row is one to five lines, and none of them is longer than this
-table cell. The remaining methods in dex's list are variations on these — by
-directory, by package, by file — which here is a `prefix/2` on a column rather
-than a new method.
+Twenty rows, thirteen distinct dex methods — `Smells` is one method that appears
+four times, once per thing it bundles. Every answered row is one to five lines
+and the longest is three literals. Variation by directory, by package or by file
+is a `prefix/2` on a column, not a new method, which is why dex's
+`ImportsForDir` and `ImportsForFile` are one row each here rather than two
+implementations.
 
 ### What is refused, and why
 

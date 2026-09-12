@@ -604,6 +604,22 @@ And `--rules` files turned out to be **additive**, not shadowing: a predicate is
 the union of its clauses, so a file defining `is_test` widens it. The doc
 comment claimed shadowing, the test disagreed, and the doc was wrong.
 
+**The agent eval passed both sets.** 88/90 on the M1 thirty retargeted to real
+extracted facts, 43/45 on fifteen held-out questions against this repository
+with no SCIP index — which is also the no-SCIP run the done-when asks for.
+88/90 is exactly M1's score against hand-written facts, so making the facts real
+and the schema generated cost nothing. Full method and every failure verbatim in
+[agent-eval.md](agent-eval.md); the headline is that **three of the four
+failures are one line of schema copy**: `long_def(S, N)` reads as parameterised
+by `N` when `N` is an output and the threshold is fixed at 80.
+
+Building the eval found a **tier-B defect M4's own rule tests had missed**:
+`parent(S)` for a method inside an `impl` block points at a symbol with no `def`
+row, so `within/2` and `about(S, "parent", ...)` join to nothing for every
+method in an `impl`. `tests/stdlib.rs` tested containment with module nesting and
+sailed past it. Not fixed here — parent precedence is tier-B ingest, M3's
+territory, and the fix has blast radius.
+
 **One done-when is not met, and is not being counted as met.** "Every rule in
 `stdlib.dl` has a fixture test with a hand-verified answer" holds for 32 of 37.
 `implements/3` and `extern/4` are both **zero rows** on `tests/fixtures/rust/`

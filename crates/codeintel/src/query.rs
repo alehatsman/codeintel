@@ -245,7 +245,16 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
                 "max_result_rows fired at {}; raise it with --limit or narrow the query",
                 options.limit
             ),
-            Some(fired) => format!("{fired} fired at {budget} bytes; narrow the query"),
+            // The engine's cap and the printed one are different numbers, and
+            // quoting the wrong one is invariant 5 with extra steps.
+            Some(fired) => {
+                let at = if printed.truncated {
+                    budget
+                } else {
+                    limits.max_result_bytes
+                };
+                format!("{fired} fired at {at} bytes; narrow the query")
+            }
             None => "a cap fired; narrow the query".to_string(),
         });
     } else if status == Status::Ok

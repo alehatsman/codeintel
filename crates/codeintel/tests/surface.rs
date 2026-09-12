@@ -496,3 +496,39 @@ fn the_mcp_schema_call_works_with_no_index() {
     // Both modes at once names the two rather than silently picking one.
     assert!(out[1]["error"]["message"].is_string(), "{:?}", out[1]);
 }
+
+#[test]
+fn a_request_with_no_method_is_answered_rather_than_ignored() {
+    // A caller blocked forever on a silent id is the worst outcome this server
+    // has. Anything carrying an `id` gets a reply, including one that cannot be
+    // routed.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = rpc(
+        dir.path(),
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":9}),
+            serde_json::json!({"jsonrpc":"2.0","id":10,"method":"ping"}),
+        ],
+    );
+    assert_eq!(out.len(), 2, "a request went unanswered: {out:?}");
+    assert_eq!(out[0]["id"], 9);
+    assert_eq!(out[0]["error"]["code"], -32600);
+    assert_eq!(out[1]["id"], 10);
+}
+
+#[test]
+fn an_mcp_error_result_still_carries_a_status() {
+    // The promise is that a consumer never parses prose to find the status.
+    // The error paths are exactly where it would otherwise have to.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = rpc(
+        dir.path(),
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+            "name":"code_query","arguments":{"query":"?- def(S, F, K, N)."}}}),
+        ],
+    );
+    let result = &out[0]["result"];
+    assert_eq!(result["structuredContent"]["status"], "no-index");
+    assert!(result["structuredContent"]["hint"].is_string(), "{result}");
+}

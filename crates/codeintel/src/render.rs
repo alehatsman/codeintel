@@ -138,8 +138,17 @@ pub struct Rendered {
 /// by one key also means `--raw` and the default print the same answer in the
 /// same sequence, rather than two shuffles of it.
 ///
-/// The cap runs **before** the sort, so a truncated answer is the engine's
-/// stable prefix rather than a re-sorted sample of it.
+/// The cap runs **after** the sort. An earlier version capped first, on the
+/// argument that a truncated answer should be the engine's stable prefix — but
+/// the engine's order is by atom, which is dictionary insertion order, so that
+/// made the surviving *set* depend on whether the index was built cold or
+/// incrementally. Sorting first makes the set a function of the rendered text
+/// alone, which is the property a consumer actually relies on.
+///
+/// `max_result_rows` is applied inside the engine, before any of this, so that
+/// cap still selects an index-dependent set. Fixing it means the engine
+/// materialising every row and the host doing all capping — a real change, not
+/// made here, and named so the remaining gap is not mistaken for closed.
 #[must_use]
 pub fn render(
     engine: &Engine,
@@ -148,24 +157,29 @@ pub fn render(
     raw_wanted: bool,
     max_bytes: usize,
 ) -> Rendered {
-    let mut rows: Vec<Row> = Vec::with_capacity(result.rows.len());
-    let mut bytes = 0usize;
-    let mut truncated = false;
-    for tuple in &result.rows {
-        let row = Row {
+    let mut rows: Vec<Row> = result
+        .rows
+        .iter()
+        .map(|tuple| Row {
             display: tuple.iter().map(|a| sites.display(engine, *a)).collect(),
             raw: tuple.iter().map(|a| raw(engine, *a)).collect(),
-        };
+        })
+        .collect();
+    rows.sort_by(|a, b| a.display.cmp(&b.display));
+
+    let mut bytes = 0usize;
+    let mut kept = 0usize;
+    for row in &rows {
         // The newline the caller will print is part of what the consumer pays.
         let width = row.line(raw_wanted).len() + 1;
         if bytes + width > max_bytes {
-            truncated = true;
             break;
         }
         bytes += width;
-        rows.push(row);
+        kept += 1;
     }
-    rows.sort_by(|a, b| a.display.cmp(&b.display));
+    let truncated = kept < rows.len();
+    rows.truncate(kept);
     Rendered { rows, truncated }
 }
 

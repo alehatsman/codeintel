@@ -29,6 +29,8 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// (`specs/00-overview.md` § Surface budget).
 pub const TOOL: &str = "code_query";
 
+/// JSON-RPC's code for a message that is not a well-formed request.
+const INVALID_REQUEST: i64 = -32600;
 /// JSON-RPC's code for a method the server does not implement.
 const METHOD_NOT_FOUND: i64 = -32601;
 /// JSON-RPC's code for parameters that do not fit the method.
@@ -65,9 +67,17 @@ fn respond(root: &Path, line: &str) -> Option<serde_json::Value> {
         // No id to answer with, so this cannot be a JSON-RPC response at all.
         Err(_) => return None,
     };
-    // A notification has no `id` and takes no reply, by the spec.
+    // A notification has no `id` and takes no reply, by the spec. Everything
+    // that DOES carry an id gets an answer, including one we cannot route — a
+    // caller blocked forever on a silent id is the worst outcome here.
     let id = request.get("id")?.clone();
-    let method = request.get("method").and_then(serde_json::Value::as_str)?;
+    let Some(method) = request.get("method").and_then(serde_json::Value::as_str) else {
+        return Some(error(
+            &id,
+            INVALID_REQUEST,
+            "a request needs a string `method`",
+        ));
+    };
     let params = request
         .get("params")
         .cloned()
@@ -249,9 +259,14 @@ fn rendered(answer: &query::Answer, raw: bool) -> String {
 }
 
 /// A tool result that is an error, carrying the text the caller needs.
+///
+/// `structuredContent` is present here too: the promise is that a consumer
+/// never parses prose to find the status, and an error path is exactly where
+/// it would otherwise have to.
 fn failed(text: &str) -> serde_json::Value {
     serde_json::json!({
         "content": [{ "type": "text", "text": text }],
+        "structuredContent": { "status": Status::Corrupt.as_str(), "hint": text },
         "isError": true,
     })
 }

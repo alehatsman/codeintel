@@ -1,0 +1,15 @@
+1	A	Which files in this repository define something whose name contains "Census"? Bind the file path to A.	?- def(_, A, _, N), contains(N, "Census").
+2	A	Which definition encloses line 100 of crates/datalog/src/relation.rs most tightly? Bind its symbol id to A.	?- innermost_at("crates/datalog/src/relation.rs", 100, A).
+3	A	Which definitions in crates/facts are structs? Bind the symbol id to A.	?- def(A, F, "struct", _), prefix(F, "crates/facts/").
+4	A,B	For every definition named "render", report the file it is in and its first line. Bind the file to A and the line to B.	?- def(S, A, _, "render"), at(S, A, B).
+5	A	Which files under crates/codeintel import something from the datalog crate? Bind the importing file to A.	?- import(A, M, _), prefix(A, "crates/codeintel/"), contains(M, "datalog").
+6	A	Which test files does this repository have? Bind the path to A.	?- is_test(A).
+7	A	Name every definition that is more than 60 lines long. Bind the symbol id to A.	?- def_span(A, S, E, _, _), N = E - S, N > 60.
+8	A	Which exported definitions in crates/datalog carry no doc comment? Bind the symbol id to A.	?- undocumented_export(A), def(A, F, _, _), prefix(F, "crates/datalog/").
+9	A	How many definitions does crates/codeintel/src/query.rs hold? Bind the count to A.	?- A = count{ S : def(S, "crates/codeintel/src/query.rs", _, _) }.
+10	A	Which definition names occur more than once across this repository? Bind the name to A.	?- ambiguous(A).
+11	A	Which files does crates/codeintel/src/schema.rs depend on? Bind the depended-on file to A.	?- depends("crates/codeintel/src/schema.rs", A).
+12	A	What is the signature of the definition named "load_facts"? Bind it to A.	?- def(S, _, _, "load_facts"), def_sig(S, A).
+13	A	Which definitions are contained, directly or transitively, in the module named "census"? Bind the contained symbol id to A.	?- def(P, _, _, "census"), within(A, P).
+14	A	Which enums does this repository define outside of test files? Bind the symbol id to A.	?- def(A, F, "enum", _), !is_test(F).
+15	A	Every definition whose span covers line 50 of crates/codeintel/src/render.rs. Bind the symbol id to A.	?- symbol_at("crates/codeintel/src/render.rs", 50, A).

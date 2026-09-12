@@ -1,0 +1,15 @@
+1	?- def(S, A, _, N), contains(N, "Census").
+12	?- def(S, _, _, "load_facts"), def_sig(S, A).
+8	?- undocumented_export(A), def(A, F, _, _), prefix(F, "crates/datalog").
+4	?- def(S, _, _, "render"), at(S, A, B).
+15	?- symbol_at("crates/codeintel/src/render.rs", 50, A).
+11	?- depends("crates/codeintel/src/schema.rs", A).
+7	?- long_def(A, N), N > 60.
+3	?- def(A, F, "struct", _), contains(F, "crates/facts").
+14	?- def(A, F, "enum", _), !is_test(F).
+10	?- ambiguous(A).
+6	?- is_test(A).
+2	?- innermost_at("crates/datalog/src/relation.rs", 100, A).
+13	?- def(M, _, "module", "census"), within(A, M).
+9	?- A = count{S : def(S, "crates/codeintel/src/query.rs", _, _)}.
+5	?- import(A, M, _), prefix(A, "crates/codeintel"), contains(M, "datalog").
