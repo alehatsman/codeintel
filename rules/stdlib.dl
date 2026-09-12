@@ -89,8 +89,13 @@ local_def(F, N) :- def(S, F, _, N).
 
 % Grouped, not a self-join: the self-join form emits k*k candidate pairs for a
 % name with k definitions before dedup, and the aggregate form is free.
+% Grouped over NAMES, not def rows: `def(_, _, _, N)` as the outer literal
+% binds N once per definition, so the count ran once per row and a name with
+% k definitions was counted k times. `named` is a set, so it runs once.
+%% named(N)  N is the name of at least one definition.
+named(N) :- def(_, _, _, N).
 %% ambiguous(N)  N names >1 definition, so name matching cannot pick.
-ambiguous(N) :- def(_, _, _, N), C = count{ S : def(S, _, _, N) }, C > 1.
+ambiguous(N) :- named(N), C = count{ S : def(S, _, _, N) }, C > 1.
 
 % === the location bridge ===============================================
 % Turns a file:line from ripgrep, git diff, a stack trace or a compiler error

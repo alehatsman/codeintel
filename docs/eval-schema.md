@@ -71,6 +71,7 @@ Lang   rust go typescript javascript python java ruby c cpp ...
 ```
 ref(S, F, L, C, From, Role, Prov)   every occurrence, both tiers
 local_def(F, N)                     N is defined somewhere in F
+named(N)                            N is the name of at least one definition
 ambiguous(N)                        more than one definition carries the name N
 
 symbol_at(F, Line, S)               every definition whose span covers Line

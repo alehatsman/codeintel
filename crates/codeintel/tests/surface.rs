@@ -151,7 +151,7 @@ fn the_rule_list_matches_the_rules() {
             rule.1
         );
     }
-    assert_eq!(advertised.len(), 38, "the rule count moved: {advertised:?}");
+    assert_eq!(advertised.len(), 39, "the rule count moved: {advertised:?}");
 }
 
 #[test]

@@ -429,7 +429,12 @@ local_def(F, N) :- def(S, F, _, N).
 % name with k definitions before dedup; measured on real repos that is ~8.5k
 % pairs (dex) and ~11k (tracing) — harmless — but it is O(k^2) on generated
 % bindings and the aggregate form is free.
-ambiguous(N)    :- def(_, _, _, N), C = count{S : def(S, _, _, N)}, C > 1.
+% Grouped over names, not def rows. With `def(_, _, _, N)` as the outer
+% literal the count ran once per definition, k times for a name with k of
+% them; measured on this repository that was 167k derived tuples and 760 ms
+% for `?- ambiguous(N).` alone, 12k and 220 ms over `named`.
+named(N)        :- def(_, _, _, N).
+ambiguous(N)    :- named(N), C = count{S : def(S, _, _, N)}, C > 1.
 
 % Everything below is unchanged by which tier supplied the evidence.
 % To tighten resolution, edit the two `name` rules above. To disable tier-A
