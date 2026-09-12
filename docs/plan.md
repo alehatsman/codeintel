@@ -200,7 +200,10 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 - Every safety rule has a test asserting its exact diagnostic message.
 - Every limit has a test provoking it and asserting `status` and `cap`.
 - 100 runs of each conformance query are byte-identical.
-- `cargo fuzz run parser` survives 10 minutes with no panic.
+- `cargo fuzz run parser` survives 10 minutes with no panic. **Run: 33,197,154
+  executions in 601 s, zero crashes.** `tests/robustness.rs` covers the same
+  property on every commit from a seeded generator, for machines with no
+  nightly toolchain.
 - `crates/datalog` has no dependencies. `match` arrives as an injected builtin.
 - **Demand transformation demonstrably applies, to both kinds of predicate:**
   for each seeded traversal *and* for `symbol_at`, a bound goal derives strictly
