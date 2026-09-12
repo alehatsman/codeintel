@@ -8,16 +8,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// `specs/02-extraction.md` § Validation's `known-imprecise.txt`: tier-A `ref`
-/// rows that no `scip_ref` confirms, each with a reason.
-///
-/// `src/store.rs:24:26` is `self.entries.get(key)` inside `Store::get`. Tier
-/// A's same-file rule binds the name `get` to the only `get` it can see, which
-/// is the enclosing method; SCIP knows it is `HashMap::get`. This is the
-/// documented shape of tier-A over-reporting, not a bug to fix — the fix is a
-/// SCIP index, which is what `calls_exact` selects.
-const KNOWN_IMPRECISE: &[&str] = &["src/store.rs\t24\t26"];
-
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_codeintel")
 }
@@ -130,21 +120,23 @@ fn tier_a_references_are_bounded_by_what_tier_b_confirms() {
     let dir = tree();
     index(dir.path());
 
-    // Every `"name"` reference must either match an `"exact"` one at the same
-    // position, or be listed here with a reason. This bounds tier A's
-    // false-positive rate with a number instead of a hope
-    // (`specs/02-extraction.md` § Validation).
-    let loose = rows(
-        dir.path(),
-        r#"?- ref(_, F, L, C, _, _, "name"), !scip_ref(_, F, L, C, _, _)."#,
-    );
-    let unexpected: Vec<&String> = loose
-        .iter()
-        .filter(|row| !KNOWN_IMPRECISE.iter().any(|known| row.contains(known)))
-        .collect();
+    // Tier A's false-positive rate against a SCIP-covered tree is now **zero by
+    // construction**, not zero by allowlist: name matching carries
+    // `!scip_ref(...)`, so it cannot resolve a name at a position tier B
+    // already answered (`specs/01-facts.md` § Tier precedence).
+    //
+    // This used to hold a `KNOWN_IMPRECISE` allowlist with one entry —
+    // `src/store.rs:24:26`, `self.entries.get(key)` inside `Store::get`, where
+    // the same-file rule binds `get` to the enclosing method and SCIP knows it
+    // is `HashMap::get`. That entry documented the defect as accepted
+    // behaviour. The guard removes the row, so the allowlist is gone rather
+    // than merely unused: an exception list nothing populates reads as evidence
+    // of rigour while asserting nothing.
+    let named = rows(dir.path(), r#"?- ref(_, F, L, C, _, _, "name")."#);
     assert!(
-        unexpected.is_empty(),
-        "tier A resolved names tier B did not confirm: {unexpected:?}"
+        named.is_empty(),
+        "SCIP covers this fixture, so no occurrence is left for tier A to \
+         resolve: {named:?}"
     );
 }
 
@@ -203,14 +195,47 @@ fn exact_calls_find_edges_tier_a_alone_cannot_see() {
 
     // `calls_exact` is a subset of `calls` by construction — the same rule with
     // `Prov` pinned — so the plan's "edges `calls` misses" is only ever true of
-    // *tier-A-only* `calls`, which is how this test reads it. What the exact
-    // form buys against a full index is precision: `calls` carries a tier-A
-    // self-edge for `get` that no compiler agrees with.
+    // *tier-A-only* `calls`, which is how this test reads it.
+    //
+    // Against a full index the two are now **equal**, which is the point of
+    // tier precedence (`specs/01-facts.md` § Tier precedence): name matching
+    // fires only where tier B never resolved the occurrence, so on a fixture
+    // SCIP covers completely there is nothing left for it to guess at. This
+    // assertion used to read the other way — that `calls` carried exactly one
+    // tier-A self-edge for `get` that no compiler agrees with — which pinned
+    // the defect as though it were the design.
     let both: BTreeSet<String> = rows(dir.path(), "?- calls(A, B).").into_iter().collect();
     assert!(exact.is_subset(&both));
     let over_reported: Vec<&String> = both.difference(&exact).collect();
-    assert_eq!(over_reported.len(), 1, "{both:?}");
-    assert!(over_reported[0].contains("get()"), "{over_reported:?}");
+    assert!(
+        over_reported.is_empty(),
+        "SCIP covers this fixture, so name matching must add no edge: {over_reported:?}"
+    );
+}
+
+/// Tier precedence as a property rather than a count
+/// (`specs/01-facts.md` § Tier precedence): where tier B resolved an
+/// occurrence, tier A does not also guess at it.
+///
+/// Without this the tiers made independent claims about the same byte position
+/// and `ref` was their union, so a guess the compiler directly contradicts
+/// survived into `calls`, `depends`, `impact_of`, `dead_export` and
+/// `entrypoint`. Measured on this project's own source: 1,448 of 1,629
+/// name-provenance rows sat at a position `scip_ref` covered and named a
+/// different symbol.
+#[test]
+fn name_matching_does_not_guess_where_the_compiler_answered() {
+    let dir = tree();
+    index(dir.path());
+
+    let overlapping = rows(
+        dir.path(),
+        r#"?- ref(S, F, L, C, From, Role, "name"), scip_ref(_, F, L, C, _, _)."#,
+    );
+    assert!(
+        overlapping.is_empty(),
+        "a name guess survived where tier B had resolved the occurrence: {overlapping:?}"
+    );
 }
 
 #[test]
@@ -414,4 +439,36 @@ fn an_impl_block_method_is_within_its_file() {
         );
         assert_eq!(found.len(), 1, "`{method}` is not within its own file");
     }
+}
+
+/// `status` reports the same SCIP staleness `query` acts on.
+///
+/// These disagreed: a `query` touching `scip_ref` answered `scip-stale` and
+/// named the files, while `status` — the artifact with no telemetry behind it,
+/// the one a bug report is supposed to carry — printed its verdict and
+/// mentioned nothing. A user pasting `status` into an issue would have omitted
+/// the single fact that explains the wrong answer. Both now read the same
+/// `ScipState`, so they cannot drift apart again.
+#[test]
+fn status_reports_the_scip_staleness_that_query_acts_on() {
+    let dir = tree();
+    index(dir.path());
+
+    // Edit a source file so it is newer than the committed `index.scip`, then
+    // re-index so the manifest carries the new mtime.
+    let touched = dir.path().join("src/app.rs");
+    let mut text = std::fs::read_to_string(&touched).expect("read");
+    text.push_str("\npub fn added_after_scip() {}\n");
+    std::fs::write(&touched, text).expect("write");
+    index(dir.path());
+
+    let report = String::from_utf8_lossy(&run(dir.path(), &["status"]).stdout).to_string();
+    assert!(report.contains("scip stale:"), "{report}");
+    assert!(report.contains("src/app.rs"), "{report}");
+    assert!(report.contains("rust-analyzer scip ."), "{report}");
+
+    // And the query verb agrees, naming the same file.
+    let (_, stderr) = query(dir.path(), "?- calls_exact(A, B).");
+    assert!(stderr.contains("status=scip-stale"), "{stderr}");
+    assert!(stderr.contains("src/app.rs"), "{stderr}");
 }

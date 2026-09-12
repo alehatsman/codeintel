@@ -92,6 +92,69 @@ fn raw_rows(goal: &str) -> Vec<String> {
         .collect()
 }
 
+/// The same fixture with **no** SCIP index, so `ref` has only tier A's name
+/// matching to work with.
+///
+/// Needed because name matching now defers to tier B wherever tier B resolved
+/// the occurrence (`specs/01-facts.md` § Tier precedence), so over-reporting is
+/// no longer observable on a SCIP-covered tree — which is the improvement. The
+/// tests that exist to *measure* over-reporting therefore have to ask for the
+/// tier that over-reports.
+fn named_only() -> &'static Path {
+    static TREE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    TREE.get_or_init(|| {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rust");
+        copy(&from, dir.path());
+        drop(std::fs::remove_file(dir.path().join("expected.facts")));
+        // Removed, not merely un-passed: `index` auto-detects `index.scip`.
+        drop(std::fs::remove_file(dir.path().join("index.scip")));
+        let out = Command::new(binary())
+            .args(["index", "."])
+            .current_dir(dir.path())
+            .output()
+            .expect("the binary runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        dir
+    })
+    .path()
+}
+
+/// `rows`, against a chosen tree.
+fn rows_in(root: &Path, goal: &str) -> Vec<String> {
+    let out = Command::new(binary())
+        .args(["query", goal, "--no-refresh"])
+        .current_dir(root)
+        .output()
+        .expect("the binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("status=ok") || stderr.contains("status=no-scip"),
+        "{goal}: {stderr}"
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// `raw_rows`, against a chosen tree.
+fn raw_rows_in(root: &Path, goal: &str) -> Vec<String> {
+    let out = Command::new(binary())
+        .args(["query", goal, "--no-refresh", "--raw"])
+        .current_dir(root)
+        .output()
+        .expect("the binary runs");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
 // ---------------------------------------------------------------- resolution
 
 #[test]
@@ -175,15 +238,35 @@ fn calls_over_reports_and_calls_exact_does_not() {
     // THE measurement this project exists to make. Tier A invents one edge:
     // `Store::get` calls `self.entries.get(key)`, and the identifier `get`
     // matches the only `get` tier A knows — itself.
-    let all = rows("?- calls(C, S).");
+    //
+    // Asked of the **tier-A-only** tree, because that is the tier that
+    // over-reports. With a SCIP index the invented edge no longer exists at
+    // all: name matching defers wherever tier B resolved the occurrence
+    // (`specs/01-facts.md` § Tier precedence), and the assertion below on
+    // `indexed()` is what pins that.
+    // Two edges, and they are the whole of what name matching can say here.
+    // `draw -> open` and `start -> open` are absent because `open` is exported
+    // by both `db::conn` and `net::conn`, so `!ambiguous` stops tier A from
+    // picking — they exist only in the exact tier. Of the two it does emit, one
+    // is right by luck (`warm` calls `store.get`, and the only `get` in the file
+    // is the right one) and one is the invention.
+    let all = rows_in(named_only(), "?- calls(C, S).");
     assert_eq!(
         all,
         [
-            "draw src/ui/panel.rs:8\topen src/db/conn.rs:3",
             "get src/store.rs:19\tget src/store.rs:19",
-            "start src/app.rs:7\topen src/db/conn.rs:3",
             "warm src/store.rs:38\tget src/store.rs:19",
         ]
+    );
+
+    // The same goal against the SCIP-covered tree: the invented self-edge is
+    // gone, because tier A never got to guess at that occurrence.
+    let covered = rows("?- calls(C, S).");
+    assert!(
+        !covered
+            .iter()
+            .any(|r| r == "get src/store.rs:19\tget src/store.rs:19"),
+        "the invented self-edge survived a SCIP index: {covered:?}"
     );
 
     let exact = rows("?- calls_exact(C, S).");
@@ -195,7 +278,12 @@ fn calls_over_reports_and_calls_exact_does_not() {
             "warm src/store.rs:38\tget src/store.rs:19",
         ]
     );
-    assert_eq!(all.len() - exact.len(), 1, "the invented self-call");
+    // The invention, stated directly. Subtracting the two row counts would now
+    // compare sets drawn from different trees — and it underflowed, which is
+    // how this was noticed.
+    let invented = "get src/store.rs:19\tget src/store.rs:19";
+    assert!(all.contains(&invented.to_string()), "{all:?}");
+    assert!(!exact.contains(&invented.to_string()), "{exact:?}");
 }
 
 #[test]
@@ -248,7 +336,14 @@ fn impact_of_exact_drops_what_name_matching_invented() {
     // Seeded on `get`: `warm` calls it for real. Tier A also has `get`
     // calling itself, so the tolerant rule reports `get` as its own impactor
     // and the exact one does not.
-    let tolerant = raw_rows(r#"?- def(S, "src/store.rs", _, "get"), impact_of(S, C)."#);
+    //
+    // The tolerant form is asked of the tier-A-only tree, because that is where
+    // the invention happens. On a SCIP-covered tree the two agree, which is the
+    // point of tier precedence rather than a gap in this test.
+    let tolerant = raw_rows_in(
+        named_only(),
+        r#"?- def(S, "src/store.rs", _, "get"), impact_of(S, C)."#,
+    );
     let exact = raw_rows(r#"?- def(S, "src/store.rs", _, "get"), impact_of_exact(S, C)."#);
     assert!(
         tolerant
@@ -270,10 +365,16 @@ fn reaches_and_recursive_are_the_unseeded_pair() {
     let reached = rows(r#"?- def(A, _, _, "start"), def(B, _, _, "open"), reaches(A, B)."#);
     assert!(!reached.is_empty(), "{reached:?}");
 
-    // And here is what the invented self-call costs: `get` is reported
-    // recursive, and `get` is not recursive. The rule is right; its input is
-    // contaminated. This assertion is the documentation of that.
-    assert_eq!(rows("?- recursive(S)."), vec!["get src/store.rs:19"]);
+    // And here is what the invented self-call costs, on the tier that invents
+    // it: `get` is reported recursive, and `get` is not recursive. The rule is
+    // right; its input is contaminated.
+    assert_eq!(
+        rows_in(named_only(), "?- recursive(S)."),
+        vec!["get src/store.rs:19"]
+    );
+    // With a SCIP index the contamination is gone and nothing in the fixture is
+    // recursive — the rule unchanged, the input clean.
+    assert!(rows("?- recursive(S).").is_empty());
 }
 
 // --------------------------------------------------------------- location helpers

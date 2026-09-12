@@ -521,15 +521,22 @@ fn push_char(args: &mut [String], c: char) {
 /// What the index knows about its SCIP inputs, and what that means for an
 /// answer.
 #[derive(Debug, Default)]
-struct ScipState {
+pub struct ScipState {
     /// True when no SCIP index was ingested.
-    absent: bool,
+    pub absent: bool,
     /// Indexed files modified after the newest SCIP input was built.
-    stale: Vec<String>,
+    pub stale: Vec<String>,
 }
 
 impl ScipState {
-    fn of(manifest: &facts::Manifest) -> Self {
+    /// Read the SCIP situation out of a manifest.
+    ///
+    /// Public so `status` reports the *same* staleness `query` acts on. They
+    /// disagreed once — `query` answered `scip-stale` naming two files while
+    /// `status`, the artifact you are told to paste into a bug report, printed
+    /// `ok` and said nothing.
+    #[must_use]
+    pub fn of(manifest: &facts::Manifest) -> Self {
         let Some(newest) = manifest.scip.iter().map(|i| i.mtime).max() else {
             return Self {
                 absent: true,

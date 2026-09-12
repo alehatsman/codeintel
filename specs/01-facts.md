@@ -298,12 +298,14 @@ them. This is invariant 3 in [00-overview.md](00-overview.md), and the reason
 
 ref(S, F, L, C, From, Role, "exact") :- scip_ref(S, F, L, C, From, Role).
 
+% Name matching is a FALLBACK, not a parallel claim: it fires only where tier B
+% never resolved this occurrence. See § Tier precedence below.
 % same file wins
 ref(S, F, L, C, From, "read", "name") :-
-    name_ref(N, F, L, C, From), def(S, F, _, N).
+    name_ref(N, F, L, C, From), !scip_ref(_, F, L, C, _, _), def(S, F, _, N).
 % else a unique exported definition repo-wide
 ref(S, F, L, C, From, "read", "name") :-
-    name_ref(N, F, L, C, From), !local_def(F, N),
+    name_ref(N, F, L, C, From), !scip_ref(_, F, L, C, _, _), !local_def(F, N),
     def(S, _, _, N), exported(S), !ambiguous(N).
 
 local_def(F, N) :- def(S, F, _, N).
@@ -316,6 +318,42 @@ ambiguous(N)    :- def(_, _, _, N), C = count{S : def(S, _, _, N)}, C > 1.
 % Everything below is unchanged by which tier supplied the evidence.
 % To tighten resolution, edit the two `name` rules above. To disable tier-A
 % resolution entirely, delete them: `ref` degrades to `exact` only.
+```
+
+### Tier precedence
+
+**At an occurrence tier B resolved, tier A does not also guess.** Both `name`
+rules carry `!scip_ref(_, F, L, C, _, _)`, so the tiers partition the
+occurrences rather than both claiming them.
+
+Without the guard the two tiers made independent claims about the same byte
+position and `ref` was their union, so a name guess the compiler directly
+contradicts survived into `calls`, `depends`, `impact_of`, `dead_export` and
+`entrypoint`. Measured on this repository with `rust-analyzer scip .`:
+
+| name-provenance `ref` rows | 1,629 |
+| ...at a position `scip_ref` also covers | 1,628 |
+| ...that `scip_ref` **contradicts** — it saw the position and never names that symbol | 1,448 |
+| ...at a position SCIP never saw — the genuine fallback | 4 |
+
+So 89% of tier-A resolution was noise the compiler had already refuted, and the
+real fallback was four rows in a nested fixture crate outside the SCIP index.
+The artifacts are characteristic rather than exotic: `Relation::new` claimed at
+a site SCIP resolves to `alloc`'s `Vec::new`, and at another it resolves to a
+different local `Db::new`. Name matching cannot see a receiver type, so every
+`x.f()` is a coin flip among every `f` in scope.
+
+**The guard is a no-op without SCIP.** With no `scip_ref` rows the negation is
+vacuously true and every name rule fires exactly as before, so a tier-A-only
+index is bit-identical. It is also per-occurrence, not per-file, so a file SCIP
+did not cover keeps full name resolution while its neighbours use the compiler's
+answer — which is what the four surviving rows are.
+
+This is invariant 1 applied to derivation rather than extraction. A name guess
+is an inference; keeping one the compiler has already refuted is inferring over
+evidence, which is the failure `exact` exists to make impossible.
+
+```prolog
 
 % === the location bridge ===============================================
 % Turns a file:line from ripgrep, git diff, a stack trace, or a compiler

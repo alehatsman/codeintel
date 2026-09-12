@@ -21,13 +21,17 @@
 %% ref(S, F, L, C, From, Role, Prov)  resolved occurrence. Prov says which tier.
 ref(S, F, L, C, From, Role, "exact") :- scip_ref(S, F, L, C, From, Role).
 
+% Name matching is a FALLBACK, not a parallel claim: `!scip_ref` restricts it to
+% occurrences tier B never resolved, so the tiers partition the positions
+% instead of both claiming them (`specs/01-facts.md` § Tier precedence).
+% Vacuous without a SCIP index, so tier-A-only output is unchanged.
 % same file wins
 ref(S, F, L, C, From, "read", "name") :-
-    name_ref(N, F, L, C, From), def(S, F, _, N).
+    name_ref(N, F, L, C, From), !scip_ref(_, F, L, C, _, _), def(S, F, _, N).
 
 % else a unique exported definition repo-wide
 ref(S, F, L, C, From, "read", "name") :-
-    name_ref(N, F, L, C, From), !local_def(F, N),
+    name_ref(N, F, L, C, From), !scip_ref(_, F, L, C, _, _), !local_def(F, N),
     def(S, _, _, N), exported(S), !ambiguous(N).
 
 %% local_def(F, N)  the NAME N has a definition in file F. Not a symbol.

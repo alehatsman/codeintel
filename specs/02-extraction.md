@@ -424,10 +424,20 @@ hand-written golden fact file.
    containment or an extractor that stops treating `mod x;` as a definition.
    Both are out of scope here and neither is urgent. Measured on
    `tests/fixtures/rust/`: 33/33 non-module definitions anchor, 0/9 modules do.
-4. **Tier-A precision.** On a fixture with both tiers, every derived `"name"`
-   `ref` must either match an `"exact"` `ref` at the same position or be listed
-   in `known-imprecise.txt` with a reason. This bounds tier A's false-positive
-   rate with a number instead of a hope.
+4. **Tier-A precision.** On a fixture with both tiers, **no** derived `"name"`
+   `ref` may sit at a position an `"exact"` `ref` covers. Zero by construction,
+   not zero by allowlist: the `name` rules carry `!scip_ref(...)`
+   ([01-facts.md](01-facts.md) § Tier precedence), so tier A cannot resolve a
+   name at a position tier B already answered.
+
+   This previously said "or be listed in `known-imprecise.txt` with a reason",
+   and the list had one entry — `self.entries.get(key)` inside `Store::get`,
+   where the same-file rule binds `get` to the enclosing method while SCIP knows
+   it is `HashMap::get`. Writing the defect down bounded it, but it also made it
+   permanent: an accepted exception is not a bound, it is a decision to stop
+   counting. The guard deletes the row instead, and the allowlist with it,
+   because an exception list nothing populates reads as rigour while asserting
+   nothing.
 5. **Locality.** Every tier-A fact for file X must be reproducible by extracting
    file X *alone*, with no other file indexed. This is the mechanical guard on
    incremental soundness — it fails loudly the moment someone reintroduces a

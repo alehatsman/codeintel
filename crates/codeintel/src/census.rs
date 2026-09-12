@@ -296,6 +296,26 @@ impl fmt::Display for Report<'_> {
                     census.rows("def")
                 )?;
             }
+            // The same staleness `query` acts on, from the same function. These
+            // disagreed: `query` answered `scip-stale` naming two files while
+            // this report — the artifact a bug report is supposed to carry —
+            // printed `ok` and mentioned nothing.
+            let stale = crate::query::ScipState::of(manifest).stale;
+            if !stale.is_empty() {
+                let named: Vec<&str> = stale.iter().map(String::as_str).take(5).collect();
+                writeln!(
+                    f,
+                    "scip stale: {} file(s) changed after it was built, so their \
+                     `scip_ref` rows are not — {}{}. run: rust-analyzer scip .",
+                    stale.len(),
+                    named.join(", "),
+                    if stale.len() > named.len() {
+                        ", …"
+                    } else {
+                        ""
+                    }
+                )?;
+            }
         }
 
         f.write_str("facts:\n")?;
