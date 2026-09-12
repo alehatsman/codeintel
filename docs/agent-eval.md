@@ -188,6 +188,22 @@ than definitions — off by the number of same-named definitions in a file. The
 `%%` line reads "S is defined in F. Helper.", which does not say which of the
 two arguments is the name.
 
+**`local_def`'s doc line has since been corrected**, and the number above has
+not. It read "S is defined in F" for `local_def(F, N)` — naming a variable
+absent from its own signature and calling a name a symbol — which is a plainly
+false line and was fixed as a correctness matter. That makes this page carry a
+milder version of the property it withdrew the first pass for: the copy an agent
+would read today is not quite the copy these agents read, and the difference is
+the line behind Q28.
+
+The score stands as measured. Whether it would now be 87/90 is **untested, on
+purpose**: re-running after every copy change is how a score stops measuring the
+tool and starts measuring how many times you re-rolled. The rule for this page
+is that a *signature* change invalidates a run — the agent could not have
+written the query that now exists — while a corrected doc line does not, because
+every recorded query is still legal and still scores identically. `long_def`
+crossed that line and forced a re-run; `local_def` did not.
+
 **Both failures are a signature reading as something it is not**, which is the
 same shape as the `long_def` defect this eval found on its first pass. That one
 was fixed — `def_lines(S, N)` now states a length with no threshold, and all

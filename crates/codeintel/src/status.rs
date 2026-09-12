@@ -163,6 +163,14 @@ mod spec_tests {
     /// `specs/05-surface.md`'s status table, as the table itself.
     const SPEC: &str = include_str!("../../../specs/05-surface.md");
 
+    /// The binding document, which must cite the taxonomy rather than repeat it.
+    const OVERVIEW: &str = include_str!("../../../specs/00-overview.md");
+
+    /// Statuses that were specified and then removed. A retired name lingering
+    /// in a spec is the same lie as an undocumented one, and it survived the
+    /// first removal *because* 00-overview.md enumerated the taxonomy too.
+    const RETIRED: &[&str] = &["unsupported-language"];
+
     /// The taxonomy is a contract, so both directions of drift are defects.
     ///
     /// A status the code emits and the table omits leaves a consumer branching
@@ -199,5 +207,30 @@ mod spec_tests {
                 "specs/05-surface.md documents `{name}`, which nothing emits"
             );
         }
+    }
+
+    /// One enumeration, in one file.
+    ///
+    /// `00-overview.md` is what `CLAUDE.md` sends an implementing agent to
+    /// first, so a stale list there outranks a correct one in the surface spec.
+    /// It may *cite* the taxonomy; it may not restate it.
+    #[test]
+    fn only_the_surface_spec_enumerates_the_taxonomy() {
+        for name in RETIRED {
+            assert!(
+                !OVERVIEW.contains(name),
+                "`{name}` was retired but still appears in specs/00-overview.md"
+            );
+        }
+        let listed = Status::ALL
+            .iter()
+            .filter(|s| OVERVIEW.contains(&format!("`{}`", s.as_str())))
+            .count();
+        assert!(
+            listed <= 2,
+            "specs/00-overview.md names {listed} statuses; it should cite \
+             05-surface.md § Status taxonomy rather than repeat it, because a \
+             taxonomy written down twice drifts"
+        );
     }
 }

@@ -95,11 +95,19 @@ These hold at every commit. A change that breaks one is a spec change first.
    [01-facts.md](01-facts.md).
 5. **The index is 100% derived.** `rm -rf .codeintel` is always a valid repair.
    Nothing user-authored is ever stored there.
-6. **Degradation is a status, never an error and never a silent empty.** The
-   taxonomy in [05-surface.md](05-surface.md) (`ok` / `no-index` / `stale` /
-   `no-scip` / `unsupported-language` / `truncated`) is returned on every
-   response, each with an actionable hint. An empty result and an unbuilt index
-   must be distinguishable by a consumer without reading prose.
+6. **Degradation is a status, never an error and never a silent empty.** One
+   of the statuses in [05-surface.md](05-surface.md) § Status taxonomy is
+   returned on every response, each with an actionable hint. An empty result
+   and an unbuilt index must be distinguishable by a consumer without reading
+   prose.
+
+   **The taxonomy is enumerated in that one section and nowhere else**, this
+   invariant included. It used to restate a six-name subset, which read as
+   closed while omitting seven statuses and naming one that nothing emitted —
+   and because this is the more binding document, the stale copy outranked the
+   correct one. A taxonomy written down twice drifts; `status.rs`'s
+   `only_the_surface_spec_enumerates_the_taxonomy` now fails if this file starts
+   listing them again.
 7. **Truncation is reported.** Any cap that drops rows sets `truncated: true`
    and reports the cap that fired. A silently-capped result reads as a complete
    answer and is worse than an error.
@@ -137,10 +145,12 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
   stop binding.** What keeps this one honest is that it is not the constraint
   that actually bites. The token budget is: every rule must appear in `schema`
   with its signature and a one-line doc, and `schema` must fit ~1500 tokens.
-  Measured at M4, 37 rules leave ~1,391 tokens of 1,500 — so roughly three more
-  rules fit before the *text* refuses them, which is why 40 and not 64. A 41st
-  rule is a conversation about what to delete, and if the copy is trimmed to
-  smuggle one in, the token assertion is the thing that has been gamed and it is
+  Measured at M4 with **38** rules: 5,599 characters, which is ~1,400 tokens at
+  four characters per token and ~1,750 under a BPE-shaped count that charges per
+  punctuation mark. The output is *at* its budget, not inside it, and the RULES
+  section is over half of it — so 40 is about two more rules, not sixteen. A
+  41st is a conversation about what to delete, and if the copy is trimmed to
+  smuggle one in, the size assertion is the thing that has been gamed and it is
   visible in the diff.
 
 If a new capability cannot be expressed as a Datalog rule over the existing
