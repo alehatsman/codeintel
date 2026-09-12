@@ -307,13 +307,17 @@ ambiguous(N)    :- def(_, _, _, N), C = count{S : def(S, _, _, N)}, C > 1.
 % Turns a file:line from ripgrep, git diff, a stack trace, or a compiler
 % error into a symbol. This is how anything gets INTO the graph.
 
-% @bound(1, 2) — F and Line must be bound at the call site.
-% Line appears in the head and in no positive body literal, so this rule is
-% range-restricted only under demand. The safety checker runs AFTER demand
-% transformation and a call with Line unbound is rejected with a hint, not
-% evaluated slowly ([03-datalog.md](03-datalog.md) § Modes).
+% `between` is what makes Line range-restricted: it GENERATES when its first
+% two arguments are bound, so Line appears in a positive body literal and the
+% rule is unconditionally safe. Written with bare comparisons instead, Line
+% would be bound by nothing and the engine would reject its own stdlib.
+% Demand transformation makes this fast (Line bound -> `between` degrades to a
+% filter, and `def_span` sorted by (F, L1) is a binary search), but the rule
+% does not depend on it for LEGALITY -- which is what keeps the naive
+% evaluator able to run it, and therefore keeps the M1 differential test
+% honest about the transformation itself.
 symbol_at(F, Line, S) :- def(S, F, _, _), def_span(S, L1, L2, _, _),
-                         L1 <= Line, Line <= L2.
+                         between(L1, L2, Line).
 
 % the tightest enclosing definition — usually what you want
 innermost_at(F, Line, S) :- symbol_at(F, Line, S), !tighter_at(F, Line, S).
@@ -374,10 +378,12 @@ within(C, P) :- parent(C, P).
 within(C, A) :- parent(C, P), within(P, A).
 
 % --- tests -------------------------------------------------------------
-is_test(F) :- match(F, "(^|/)tests?/").
-is_test(F) :- match(F, "_test\\.(go|py|rs)$").
-is_test(F) :- match(F, "(^|/)test_[^/]*\\.py$").
-is_test(F) :- match(F, "\\.(test|spec)\\.(ts|tsx|js|jsx)$").
+% `file(F, _)` is not decoration: without it F is a head variable bound only
+% by a filter, which violates range restriction exactly as symbol_at did.
+is_test(F) :- file(F, _), match(F, "(^|/)tests?/").
+is_test(F) :- file(F, _), match(F, "_test\\.(go|py|rs)$").
+is_test(F) :- file(F, _), match(F, "(^|/)test_[^/]*\\.py$").
+is_test(F) :- file(F, _), match(F, "\\.(test|spec)\\.(ts|tsx|js|jsx)$").
 is_test(F) :- scip_ref(_, F, _, _, _, "test").
 
 % --- orientation: everything about one symbol, in one round trip -------

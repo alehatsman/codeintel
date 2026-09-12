@@ -175,8 +175,8 @@ RULES
   reach_of(S, Callee)            transitive callees of S -- SEED THE 1st ARG
   is_test(F)                     test file, by path or SCIP role
   ...
-BUILTINS = != < <= > >= + - * / match/2 prefix/2 suffix/2 contains/2
-           count{X:g} sum{X:g} min{X:g} max{X:g}
+BUILTINS = != < <= > >= + - * / between/3 match/2 prefix/2 suffix/2 contains/2
+           count{X:g}
 NOTES
   lines are 1-based; columns are 0-based UTF-8 bytes
   integers and their string forms are different atoms: Line = "42" never matches

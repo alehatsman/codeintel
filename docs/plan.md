@@ -47,9 +47,19 @@ not a branch in a parser* — and it is asserted in CI from commit one.
 **4. The stdlib does not typecheck against the engine.** `symbol_at` puts `Line`
 in the head and binds it only in comparisons, violating safety rules 1 and 3.
 `innermost_at`, `tighter_at`, and `lexical_parent` all sit on it. Four of five
-`is_test` clauses fail the same rule. Fixed by widening demand transformation to
-non-recursive predicates — which keeps invariant 3 intact and also rescues
-`is_test`, `about`, `impact_by_name`, and `depends`.
+`is_test` clauses fail the same rule.
+
+Fixed with a **`between(Lo, Hi, X)` generator builtin**, not with mode
+declarations. The alternative — declare the rule's bound arguments and check
+safety after demand transformation — makes `symbol_at` legal *only* under the
+transformation, which means the naive evaluator cannot run it. The naive
+evaluator is this milestone's acceptance gate, so that would leave the
+transformation with nothing to be differentially tested against, and "it
+silently did not apply" is precisely the failure mode being guarded. `between`
+keeps legality and performance separate: the rule is unconditionally safe,
+demand transformation only makes it fast. `is_test` gains a `file(F, _)`
+literal; assignment- and generator-binding are stated explicitly in safety
+rule 7.
 
 **5. Performance objections did not survive measurement.** Claims that auto-
 refresh and `ambiguous/1` break the latency budget were built by pairing the
@@ -165,14 +175,16 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
 5. `Relation`: flat `Vec<u32>`, sorted, deduplicated, binary search on prefix.
 6. Semi-naive evaluation with the most-bound-first literal ordering.
 7. **Demand transformation, applied to non-recursive predicates as well as
-   recursive ones.** This is not an optimisation, it is a correctness
-   requirement: without it `symbol_at` is not range-restricted and the stdlib
-   does not load. With `Line` bound it is a binary search into `def_span` — a
-   handful of rows. It simultaneously rescues `is_test`, `about`,
-   `impact_by_name`, `depends`, and stops `impact_of` computing all-pairs
-   reachability.
-8. Builtins: comparisons, arithmetic, `match`/`prefix`/`suffix`/`contains`, and
-   `count`. **`match` delegates to the `regex` crate** — hand-rolling a
+   recursive ones.** A performance requirement, not a correctness one — every
+   stdlib rule is safe as written (see the `between` builtin). With `Line`
+   bound, `symbol_at` is a binary search into `def_span` sorted by `(F, L1)`
+   instead of a materialisation of ~LOC x nesting-depth rows; unbound it is
+   ~250k rows at 100k LOC, which is wasteful and correct. The same
+   transformation stops `impact_of` computing all-pairs reachability, and
+   `ref`, `calls`, `about`, `is_test` and `depends` are all non-recursive, so
+   excluding non-recursive predicates would forfeit most of the win.
+8. Builtins: comparisons, arithmetic, `between/3`, `match`/`prefix`/`suffix`/
+   `contains`, and `count`. **`match` delegates to the `regex` crate** — hand-rolling a
    backtracker buys no dependency reduction, since `tree-sitter` already depends
    on `regex`, and it loses linear-time guarantees. Inject it as a host builtin
    so `crates/datalog` keeps its zero-dependency property.
@@ -194,8 +206,11 @@ concepts**. This is the highest-risk milestone; do it first and do it properly.
   for each seeded traversal *and* for `symbol_at`, a bound goal derives strictly
   fewer tuples than the same goal with the transformation disabled, and both
   return identical results. Equal counts mean it silently did not apply.
-- **`load_rules(include_str!("../../rules/stdlib.dl"))` returns `Ok`.** The
-  engine must accept its own standard library. This one line is the guard for
+- **`load_rules(include_str!("../../rules/stdlib.dl"))` returns `Ok` — and so
+  does the naive evaluator.** The engine must accept its own standard library,
+  and it must accept it *as written*, with no transformation applied. If a rule
+  is legal only after demand transformation, the differential test has nothing
+  to compare against. This one line is the guard for
   the whole class of defect the review found by reading two specs against each
   other.
 - **The agent eval passes at >= 24/30 — against hand-written facts.**

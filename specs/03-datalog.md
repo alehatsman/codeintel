@@ -35,6 +35,7 @@ assignment := var "=" expr
 expr       := term | term arith term | aggregate
 arith      := + | - | * | /
 aggregate  := "count" "{" term ":" body "}"
+generator  := "between" "(" term "," term "," var ")"
 term       := var | string | int | "_"
 var        := upper (alnum | "_")*
 string     := '"' ... '"'                  escapes: \" \\ \n \t
@@ -62,6 +63,7 @@ hot(S, N) :- def(S, _, "function", _), N = count{ C : calls(C, S) }, N > 10.
 | `X = Y`, `X != Y` | atom identity. `"42"` and `42` are different atoms ([01-facts.md](01-facts.md) § Integers). |
 | `X < Y`, `<=`, `>`, `>=` | **integers only**, checked at runtime: both operands must fall in the integer id range ([01-facts.md](01-facts.md) § Integers), else `invalid-query`. Comparing string atoms is an error, not a byte comparison — string atom ids are allocation-ordered, so comparing them would give results that change between runs. |
 | `X = A + B` (`-`, `*`, `/`) | integer arithmetic. Division by zero → error. Overflow → error. |
+| `between(Lo, Hi, X)` | **generator.** `Lo` and `Hi` must be bound integers; binds `X` to each integer in `Lo..=Hi` inclusive, ascending. If `X` is already bound it degrades to a range check. This is the only builtin that produces bindings rather than filtering them, and it is what makes `symbol_at` range-restricted without flow-sensitive safety analysis ([01-facts.md](01-facts.md) § The location bridge). `Lo > Hi` yields nothing. |
 | `match(S, "re")` | regex over the string behind atom `S`. Second argument must be a literal. |
 | `prefix(S, "p")`, `suffix(S, "s")`, `contains(S, "c")` | cheaper string tests; prefer these over `match` where they suffice. |
 | `count{ X : goal }` | number of distinct bindings of `X` satisfying `goal` |
@@ -93,13 +95,20 @@ step budget. We do not take a regex dependency for this.
 5. **Stratification.** See below.
 6. **Arity consistency.** A relation's arity is fixed by its first use; a later
    use with different arity is an error naming both sites.
-7. **Mode satisfaction.** A rule annotated `@bound(i, ...)` may only be called
-   with those argument positions bound. Range restriction (rule 1) is checked
-   **after** demand transformation, so a head variable may be bound by the
-   caller rather than by a positive body literal — that is what makes
-   `symbol_at(F, Line, S)` legal. A call that leaves a declared-bound position
-   free is `invalid-query` with a hint showing a bound form, not a query that
-   runs slowly and returns `budget-exceeded`.
+7. **Binding by assignment and by generator.** For range restriction (rule 1)
+   and negation safety (rule 2), a variable counts as bound if it appears in a
+   positive literal, **or** is the target of an assignment `X = expr` whose
+   every variable is already bound, **or** is the output of a generator builtin
+   whose inputs are already bound (`between/3`). This is what makes
+   `long_def(S, N) :- def_span(S,A,B,_,_), N = B - A, N > 80.` legal, and
+   `symbol_at` with it.
+
+   Safety is checked on the program **as written**, before any demand
+   transformation. A rule that is safe only after the transformation would be
+   un-evaluable by the naive evaluator, and the naive evaluator is the M1
+   acceptance gate — so the transformation could no longer be differentially
+   tested against anything. Legality and performance stay separate concerns:
+   demand transformation makes safe rules fast, never unsafe rules legal.
 8. **Base/derived exclusivity.** A relation is either supplied by the fact store
    or defined by rules, never both. Writing a rule whose head is a base relation
    is an error naming the relation. This keeps "where did this tuple come from"
