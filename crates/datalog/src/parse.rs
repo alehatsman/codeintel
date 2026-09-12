@@ -426,7 +426,7 @@ mod tests {
     }
 
     fn ok(src: &str) -> Program {
-        p(src).unwrap_or_else(|d| panic!("parse of {src:?} failed: {d}"))
+        p(src).expect("this source parses")
     }
 
     fn message(src: &str) -> String {

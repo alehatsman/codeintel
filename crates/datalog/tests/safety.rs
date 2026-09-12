@@ -29,7 +29,7 @@ fn reject(src: &str) -> String {
 
 fn accept(src: &str) {
     let program = parse(src, &mut Strings::new()).expect("parses");
-    check(&program, base()).unwrap_or_else(|d| panic!("{src:?} should be legal: {d}"));
+    check(&program, base()).expect("this program satisfies the safety rules");
 }
 
 #[test]

@@ -11,15 +11,26 @@
 pub mod ast;
 pub mod atom;
 pub mod check;
+#[cfg(test)]
+mod conformance;
+pub mod db;
 pub mod diag;
+pub mod engine;
 pub mod lex;
+pub mod limits;
+pub mod matcher;
 pub mod parse;
 pub mod relation;
+pub mod solve;
 pub mod strata;
 pub mod symbols;
 
 pub use atom::{Atom, Term};
+pub use db::Db;
 pub use diag::{Diagnostic, Status};
+pub use engine::{Engine, QueryResult};
+pub use limits::{Limits, Stats};
+pub use matcher::{Matcher, Regexes};
 pub use parse::parse;
 pub use relation::Relation;
 pub use symbols::{Strings, Symbols};
