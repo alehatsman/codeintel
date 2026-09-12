@@ -889,3 +889,43 @@ fn the_escape_is_reversible() {
         rows[0]
     );
 }
+
+/// A path constant is diagnosed against the set of indexed files
+/// (`specs/05-surface.md` § Response contract). Paths are what an agent gets
+/// wrong most often, because `ripgrep`, `git diff` and stack traces all emit
+/// absolute or `./`-prefixed forms while the index keys on repo-relative ones.
+#[test]
+fn a_path_constant_is_diagnosed_against_the_indexed_files() {
+    let dir = tree();
+    index(dir.path());
+
+    // A leading `./` is stripped, and the stripped form is reported as indexed.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, "./src/store.rs", _, N)."#);
+    assert!(stderr.contains("repo-relative"), "{stderr}");
+    assert!(stderr.contains("`src/store.rs` is indexed"), "{stderr}");
+
+    // An absolute path likewise, which needs the root canonicalised: the root
+    // as passed is usually `.`, which no absolute path starts with.
+    let absolute = dir.path().join("src/store.rs");
+    let (_, stderr) = query(
+        dir.path(),
+        &format!(r#"?- def(S, "{}", _, N)."#, absolute.display()),
+    );
+    assert!(stderr.contains("repo-relative"), "{stderr}");
+
+    // Right file name, wrong directory: say where it actually is. This is a
+    // fact about the index, not a guess at intent.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, "lib/store.rs", _, N)."#);
+    assert!(stderr.contains("`store.rs` is indexed at"), "{stderr}");
+    assert!(stderr.contains("src/store.rs"), "{stderr}");
+
+    // Nothing by that name at all: say so, and say how to find out what was
+    // skipped rather than leaving the agent to guess that it was.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, "nope/absent.rs", _, N)."#);
+    assert!(stderr.contains("none is named `absent.rs`"), "{stderr}");
+    assert!(stderr.contains("codeintel status"), "{stderr}");
+
+    // An indexed path must NOT be blamed: the emptiness is elsewhere.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, "src/store.rs", "enum", N)."#);
+    assert!(!stderr.contains("no indexed file"), "{stderr}");
+}

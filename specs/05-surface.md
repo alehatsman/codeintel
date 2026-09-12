@@ -477,6 +477,16 @@ contract, and the whole transport is ~150 lines. Recorded in
     an agent that writes `Kind="klass"` needs to see that no such value exists.
     Listing the vocabulary is a fact about the index, not a guess about intent,
     so it stays inside invariant 1 — **do not suggest a replacement value.**
+  - **Path** (`F`, `G`) — the constant an agent gets wrong most often, because
+    paths arrive from `ripgrep`, `git diff` and stack traces, and those emit
+    absolute and `./`-prefixed forms while the index keys on repo-relative
+    ones. Report, in order: that stripping the repo root or a leading `./`
+    yields a path that *is* indexed; else that a file with the same basename is
+    indexed elsewhere; else that neither the path nor the basename is known,
+    with the file count and a pointer to `status` for what was skipped. All
+    three are facts about the index. The basename case in particular separates
+    "you named the wrong directory" from "this file is not indexed at all",
+    which are different problems with different fixes.
   - **Integer** (`Line`, `Col`, `StartLine`, `EndLine`, `StartByte`, `EndByte`)
     — a quoted constant in one of these can *never* match, because an integer
     and its string form are different atoms. Say so and show the unquoted form.

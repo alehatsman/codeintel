@@ -146,7 +146,7 @@ impl fmt::Display for Schema<'_> {
              contains/2 count{X:goal}\n\n\
              NOTES\n  \
              lines 1-based, columns 0-based UTF-8 bytes. < and > are integers only.\n  \
-             integers and their strings are different atoms: Line = \"42\" never matches.\n  \
+             an integer and its string differ: Line = \"42\" never matches. line 0 = n/a.\n  \
              seed impact_of/reach_of with a constant or they go all-pairs.\n  \
              a symbol column already prints `Name path:line` -- do NOT join def/at\n    \
              to see where something is. --raw prints the SymId.\n  \
@@ -208,7 +208,11 @@ pub enum Column {
     Int,
     /// A closed set of strings, listed with this index's counts.
     Vocab(&'static [&'static str]),
-    /// Anything — a symbol id, a path, a name. Nothing useful to say.
+    /// A repo-relative file path. The most common constant an agent writes,
+    /// because it arrives from `ripgrep`, `git diff` and stack traces — which
+    /// are exactly the sources that produce absolute and `./`-prefixed forms.
+    Path,
+    /// Anything — a symbol id, a name. Nothing useful to say.
     Free,
 }
 
@@ -232,6 +236,7 @@ pub fn columns(relation: &str) -> Vec<Column> {
         .filter(|a| !a.is_empty())
         .map(|arg| match arg {
             "Line" | "Col" | "StartLine" | "EndLine" | "StartByte" | "EndByte" => Column::Int,
+            "F" | "G" => Column::Path,
             "Kind" => Column::Vocab(extract::lang::KINDS),
             "Role" => Column::Vocab(extract::lang::ROLES),
             "Prov" => Column::Vocab(PROVS),

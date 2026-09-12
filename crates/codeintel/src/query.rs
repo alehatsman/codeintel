@@ -5,7 +5,7 @@
 //! worst failure this tool has, because it looks like a right one
 //! (`specs/05-surface.md` § `query`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -345,6 +345,11 @@ fn column_hint(
                      different atoms and can never match. write {bare} unquoted"
                 ));
             }
+            Some(schema::Column::Path) if arg.starts_with('"') => {
+                if let Some(said) = path_hint(arg.trim_matches('"'), relations, engine) {
+                    return Some(said);
+                }
+            }
             Some(schema::Column::Vocab(values)) if arg.starts_with('"') => {
                 let counts = vocabulary(relation, i, values, relations, engine);
                 let listed = counts
@@ -372,6 +377,83 @@ fn column_hint(
         }
     }
     None
+}
+
+/// Why a path constant matched nothing, when the answer is knowable.
+///
+/// Paths are the constant an agent is most likely to get wrong, because they
+/// arrive from `ripgrep`, `git diff` and stack traces — all of which emit
+/// absolute or `./`-prefixed forms, while the index keys on repo-relative ones.
+/// Every branch below reports a **fact about the index**: that a normalised
+/// form is indexed, or that a file with this basename is indexed elsewhere.
+/// Neither proposes what the agent meant (invariant 1); they state what exists
+/// and let the agent re-aim.
+fn path_hint(
+    wanted: &str,
+    relations: &BTreeMap<&str, Relation>,
+    engine: &Engine,
+) -> Option<String> {
+    let indexed: BTreeSet<&str> = relations
+        .get("file")
+        .into_iter()
+        .flat_map(Relation::iter)
+        .filter_map(|row| row.first().copied().and_then(|a| engine.resolve(a)))
+        .collect();
+    if indexed.contains(wanted) {
+        return None; // Indexed: the emptiness is elsewhere in the literal.
+    }
+
+    // The shapes the tools an agent pipes from actually emit: a leading `./`,
+    // or an absolute path.
+    //
+    // The absolute case is matched by *suffix at a path boundary*, not by
+    // stripping the root. Stripping cannot be made reliable: `root` as passed
+    // is commonly `.`, so it must be canonicalised, and canonicalising resolves
+    // symlinks — on macOS a path under `/var` canonicalises to `/private/var`,
+    // which is no longer a prefix of what the agent wrote. A suffix match does
+    // not care how the caller reached the directory. The longest match wins, so
+    // an index holding both `a/b.rs` and `x/a/b.rs` reports the more specific.
+    let relative = wanted.strip_prefix("./").unwrap_or_else(|| {
+        indexed
+            .iter()
+            .filter(|p| wanted.len() > p.len() && wanted.ends_with(*p))
+            .filter(|p| {
+                wanted
+                    .as_bytes()
+                    .get(wanted.len() - p.len() - 1)
+                    .is_some_and(|b| *b == b'/')
+            })
+            .max_by_key(|p| p.len())
+            .copied()
+            .unwrap_or(wanted)
+    });
+    if relative != wanted && indexed.contains(relative) {
+        return Some(format!(
+            "paths are repo-relative, and `{relative}` is indexed. \
+             the leading path was not matched literally"
+        ));
+    }
+
+    // Same file name somewhere else is a fact worth stating: it separates "you
+    // mistyped the directory" from "this file is not indexed at all".
+    let base = wanted.rsplit('/').next().unwrap_or(wanted);
+    let same: Vec<&str> = indexed
+        .iter()
+        .copied()
+        .filter(|p| p.rsplit('/').next() == Some(base))
+        .take(3)
+        .collect();
+    if !same.is_empty() {
+        return Some(format!(
+            "no indexed file is `{wanted}`; `{base}` is indexed at: {}",
+            same.join(" ")
+        ));
+    }
+    Some(format!(
+        "no indexed file is `{wanted}`, and none is named `{base}`. \
+         the index holds {} file(s); `codeintel status` says what was skipped",
+        indexed.len()
+    ))
 }
 
 /// This index's count for every value of a closed vocabulary column, in the
