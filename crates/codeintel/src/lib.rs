@@ -22,5 +22,5 @@ pub use index::{Plan, Report};
 pub use load::load_facts;
 pub use query::{Answer, Options};
 pub use regexes::Regexes;
-pub use render::{Rendered, Sites, render, render_row};
+pub use render::{Rendered, Row, Sites, render, render_row};
 pub use status::Status;

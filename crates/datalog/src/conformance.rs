@@ -916,3 +916,38 @@ fn the_negation_backoff_keeps_what_it_can() {
         fell_back.stats.transformed
     );
 }
+
+/// `Stats::empty_at` names the body literal that stopped the join, and it must
+/// keep naming an *outer* literal when the body also contains an aggregate.
+///
+/// `count{}` evaluates a sub-goal through the same recursion, so a shared
+/// high-water mark lets the inner body's depth overwrite the outer one. The
+/// number then indexes the outer plan out of range — the diagnostic silently
+/// degrades — or, with a shorter inner goal, names a literal that was never
+/// reached, which is worse than saying nothing.
+#[test]
+fn an_aggregate_does_not_steal_the_empty_literal() {
+    let program = "\
+        p(\"a\"). p(\"b\"). p(\"c\").\n\
+        q(\"a\"). q(\"b\").\n";
+
+    // No aggregate: the second literal is the one that matches nothing.
+    let mut e = engine(program);
+    let plain = e
+        .query("?- p(X), r(X).", &Limits::default())
+        .expect("answers");
+    assert!(plain.rows.is_empty());
+    assert_eq!(plain.stats.empty_at.as_deref(), Some("r(X)"));
+
+    // With an aggregate whose sub-goal is *longer* than the outer body, the
+    // shared cell used to push the mark past the end of the outer plan.
+    let mut e = engine(program);
+    let counted = e
+        .query(
+            "?- p(X), N = count{ Y : p(Y), q(Y), p(Y) }, N > 99.",
+            &Limits::default(),
+        )
+        .expect("answers");
+    assert!(counted.rows.is_empty());
+    assert_eq!(counted.stats.empty_at.as_deref(), Some("N > 99"));
+}

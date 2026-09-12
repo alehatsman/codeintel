@@ -3,12 +3,17 @@
 //! A raw `SymId` is a ~68-character SCIP string — unreadable, and impossible to
 //! retype correctly. Every column that holds one renders as `Name path:line`
 //! instead (`specs/05-surface.md` § Symbol rendering). That is presentation
-//! only: the tuple is unchanged and `--raw` is what round-trips.
+//! only: the tuple is unchanged and the raw form is what round-trips.
 //!
-//! One printed field per column, always. A symbol's name and location are
-//! joined by a space rather than a tab, so the text form stays exactly as wide
-//! as `columns` says it is — a consumer that splits on tabs is never handed a
-//! ragged table.
+//! **Both forms of a row are produced together, and the set is ordered once.**
+//! Rendering twice and sorting each result independently gives two arrays whose
+//! `i`th entries describe different tuples — so a consumer that shows the
+//! display form and feeds the raw form into its next query binds the wrong
+//! symbol. The two notations are one answer and are kept in one order.
+//!
+//! Values stay a `Vec<String>` until the moment of printing. Joining on tabs
+//! and splitting back apart loses the column boundaries of any value that
+//! contains a tab, which doc comments do.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -39,7 +44,7 @@ impl Sites {
     /// Build the table from the index's base relations.
     ///
     /// One pass over `def` and one over `def_span` — both are already loaded,
-    /// and both are sorted by symbol, so this costs a walk and nothing else.
+    /// so this costs a walk and nothing else.
     #[must_use]
     pub fn of(relations: &BTreeMap<&str, Relation>) -> Self {
         let mut sites: HashMap<Atom, Site> = HashMap::new();
@@ -68,107 +73,239 @@ impl Sites {
         Self { sites }
     }
 
-    /// One cell, rendered. A symbol becomes `Name path:line`; anything else is
+    /// One cell, expanded. A symbol becomes `Name path:line`; anything else is
     /// its own text.
-    fn cell(&self, engine: &Engine, atom: Atom) -> String {
-        let text = |a: Atom| -> String {
-            engine
-                .resolve(a)
-                .map_or_else(|| a.to_string(), ToString::to_string)
-        };
+    fn display(&self, engine: &Engine, atom: Atom) -> String {
         let Some(site) = self.sites.get(&atom) else {
-            return text(atom);
+            return raw(engine, atom);
         };
+        let (name, file) = (raw(engine, site.name), raw(engine, site.file));
         match site.line {
             // A symbol with no span still renders as its name: a bare SymId is
             // no more useful for having no location.
-            None => format!("{} {}", text(site.name), text(site.file)),
-            Some(line) => format!("{} {}:{}", text(site.name), text(site.file), text(line)),
+            None => format!("{name} {file}"),
+            Some(line) => format!("{name} {file}:{}", raw(engine, line)),
         }
     }
 }
 
-/// A rendered result, and whether printing it hit a cap.
+/// One atom as itself: an integer as digits, a string as its text.
+fn raw(engine: &Engine, atom: Atom) -> String {
+    engine
+        .resolve(atom)
+        .map_or_else(|| atom.to_string(), ToString::to_string)
+}
+
+/// One result row, in both notations. The two `Vec`s are the same length as
+/// `columns` and describe the same tuple.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// One value per column, symbols expanded.
+    pub display: Vec<String>,
+    /// One value per column, atoms as themselves. This is what round-trips
+    /// into another query's literal.
+    pub raw: Vec<String>,
+}
+
+impl Row {
+    /// The printed line: values separated by tabs.
+    #[must_use]
+    pub fn line(&self, raw: bool) -> String {
+        let values = if raw { &self.raw } else { &self.display };
+        values.join("\t")
+    }
+}
+
+/// A rendered result, and whether printing it hit the byte cap.
 #[derive(Debug, Clone, Default)]
 pub struct Rendered {
-    /// The rows, sorted lexicographically by their printed text.
-    pub rows: Vec<String>,
-    /// True when `max_result_bytes` dropped rows here rather than in the engine.
+    /// The rows, ordered lexicographically by their display text.
+    pub rows: Vec<Row>,
+    /// True when `max_result_bytes` dropped rows.
     pub truncated: bool,
 }
 
-/// Render every row, cap the total bytes, then sort.
+/// Render every row in both notations, cap the printed bytes, then order.
 ///
-/// The byte cap is applied to the **rendered** text, not to the engine's
-/// estimate over raw atoms: symbol expansion is what the consumer's context
-/// window actually pays for, and the engine cannot know about it without
-/// learning what a symbol is (`specs/00-overview.md` invariant 6).
+/// `raw` selects which notation the byte cap is measured against, because that
+/// is the one that will be printed. Both notations are produced either way: the
+/// JSON response carries them side by side.
 ///
-/// Capping before sorting keeps a truncated answer the engine's stable prefix
-/// rather than a re-sorted sample of it (`specs/05-surface.md` § `query`).
+/// **Ordering is always by the display text**, whichever notation is printed.
+/// The engine's own order is by atom, which is dictionary insertion order, so a
+/// cold index and an incrementally-updated one would print the same rows in
+/// different orders (`specs/05-surface.md` § `query`). Ordering both notations
+/// by one key also means `--raw` and the default print the same answer in the
+/// same sequence, rather than two shuffles of it.
+///
+/// The cap runs **before** the sort, so a truncated answer is the engine's
+/// stable prefix rather than a re-sorted sample of it.
 #[must_use]
 pub fn render(
     engine: &Engine,
     result: &QueryResult,
     sites: &Sites,
-    raw: bool,
+    raw_wanted: bool,
     max_bytes: usize,
 ) -> Rendered {
-    let mut rows = Vec::with_capacity(result.rows.len());
+    let mut rows: Vec<Row> = Vec::with_capacity(result.rows.len());
     let mut bytes = 0usize;
     let mut truncated = false;
-    for row in &result.rows {
-        let line = row
-            .iter()
-            .map(|a| {
-                if raw {
-                    engine
-                        .resolve(*a)
-                        .map_or_else(|| a.to_string(), ToString::to_string)
-                } else {
-                    sites.cell(engine, *a)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\t");
-        if bytes + line.len() + 1 > max_bytes {
+    for tuple in &result.rows {
+        let row = Row {
+            display: tuple.iter().map(|a| sites.display(engine, *a)).collect(),
+            raw: tuple.iter().map(|a| raw(engine, *a)).collect(),
+        };
+        // The newline the caller will print is part of what the consumer pays.
+        let width = row.line(raw_wanted).len() + 1;
+        if bytes + width > max_bytes {
             truncated = true;
             break;
         }
-        bytes += line.len() + 1;
-        rows.push(line);
+        bytes += width;
+        rows.push(row);
     }
-    rows.sort();
+    rows.sort_by(|a, b| a.display.cmp(&b.display));
     Rendered { rows, truncated }
 }
 
-/// One row rendered with no symbol expansion: integers as digits, strings as
-/// themselves. The form fact files and goldens are written in.
+/// One row with no symbol expansion. The form fact files and goldens are
+/// written in.
 #[must_use]
 pub fn render_row(engine: &Engine, row: &[Atom]) -> String {
     row.iter()
-        .map(|a| {
-            engine
-                .resolve(*a)
-                .map_or_else(|| a.to_string(), ToString::to_string)
-        })
+        .map(|a| raw(engine, *a))
         .collect::<Vec<_>>()
         .join("\t")
 }
 
-/// Append `text` and a newline to a report.
-///
-/// `write!` into a `String` cannot fail, but the lint block rejects both
-/// `let _ = write!(..)` and `push_str(&format!(..))`. This is the third
-/// option: the caller formats, this appends, and nothing pretends to handle an
-/// error that cannot happen.
-pub(crate) fn line(out: &mut String, text: &str) {
-    out.push_str(text);
-    out.push('\n');
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datalog::{Limits, Strings};
 
-/// Append `text` with no newline. The same reasoning as [`line`], for the
-/// places that build one line out of several pieces.
-pub(crate) fn push(out: &mut String, text: &str) {
-    out.push_str(text);
+    /// An engine holding three definitions whose display order is the reverse
+    /// of their raw order: the `SymId` sorts by path, the display form by name.
+    fn engine() -> (Engine, Sites) {
+        let mut engine = Engine::new(Box::new(Strings::new()));
+        let mut def = Relation::new(4);
+        let mut span = Relation::new(5);
+        let mut relations = BTreeMap::new();
+        for (path, name, line) in [
+            ("src/a.rs", "zulu", 10u32),
+            ("src/m.rs", "mike", 20),
+            ("src/z.rs", "alpha", 30),
+        ] {
+            let symbol = engine
+                .intern(&format!("local {path} {name}()."))
+                .expect("room");
+            let file = engine.intern(path).expect("room");
+            let name = engine.intern(name).expect("room");
+            let kind = engine.intern("function").expect("room");
+            assert!(def.push(&[symbol, file, kind, name]));
+            assert!(span.push(&[symbol, line, line, 0, 0]));
+        }
+        def.settle();
+        span.settle();
+        relations.insert("def", def.clone());
+        relations.insert("def_span", span.clone());
+        let sites = Sites::of(&relations);
+        engine.insert_relation("def", def);
+        engine.insert_relation("def_span", span);
+        (engine, sites)
+    }
+
+    fn rendered(max_bytes: usize, raw_wanted: bool) -> Rendered {
+        let (mut engine, sites) = engine();
+        let result = engine
+            .query("?- def(S, F, _, N).", &Limits::default())
+            .expect("the query runs");
+        render(&engine, &result, &sites, raw_wanted, max_bytes)
+    }
+
+    #[test]
+    fn both_notations_describe_the_same_tuple_at_the_same_index() {
+        // Rendering each notation separately and sorting both gives two arrays
+        // whose `i`th rows are different tuples — so a consumer that shows the
+        // display form and feeds the raw form back binds the wrong symbol.
+        let out = rendered(usize::MAX, false);
+        assert_eq!(out.rows.len(), 3);
+        for row in &out.rows {
+            let name = row.raw.get(2).expect("the Name column");
+            let symbol = row.display.first().expect("the symbol column");
+            assert!(
+                symbol.starts_with(name),
+                "display {symbol:?} does not describe raw {:?}",
+                row.raw
+            );
+        }
+    }
+
+    #[test]
+    fn the_order_is_the_display_text_whichever_notation_is_printed() {
+        // One answer in two notations, not two shuffles of it.
+        let display = rendered(usize::MAX, false);
+        let raw = rendered(usize::MAX, true);
+        let names: Vec<&str> = display
+            .rows
+            .iter()
+            .map(|r| r.raw[2].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["alpha", "mike", "zulu"], "not in display order");
+        assert_eq!(
+            display.rows, raw.rows,
+            "--raw reordered an answer it only reprints"
+        );
+    }
+
+    #[test]
+    fn the_byte_cap_counts_the_printed_form_not_the_raw_one() {
+        // The raw rows here are much wider than the display rows. A cap set to
+        // fit two display rows must yield two rows — measuring the raw width
+        // instead would drop one that fits.
+        let all = rendered(usize::MAX, false);
+        let two: usize = all
+            .rows
+            .iter()
+            .take(2)
+            .map(|r| r.line(false).len() + 1)
+            .sum();
+        let out = rendered(two, false);
+        assert_eq!(out.rows.len(), 2, "{:?}", out.rows);
+        assert!(out.truncated);
+
+        // And the raw notation is measured when it is the one being printed.
+        let raw_two: usize = all
+            .rows
+            .iter()
+            .take(2)
+            .map(|r| r.line(true).len() + 1)
+            .sum();
+        assert!(
+            raw_two > two,
+            "the fixture does not exercise the difference"
+        );
+        assert_eq!(rendered(raw_two, true).rows.len(), 2);
+    }
+
+    #[test]
+    fn a_value_holding_a_tab_stays_one_value() {
+        // Values are carried structurally, so a doc comment with a tab in it
+        // cannot arrive as more values than there are columns.
+        let (mut engine, sites) = engine();
+        let mut doc = Relation::new(2);
+        let symbol = engine.intern("local src/a.rs zulu().").expect("room");
+        let text = engine.intern("a doc\twith a tab").expect("room");
+        assert!(doc.push(&[symbol, text]));
+        doc.settle();
+        engine.insert_relation("def_doc", doc);
+
+        let result = engine
+            .query("?- def_doc(S, D).", &Limits::default())
+            .expect("the query runs");
+        let out = render(&engine, &result, &sites, false, usize::MAX);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0].raw.len(), result.columns.len());
+        assert_eq!(out.rows[0].raw[1], "a doc\twith a tab");
+    }
 }

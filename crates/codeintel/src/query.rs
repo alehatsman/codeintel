@@ -14,7 +14,7 @@ use datalog::{Engine, Limits, Relation};
 use facts::{Lock, Store};
 
 use crate::index::{self, Plan};
-use crate::render::Sites;
+use crate::render::{Row, Sites};
 use crate::status::Status;
 use crate::{Regexes, render};
 
@@ -33,6 +33,15 @@ pub const MAX_REFRESH_MS: u64 = 2_000;
 /// fresh install — the exact failure invariant 6 exists to prevent
 /// (`docs/plan.md` M3).
 pub const SCIP_BACKED: &[&str] = &["scip_ref", "resolved", "implements", "extern"];
+
+/// How much larger the engine's raw-atom byte budget is than the printed one.
+///
+/// The engine caps the bytes *it* materialises, measured over raw atoms; this
+/// host prints a strictly shorter form. The multiplier keeps the engine's cap
+/// from being the one that fires — which would truncate rows that fit the
+/// printed budget — while still bounding materialisation, since a caller may
+/// raise `--limit` without bound.
+const RAW_BYTE_HEADROOM: usize = 8;
 
 /// What the caller asked for.
 #[derive(Debug, Clone)]
@@ -65,11 +74,9 @@ pub struct Answer {
     pub status: Status,
     /// Variable names from the goal, in order of first appearance.
     pub columns: Vec<String>,
-    /// Rendered rows, sorted lexicographically by their printed text.
-    pub rows: Vec<String>,
-    /// The same rows with no symbol expansion — what round-trips into another
-    /// query's literal. Equal to `rows` under `--raw`.
-    pub raw_rows: Vec<String>,
+    /// The rows, in both notations, ordered once by the display text. The two
+    /// notations of a row describe the same tuple at the same index.
+    pub rows: Vec<Row>,
     /// True when a cap dropped rows.
     pub truncated: bool,
     /// Which cap fired.
@@ -96,7 +103,6 @@ impl Answer {
             status,
             columns: Vec::new(),
             rows: Vec::new(),
-            raw_rows: Vec::new(),
             truncated: false,
             cap: None,
             hint: Some(hint.into()),
@@ -162,8 +168,17 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         .load_rules(STDLIB)
         .map_err(|d| anyhow::anyhow!("rules/stdlib.dl does not load: {}", d.message))?;
 
+    let budget = Limits::default().max_result_bytes;
     let mut limits = Limits::default();
     limits.max_result_rows = options.limit;
+    // The engine measures its cap over **raw** atoms, and this host prints a
+    // shorter form: a ~68-character `SymId` renders as `name path:line`. If the
+    // engine held the printed budget it would always be the cap that fires, and
+    // it would fire on rows that would have fit — the user would silently get a
+    // fraction of the answer the budget allows. So the engine's cap becomes a
+    // memory guard with headroom, and the printed budget is enforced where the
+    // printed bytes exist (`specs/05-surface.md` § Symbol rendering).
+    limits.max_result_bytes = budget.saturating_mul(RAW_BYTE_HEADROOM);
     let result = match engine.query(program, &limits) {
         Ok(result) => result,
         Err(diagnostic) => {
@@ -174,21 +189,9 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         }
     };
 
-    // Rendered first: symbol expansion is what the consumer's context window
-    // pays for, so the byte cap is applied to the printed text and can fire
-    // here even when the engine's estimate over raw atoms did not.
-    let printed = render(
-        &engine,
-        &result,
-        &sites,
-        options.raw,
-        limits.max_result_bytes,
-    );
-    let raw_rows = if options.raw {
-        printed.rows.clone()
-    } else {
-        render(&engine, &result, &sites, true, limits.max_result_bytes).rows
-    };
+    // One render, one order. Rendering each notation separately and sorting
+    // both would give two arrays whose `i`th rows are different tuples.
+    let printed = render(&engine, &result, &sites, options.raw, budget);
     let truncated = result.truncated || printed.truncated;
     let cap = result
         .cap
@@ -196,10 +199,16 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
 
     if truncated {
         status = Status::Truncated;
-        hint = Some(format!(
-            "{} fired; raise it with --limit or narrow the query",
-            cap.unwrap_or("a cap")
-        ));
+        // `--limit` moves `max_result_rows` and nothing else, so offering it
+        // against a byte cap is advice that changes nothing.
+        hint = Some(match cap {
+            Some("max_result_rows") => format!(
+                "max_result_rows fired at {}; raise it with --limit or narrow the query",
+                options.limit
+            ),
+            Some(fired) => format!("{fired} fired at {budget} bytes; narrow the query"),
+            None => "a cap fired; narrow the query".to_string(),
+        });
     } else if status == Status::Ok
         && let Some((scip_status, scip_hint)) = scip.verdict(&result.stats.depends, &langs)
     {
@@ -218,7 +227,6 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         status,
         columns: result.columns.clone(),
         rows: printed.rows,
-        raw_rows,
         truncated,
         cap,
         hint,
@@ -421,9 +429,15 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
         "columns": answer.columns,
         // The raw atoms, always: a programmatic consumer must never have to
         // parse the pretty form back apart (`specs/05-surface.md` § Symbol
-        // rendering). `display` is the same rows with symbols expanded.
-        "rows": answer.raw_rows.iter().map(|r| r.split('\t').collect::<Vec<_>>()).collect::<Vec<_>>(),
-        "display": answer.rows.iter().map(|r| r.split('\t').collect::<Vec<_>>()).collect::<Vec<_>>(),
+        // rendering). `display` is the same rows, in the same order, with
+        // symbols expanded — so `rows[i]` and `display[i]` are one tuple in two
+        // notations.
+        //
+        // Values are carried structurally rather than tab-joined and split back
+        // apart: a doc comment containing a tab would otherwise arrive as more
+        // values than there are columns.
+        "rows": answer.rows.iter().map(|r| &r.raw).collect::<Vec<_>>(),
+        "display": answer.rows.iter().map(|r| &r.display).collect::<Vec<_>>(),
         "truncated": answer.truncated,
         "cap": answer.cap,
         "hint": answer.hint,

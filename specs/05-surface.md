@@ -194,6 +194,29 @@ pays for, and `crates/datalog` cannot account for it without learning what a
 symbol is (invariant 6). It is applied before the sort, so a truncated answer is
 still the engine's stable prefix.
 
+For that to be true the engine's own cap must not be the one that fires. The
+rendered form is **shorter** than the raw one — a ~68-character `SymId` becomes
+`name path:line` — so an engine holding the printed budget would truncate rows
+that fit it, and the caller would silently receive a fraction of the answer the
+budget allows. The host therefore gives the engine the same budget with
+headroom, where it serves as a bound on materialisation rather than as the
+answer's size limit.
+
+**Both notations of a row are produced together and ordered once**, by the
+display text. Rendering each separately and sorting each gives two arrays whose
+`i`th entries are different tuples, so a consumer that shows the display form
+and feeds the raw form into its next query binds the wrong symbol. One
+consequence worth stating: `--raw` prints the same rows in the same order as the
+default, because it is the same answer in a different notation.
+
+Values are carried structurally — one string per column — until the moment of
+printing. Tab-joining and splitting back apart loses the column boundaries of
+any value containing a tab, which doc comments do.
+
+**A truncation hint names a knob that exists.** `--limit` moves
+`max_result_rows` and nothing else, so it is offered only when that is the cap
+that fired; a byte cap says "narrow the query".
+
 ### `schema`
 
 Prints the relation catalog, atom vocabularies, and stdlib rule signatures.

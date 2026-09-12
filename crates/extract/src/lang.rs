@@ -32,6 +32,22 @@ pub const KINDS: &[&str] = &[
     "unknown",
 ];
 
+/// Every `Role` an occurrence can carry (`specs/01-facts.md` § Atom
+/// vocabularies), in the order that spec lists them.
+///
+/// The vocabulary lives here beside [`KINDS`] so there is one list to read and
+/// one list to print. `scip.rs` maps SCIP's role bits onto these names and a
+/// test there asserts it produces nothing outside this set.
+pub const ROLES: &[&str] = &[
+    "def",
+    "read",
+    "write",
+    "import",
+    "test",
+    "generated",
+    "forward",
+];
+
 /// Kinds that own methods: a `function` defined inside one becomes a `method`.
 ///
 /// Shared across every language rather than decided in each `tags.scm`, because

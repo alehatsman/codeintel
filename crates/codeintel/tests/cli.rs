@@ -249,14 +249,30 @@ fn json_carries_the_raw_atoms_and_the_display_form() {
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("the answer is JSON");
     let rows = json["rows"].as_array().expect("rows");
     let display = json["display"].as_array().expect("display");
+    let columns = json["columns"].as_array().expect("columns").len();
     assert_eq!(rows.len(), display.len());
     assert!(!rows.is_empty());
     assert_ne!(rows[0], display[0], "display is not expanded");
-    assert_eq!(
-        rows[0].as_array().map(Vec::len),
-        json["columns"].as_array().map(Vec::len),
-        "a row is one value per column"
-    );
+
+    // The two arrays are one answer in two notations. Rendering each
+    // separately and sorting both gives arrays whose `i`th rows are different
+    // tuples — and a consumer that shows `display[i]` then feeds `rows[i]`
+    // into its next query binds the wrong symbol. `?- def(S, F, "function", N)`
+    // returns S, F and N, so the display of S must start with that row's own N.
+    for (raw, shown) in rows.iter().zip(display) {
+        let raw = raw.as_array().expect("a row is an array of values");
+        let shown = shown.as_array().expect("a row is an array of values");
+        assert_eq!(raw.len(), columns, "one value per column");
+        assert_eq!(shown.len(), columns, "one value per column");
+
+        let name = raw[2].as_str().expect("the Name column");
+        let symbol = shown[0].as_str().expect("the symbol column");
+        assert!(
+            symbol.starts_with(name),
+            "display {symbol:?} does not describe raw {:?}",
+            raw[0]
+        );
+    }
 }
 
 #[test]

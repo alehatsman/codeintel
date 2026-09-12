@@ -539,6 +539,19 @@ mod tests {
     }
 
     #[test]
+    fn the_role_table_lands_inside_our_vocabulary() {
+        // `codeintel schema` prints `lang::ROLES` with a count against each.
+        // A role this table can emit but that list does not name would be a
+        // value an agent is never told exists.
+        for (bit, name) in ROLES {
+            assert!(
+                crate::lang::ROLES.contains(name),
+                "{bit:?} -> {name} is not a Role"
+            );
+        }
+    }
+
+    #[test]
     fn the_kind_table_lands_inside_our_vocabulary() {
         for (from, to) in KIND_MAP {
             assert!(

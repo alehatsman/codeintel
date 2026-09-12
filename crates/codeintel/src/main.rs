@@ -7,8 +7,10 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use codeintel::census::{Census, Report};
 use codeintel::index::{self, Plan};
 use codeintel::query::{self, Options};
+use codeintel::schema::{self, Schema};
 use facts::{Lock, Store};
 
 /// Query structural facts about a source tree with Datalog.
@@ -124,14 +126,16 @@ fn run() -> Result<ExitCode> {
 /// when there is one; with none, every count is zero and the output says so
 /// rather than printing a static list that looks like an inventory.
 fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
-    let census = census_of(path, false)?;
+    let (store, _) = open(path)?;
+    let census = Census::of(&store)?;
+    let schema = Schema { census: &census };
     match format {
-        Format::Text => print!("{}", codeintel::schema::render(&census)),
+        Format::Text => print!("{schema}"),
         Format::Json => println!(
             "{}",
             serde_json::json!({
-                "text": codeintel::schema::render(&census),
-                "rules": codeintel::schema::rules(codeintel::schema::STDLIB)
+                "text": schema.to_string(),
+                "rules": schema::rules(schema::STDLIB)
                     .iter()
                     .map(|r| serde_json::json!({ "head": r.head, "doc": r.doc }))
                     .collect::<Vec<_>>(),
@@ -144,33 +148,28 @@ fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
 /// Index freshness and per-language counts. `--format json` is the bug-report
 /// artifact for a tool with no telemetry.
 fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
-    let root = path
-        .canonicalize()
-        .with_context(|| format!("{} does not exist", path.display()))?;
-    let store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
-    let census = codeintel::census::Census::of(&store)?.with_unsupported(&root);
+    let (store, root) = open(path)?;
+    let census = Census::of(&store)?.with_unsupported(&root);
+    let report = Report {
+        census: &census,
+        manifest: store.manifest(),
+    };
     match format {
-        Format::Text => print!("{}", codeintel::census::text(&census, store.manifest())),
-        Format::Json => println!("{}", codeintel::census::json(&census, store.manifest())),
+        Format::Text => print!("{report}"),
+        Format::Json => println!("{}", report.json()),
     }
     // A missing index is a fact about this directory, not a failure of the
     // command that reported it.
     Ok(ExitCode::SUCCESS)
 }
 
-/// Open the index under `path` and count it. A directory with no index yields
-/// a census with every count at zero and `indexed: false`.
-fn census_of(path: &std::path::Path, walk: bool) -> Result<codeintel::census::Census> {
+/// Open the store under `path`, returning it and the canonical root.
+fn open(path: &std::path::Path) -> Result<(Store, PathBuf)> {
     let root = path
         .canonicalize()
         .with_context(|| format!("{} does not exist", path.display()))?;
     let store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
-    let census = codeintel::census::Census::of(&store)?;
-    Ok(if walk {
-        census.with_unsupported(&root)
-    } else {
-        census
-    })
+    Ok((store, root))
 }
 
 fn index_cmd(
@@ -356,7 +355,7 @@ fn query_cmd(
         Format::Json => println!("{}", query::to_json(&answer)),
         Format::Text => {
             for row in &answer.rows {
-                println!("{row}");
+                println!("{}", row.line(raw));
             }
             // The status goes to stderr so that stdout is exactly the rows —
             // but it is never omitted, because `ok` with zero rows and a

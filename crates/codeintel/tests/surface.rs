@@ -229,3 +229,87 @@ fn status_with_no_index_is_an_answer_not_a_failure() {
     assert!(text.contains("status: no-index"), "{text}");
     assert!(text.contains("run: codeintel index ."), "{text}");
 }
+
+#[test]
+fn a_wrapped_rule_doc_is_joined_not_dropped() {
+    // `about` is the one relation designed to answer everything in one round
+    // trip, and its `Rel` vocabulary does not fit on one line. A parser that
+    // demanded a signature on every `%%` line dropped the continuation, so an
+    // agent learned five of the ten values and would never ask for the rest.
+    let about = schema::rules(schema::STDLIB)
+        .into_iter()
+        .find(|r| r.head.starts_with("about("))
+        .expect("about is advertised");
+    for value in [
+        "sig",
+        "doc",
+        "defined",
+        "parent",
+        "caller",
+        "callee",
+        "implements",
+        "implementor",
+        "test",
+        "extern",
+    ] {
+        assert!(about.doc.contains(value), "`{value}` is not advertised");
+    }
+    assert!(
+        !about.doc.ends_with('|'),
+        "truncated at a wrap: {}",
+        about.doc
+    );
+
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    assert!(stdout(dir.path(), &["schema"]).contains("implementor"));
+}
+
+#[test]
+fn every_relation_has_a_signature_of_the_right_arity() {
+    // `signature()` is hand-written because argument *names* carry the
+    // meaning, so it can drift from `facts::RELATIONS`. Adding a relation
+    // without an entry would print a blank argument list in the project's
+    // most-read output.
+    for rel in facts::RELATIONS {
+        let (args, _) = schema::signature(rel.name);
+        assert!(!args.is_empty(), "{} has no signature", rel.name);
+        let head = format!("{}{args}", rel.name);
+        let (name, arity) = schema::split_head(&head)
+            .unwrap_or_else(|| panic!("{} has a malformed signature {args}", rel.name));
+        assert_eq!(name, rel.name);
+        assert_eq!(arity, rel.arity, "{} signature is {args}", rel.name);
+    }
+}
+
+#[test]
+fn the_value_vocabularies_are_the_extractors_own() {
+    // Re-declaring them here would let `schema` advertise a kind the extractor
+    // cannot emit, or hide one it does.
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let text = stdout(dir.path(), &["schema"]);
+    for kind in extract::lang::KINDS {
+        assert!(text.contains(&format!(" {kind} ")), "{kind} is not listed");
+    }
+    for role in extract::lang::ROLES {
+        assert!(text.contains(&format!(" {role} ")), "{role} is not listed");
+    }
+}
+
+#[test]
+fn status_with_no_index_does_not_walk_the_tree() {
+    // The walk is a full gitignore-aware traversal, and with no index there is
+    // nothing to report an unindexed extension against.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("notes.md"), "# hello\n").expect("write");
+    let out = stdout(dir.path(), &["status", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_str(&out).expect("JSON");
+    assert_eq!(json["status"], "no-index");
+    assert!(
+        json["unsupported"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty),
+        "{json}"
+    );
+}

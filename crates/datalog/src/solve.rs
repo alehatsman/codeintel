@@ -539,7 +539,14 @@ impl Solver<'_> {
         let mut scratch = Relation::new(1);
         let mut inner = env.clone();
         let order = self.plan(goal, None);
-        self.step(goal, &order, 0, &mut inner, None, &[over], &mut scratch)?;
+        // The sub-goal has its own literal positions, and they are meaningless
+        // against the outer body's plan. Without this the aggregate's depth
+        // leaks into `deepest` and `empty_at` names the wrong literal — or an
+        // out-of-range one, which degrades to the generic message.
+        let outer = self.deepest.get();
+        let counted = self.step(goal, &order, 0, &mut inner, None, &[over], &mut scratch);
+        self.deepest.set(outer);
+        counted?;
         scratch.settle();
         let n = i64::try_from(scratch.len()).unwrap_or(i64::MAX);
         crate::atom::int_atom(n).ok_or_else(|| {
