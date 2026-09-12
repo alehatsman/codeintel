@@ -724,7 +724,7 @@ row. The prior estimate assumed vendoring, and vendoring does not work.
 
 | Language | Grammar | SCIP indexer | Notes |
 |---|---|---|---|
-| Go | `tree-sitter-go` 0.25.0 | `scip-go` | upstream emits `@definition.type` and five bare `@name` captures with no tag at all |
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` | **shipped.** upstream emits `@definition.type` and five bare `@name` captures with no tag at all |
 | Python | `tree-sitter-python` 0.25.0 | `scip-python` | upstream has **no** `@definition.method`; `scip-python` has had no human commit on its default branch since 2025-09-05 |
 
 Python's tier B is on notice. `scip-python` has three open correctness bugs, one
@@ -751,6 +751,46 @@ there is no `@reference.call` at all. The whole query is ours. Two grammars
   across language boundaries.
 - **Go methods resolve to their type**, not to the file — the case where lexical
   and semantic containment visibly disagree.
+
+### What Go cost, and the one thing it changed
+
+**Shipped.** 9 kinds, 100% anchor rate against `scip-go` 0.2.7, 4 exact `calls`
+edges on the fixture, 13 extractor tests and 9 end-to-end. Roughly 110 lines of
+query, one `lang.rs` row, and a fixture — under the ~1,000-LOC estimate, because
+the estimate was priced against dex's per-language *Rust*, and there is none
+here. `crates/extract/src` grew by the `@owner` resolver and nothing else.
+
+**One capture was added to the convention, not one code path.** A Go method is
+declared at file scope and names its owner in its own receiver, so span nesting
+had no answer — and not merely an imprecise one: the synthesized symbol was
+`local store.go Get().`, which every type in the file with a `Get` method would
+claim. `@owner` ([02-extraction.md](../specs/02-extraction.md) § `@owner`) is
+the receiver's type name, resolved against the unenclosed type-like definitions
+of the same file, with zero-or-two candidates meaning **no override** rather
+than a choice. It is data in `tags.scm`, so the language that needs it next —
+C++'s out-of-line `void Foo::bar()` — costs a pattern.
+
+Three smaller things the fixture forced, all language-general:
+
+- **`keyword_kinds`.** A Go definition is the *spec* node (`const_spec`,
+  `type_spec`) so a grouped `const ( A = 1 \n B = 2 )` yields two spans instead
+  of one claimed twice. That leaves `const` a preceding sibling, and without it
+  `def_sig` read `Limit` — a name with no statement of what it is.
+- **The preamble walk ascends.** With the definition one level down, every Go
+  type's doc comment was a sibling of the enclosing *declaration* and was
+  missed. It now steps up when nothing else precedes it inside its parent and
+  the parent begins where it has already walked back to.
+- **A SCIP document may not escape the repository root.** `scip-go` emits the
+  generated test-main for a package with tests out of the Go build cache, and
+  the document arrives as `../../../../../../Library/Caches/go-build/…`.
+  Ingesting it put a `file` row outside the tree and gave `calls` an edge whose
+  caller was a path no reader could open. Skipped and named, like every other
+  unusable document.
+
+One deviation from the done-when: the polyglot fixture is **Rust + Go**, since
+Python and TypeScript do not exist yet. It asserts what the four-language
+version will — one walk, one dictionary, one store, and a single query answered
+across both grammars — and extending it is adding a directory.
 
 ### Dropped
 

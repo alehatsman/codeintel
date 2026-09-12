@@ -472,7 +472,7 @@ work.
 | Language | Grammar crate | SCIP indexer | Lands |
 |---|---|---|---|
 | Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | M2 / M3 |
-| Go | `tree-sitter-go` 0.25.0 | `scip-go` | M5a |
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` | M5a — **landed** |
 | Python | `tree-sitter-python` 0.25.0 | `scip-python` | M5a |
 | TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | M5b |
 
@@ -492,7 +492,16 @@ than silently empty.
 One risk to check at M5: the grammar crates span tree-sitter ABI versions
 (0.23.x through 0.25.x against a 0.27 runtime). tree-sitter maintains ABI
 compatibility across a range, but a grammar should be smoke-loaded before
-anything is built on it.
+anything is built on it. Checked for Go: `tree-sitter-go` 0.25.0 loads and its
+queries compile against the 0.27 runtime, both asserted by tests over every
+registered language rather than over Rust alone.
+
+`scip-go` has **moved out of the Sourcegraph org**. It installs from
+`github.com/scip-code/scip-go/cmd/scip-go`; the old `sourcegraph` path fails
+`go install` with a module-path conflict, not a 404, so the error names
+neither the move nor the replacement. Recorded in
+[02-extraction.md](../specs/02-extraction.md) § Acquisition, which is where
+someone hits it.
 
 ---
 

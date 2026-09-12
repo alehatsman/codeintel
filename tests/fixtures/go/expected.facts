@@ -1,0 +1,190 @@
+def("local app/app.go Start().", "app/app.go", "function", "Start").
+def("local db/conn.go Open().", "db/conn.go", "function", "Open").
+def("local kinds.go Banner.", "kinds.go", "variable", "Banner").
+def("local kinds.go Config#", "kinds.go", "struct", "Config").
+def("local kinds.go Config#Handle().", "kinds.go", "method", "Handle").
+def("local kinds.go Config#Limit.", "kinds.go", "field", "Limit").
+def("local kinds.go Config#describe().", "kinds.go", "method", "describe").
+def("local kinds.go Config#quiet.", "kinds.go", "field", "quiet").
+def("local kinds.go Handler#", "kinds.go", "interface", "Handler").
+def("local kinds.go Handler#Handle().", "kinds.go", "method", "Handle").
+def("local kinds.go Key#", "kinds.go", "typealias", "Key").
+def("local kinds.go Limit.", "kinds.go", "constant", "Limit").
+def("local kinds.go Mode#", "kinds.go", "type", "Mode").
+def("local net/conn.go Open().", "net/conn.go", "function", "Open").
+def("local store/store.go Entry#", "store/store.go", "struct", "Entry").
+def("local store/store.go Entry#Describe().", "store/store.go", "method", "Describe").
+def("local store/store.go Entry#Value.", "store/store.go", "field", "Value").
+def("local store/store.go Store#", "store/store.go", "struct", "Store").
+def("local store/store.go Store#Get().", "store/store.go", "method", "Get").
+def("local store/store.go Store#Put().", "store/store.go", "method", "Put").
+def("local store/store.go Store#entries.", "store/store.go", "field", "entries").
+def("local store/store.go Store#evict().", "store/store.go", "method", "evict").
+def("local store/store.go Warm().", "store/store.go", "function", "Warm").
+def("local store/store_test.go TestWarm().", "store/store_test.go", "function", "TestWarm").
+def("local ui/panel.go Draw().", "ui/panel.go", "function", "Draw").
+def_doc("local app/app.go Start().", "Start starts up.").
+def_doc("local db/conn.go Open().", "Open opens a connection.").
+def_doc("local kinds.go Banner.", "Banner is a package-level variable.").
+def_doc("local kinds.go Config#", "Config is a struct, with a documented field.").
+def_doc("local kinds.go Config#Handle().", "Handle satisfies Handler. Its receiver is the only thing that says so: the\nmethod is lexically at file scope and semantically owned by Config.").
+def_doc("local kinds.go Config#Limit.", "Limit is how many entries to keep.").
+def_doc("local kinds.go Config#describe().", "describe is unexported, so `exported` must not hold for it.").
+def_doc("local kinds.go Handler#", "Handler is an interface, so a method with no body has somewhere to live.").
+def_doc("local kinds.go Handler#Handle().", "Handle is the required method.").
+def_doc("local kinds.go Key#", "Key is a type alias.").
+def_doc("local kinds.go Limit.", "Limit is a constant.").
+def_doc("local kinds.go Mode#", "Mode is a defined type over a builtin. Distinct from an alias, which is the\nwhole point: `type Mode int` introduces a new type and `type Key = string`\ndoes not.").
+def_doc("local net/conn.go Open().", "Open opens a socket.").
+def_doc("local store/store.go Entry#", "Entry is one entry in the store.").
+def_doc("local store/store.go Entry#Describe().", "Describe renders an entry. A second type with methods in the same file, so\nthat resolving a receiver to the wrong one would show up.").
+def_doc("local store/store.go Store#", "Store is a tiny key-value store.").
+def_doc("local store/store.go Store#Get().", "Get reads one entry.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local store/store.go Store#Put().", "Put writes one entry. A value receiver where Get took a pointer one, so the\nowner is found through both spellings.").
+def_doc("local store/store.go Warm().", "Warm is a free function that calls a method, so `calls` has an edge to find.").
+def_doc("local ui/panel.go Draw().", "Draw draws the panel.").
+def_name("local app/app.go Start().", 9, 5).
+def_name("local db/conn.go Open().", 5, 5).
+def_name("local kinds.go Banner.", 34, 4).
+def_name("local kinds.go Config#", 10, 5).
+def_name("local kinds.go Config#Handle().", 38, 16).
+def_name("local kinds.go Config#Limit.", 12, 1).
+def_name("local kinds.go Config#describe().", 43, 16).
+def_name("local kinds.go Config#quiet.", 13, 1).
+def_name("local kinds.go Handler#", 25, 5).
+def_name("local kinds.go Handler#Handle().", 27, 1).
+def_name("local kinds.go Key#", 22, 5).
+def_name("local kinds.go Limit.", 31, 6).
+def_name("local kinds.go Mode#", 19, 5).
+def_name("local net/conn.go Open().", 10, 5).
+def_name("local store/store.go Entry#", 15, 5).
+def_name("local store/store.go Entry#Describe().", 44, 15).
+def_name("local store/store.go Entry#Value.", 16, 1).
+def_name("local store/store.go Store#", 20, 5).
+def_name("local store/store.go Store#Get().", 27, 16).
+def_name("local store/store.go Store#Put().", 34, 15).
+def_name("local store/store.go Store#entries.", 21, 1).
+def_name("local store/store.go Store#evict().", 38, 16).
+def_name("local store/store.go Warm().", 49, 5).
+def_name("local store/store_test.go TestWarm().", 6, 5).
+def_name("local ui/panel.go Draw().", 12, 5).
+def_sig("local app/app.go Start().", "func Start() bool").
+def_sig("local db/conn.go Open().", "func Open(url string) bool").
+def_sig("local kinds.go Banner.", "var Banner").
+def_sig("local kinds.go Config#", "type Config struct").
+def_sig("local kinds.go Config#Handle().", "func (c Config) Handle(key Key) bool").
+def_sig("local kinds.go Config#Limit.", "Limit int").
+def_sig("local kinds.go Config#describe().", "func (c Config) describe() string").
+def_sig("local kinds.go Config#quiet.", "quiet bool").
+def_sig("local kinds.go Handler#", "type Handler interface").
+def_sig("local kinds.go Handler#Handle().", "Handle(key Key) bool").
+def_sig("local kinds.go Key#", "type Key").
+def_sig("local kinds.go Limit.", "const Limit").
+def_sig("local kinds.go Mode#", "type Mode int").
+def_sig("local net/conn.go Open().", "func Open(url string) bool").
+def_sig("local store/store.go Entry#", "type Entry struct").
+def_sig("local store/store.go Entry#Describe().", "func (e Entry) Describe() string").
+def_sig("local store/store.go Entry#Value.", "Value string").
+def_sig("local store/store.go Store#", "type Store struct").
+def_sig("local store/store.go Store#Get().", "func (s *Store) Get(key string) (Entry, bool)").
+def_sig("local store/store.go Store#Put().", "func (s Store) Put(key string, value string)").
+def_sig("local store/store.go Store#entries.", "entries map[string]Entry").
+def_sig("local store/store.go Store#evict().", "func (s *Store) evict()").
+def_sig("local store/store.go Warm().", "func Warm(s *Store) (Entry, bool)").
+def_sig("local store/store_test.go TestWarm().", "func TestWarm(t *testing.T)").
+def_sig("local ui/panel.go Draw().", "func Draw() bool").
+def_span("local app/app.go Start().", 8, 11, 237, 313).
+def_span("local db/conn.go Open().", 4, 7, 83, 159).
+def_span("local kinds.go Banner.", 33, 34, 940, 1003).
+def_span("local kinds.go Config#", 9, 14, 375, 507).
+def_span("local kinds.go Config#Handle().", 36, 40, 1005, 1230).
+def_span("local kinds.go Config#Limit.", 11, 12, 445, 493).
+def_span("local kinds.go Config#describe().", 42, 45, 1232, 1347).
+def_span("local kinds.go Config#quiet.", 13, 13, 495, 505).
+def_span("local kinds.go Handler#", 24, 28, 737, 896).
+def_span("local kinds.go Handler#Handle().", 26, 27, 839, 894).
+def_span("local kinds.go Key#", 21, 22, 694, 735).
+def_span("local kinds.go Limit.", 30, 31, 898, 938).
+def_span("local kinds.go Mode#", 16, 19, 509, 692).
+def_span("local net/conn.go Open().", 9, 12, 287, 382).
+def_span("local store/store.go Entry#", 14, 17, 335, 406).
+def_span("local store/store.go Entry#Describe().", 42, 46, 932, 1155).
+def_span("local store/store.go Entry#Value.", 16, 16, 392, 404).
+def_span("local store/store.go Store#", 19, 22, 408, 491).
+def_span("local store/store.go Store#Get().", 24, 30, 493, 674).
+def_span("local store/store.go Store#Put().", 32, 36, 676, 883).
+def_span("local store/store.go Store#entries.", 21, 21, 465, 489).
+def_span("local store/store.go Store#evict().", 38, 40, 885, 930).
+def_span("local store/store.go Warm().", 48, 51, 1157, 1296).
+def_span("local store/store_test.go TestWarm().", 6, 11, 98, 244).
+def_span("local ui/panel.go Draw().", 11, 14, 308, 388).
+exported("local app/app.go Start().").
+exported("local db/conn.go Open().").
+exported("local kinds.go Banner.").
+exported("local kinds.go Config#").
+exported("local kinds.go Config#Handle().").
+exported("local kinds.go Config#Limit.").
+exported("local kinds.go Handler#").
+exported("local kinds.go Handler#Handle().").
+exported("local kinds.go Key#").
+exported("local kinds.go Limit.").
+exported("local kinds.go Mode#").
+exported("local net/conn.go Open().").
+exported("local store/store.go Entry#").
+exported("local store/store.go Entry#Describe().").
+exported("local store/store.go Entry#Value.").
+exported("local store/store.go Store#").
+exported("local store/store.go Store#Get().").
+exported("local store/store.go Store#Put().").
+exported("local store/store.go Warm().").
+exported("local store/store_test.go TestWarm().").
+exported("local ui/panel.go Draw().").
+file("app/app.go", "go").
+file("db/conn.go", "go").
+file("kinds.go", "go").
+file("net/conn.go", "go").
+file("store/store.go", "go").
+file("store/store_test.go", "go").
+file("ui/panel.go", "go").
+import("app/app.go", "\"example.com/fixture/db\"", "").
+import("net/conn.go", "\"strings\"", "").
+import("store/store.go", "\"fmt\"", "").
+import("store/store.go", "\"strings\"", "str").
+import("store/store_test.go", "\"testing\"", "").
+import("ui/panel.go", "\"example.com/fixture/db\"", "").
+import("ui/panel.go", "\"example.com/fixture/net\"", "_").
+name_ref("Fatal", "store/store_test.go", 9, 4, "local store/store_test.go TestWarm().").
+name_ref("Get", "store/store.go", 50, 10, "local store/store.go Warm().").
+name_ref("HasPrefix", "net/conn.go", 11, 16, "local net/conn.go Open().").
+name_ref("Open", "app/app.go", 10, 11, "local app/app.go Start().").
+name_ref("Open", "ui/panel.go", 13, 11, "local ui/panel.go Draw().").
+name_ref("Sprintf", "store/store.go", 45, 12, "local store/store.go Entry#Describe().").
+name_ref("ToUpper", "store/store.go", 45, 30, "local store/store.go Entry#Describe().").
+name_ref("Warm", "store/store_test.go", 8, 13, "local store/store_test.go TestWarm().").
+name_ref("clear", "store/store.go", 39, 1, "local store/store.go Store#evict().").
+name_ref("len", "kinds.go", 39, 23, "local kinds.go Config#Handle().").
+parent("local app/app.go Start().", "app/app.go").
+parent("local db/conn.go Open().", "db/conn.go").
+parent("local kinds.go Banner.", "kinds.go").
+parent("local kinds.go Config#", "kinds.go").
+parent("local kinds.go Config#Handle().", "local kinds.go Config#").
+parent("local kinds.go Config#Limit.", "local kinds.go Config#").
+parent("local kinds.go Config#describe().", "local kinds.go Config#").
+parent("local kinds.go Config#quiet.", "local kinds.go Config#").
+parent("local kinds.go Handler#", "kinds.go").
+parent("local kinds.go Handler#Handle().", "local kinds.go Handler#").
+parent("local kinds.go Key#", "kinds.go").
+parent("local kinds.go Limit.", "kinds.go").
+parent("local kinds.go Mode#", "kinds.go").
+parent("local net/conn.go Open().", "net/conn.go").
+parent("local store/store.go Entry#", "store/store.go").
+parent("local store/store.go Entry#Describe().", "local store/store.go Entry#").
+parent("local store/store.go Entry#Value.", "local store/store.go Entry#").
+parent("local store/store.go Store#", "store/store.go").
+parent("local store/store.go Store#Get().", "local store/store.go Store#").
+parent("local store/store.go Store#Put().", "local store/store.go Store#").
+parent("local store/store.go Store#entries.", "local store/store.go Store#").
+parent("local store/store.go Store#evict().", "local store/store.go Store#").
+parent("local store/store.go Warm().", "store/store.go").
+parent("local store/store_test.go TestWarm().", "store/store_test.go").
+parent("local ui/panel.go Draw().", "ui/panel.go").

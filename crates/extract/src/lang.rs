@@ -92,7 +92,20 @@ pub struct Lang {
     /// Node kinds that are comments.
     pub comment_kinds: &'static [&'static str],
     /// Node kinds that decorate the following item and belong to its span.
+    ///
+    /// In `def_span`, not in `def_sig`: a Rust `#[derive(Debug)]` is part of
+    /// the definition and is not part of how you would say its name.
     pub attribute_kinds: &'static [&'static str],
+    /// Node kinds that are the *head* of the following item's declaration, and
+    /// so belong to its span **and** its signature.
+    ///
+    /// Go needs this and Rust does not. A Go definition is the spec node —
+    /// `const_spec`, `type_spec` — so that a grouped `const ( A = 1 \n B = 2 )`
+    /// yields two definitions with two spans rather than two sharing one, which
+    /// leaves `const` a preceding sibling. It is not an attribute: without it
+    /// `def_sig` for `const Limit = 64` reads `Limit`, which names the thing
+    /// without saying what it is.
+    pub keyword_kinds: &'static [&'static str],
     /// Characters that end a declaration header, for `def_sig`.
     pub sig_stops: &'static [char],
     /// The canonical SCIP indexer command, verbatim and copy-pasteable.
@@ -121,28 +134,57 @@ impl Lang {
 }
 
 /// Every registered language.
-pub const LANGS: &[Lang] = &[Lang {
-    name: "rust",
-    extensions: &["rs"],
-    language: || tree_sitter_rust::LANGUAGE.into(),
-    tags: include_str!("../../../queries/rust/tags.scm"),
-    imports: include_str!("../../../queries/rust/imports.scm"),
-    // A Rust `union` is a distinct construct and `union` is not in the closed
-    // Kind set, so it maps to `type` — distinct from `enum`, which is what
-    // docs/plan.md M2's kind-fidelity test is for. specs/02-extraction.md's
-    // SCIP table maps `Union` the same way so the two tiers agree.
-    kind_remap: &[("union", "type")],
-    export: Export::ChildKind("visibility_modifier"),
-    // `//!` is deliberately absent. It is an *inner* doc comment — it documents
-    // the enclosing module, not the item that follows it — so treating it as a
-    // marker attaches a file header to whatever definition happens to come
-    // first. Tier A emits no module-level doc; nothing else would be honest.
-    doc_markers: &["///", "/**"],
-    comment_kinds: &["line_comment", "block_comment"],
-    attribute_kinds: &["attribute_item", "inner_attribute_item"],
-    sig_stops: &['{', ';', '='],
-    indexer: "rust-analyzer scip .",
-}];
+pub const LANGS: &[Lang] = &[
+    Lang {
+        name: "go",
+        extensions: &["go"],
+        language: || tree_sitter_go::LANGUAGE.into(),
+        tags: include_str!("../../../queries/go/tags.scm"),
+        imports: include_str!("../../../queries/go/imports.scm"),
+        // Every capture suffix in `go/tags.scm` is already a Kind. The
+        // discrimination upstream folds into one `@definition.type` happens in
+        // the query, where the grammar can see *which* type node it is, rather
+        // than here, where it could only be guessed at.
+        kind_remap: &[],
+        export: Export::Capitalized,
+        // Go has no distinguished doc-comment syntax: a doc comment is an
+        // ordinary comment immediately preceding the declaration. That is the
+        // language's own rule — `go doc` reads exactly this — not an inference.
+        doc_markers: &["//", "/*"],
+        comment_kinds: &["comment"],
+        // Go has no attributes.
+        attribute_kinds: &[],
+        keyword_kinds: &["const", "var", "type"],
+        sig_stops: &['{', '='],
+        indexer: "scip-go",
+    },
+    Lang {
+        name: "rust",
+        extensions: &["rs"],
+        language: || tree_sitter_rust::LANGUAGE.into(),
+        tags: include_str!("../../../queries/rust/tags.scm"),
+        imports: include_str!("../../../queries/rust/imports.scm"),
+        // A Rust `union` is a distinct construct and `union` is not in the
+        // closed Kind set, so it maps to `type` — distinct from `enum`, which
+        // is what docs/plan.md M2's kind-fidelity test is for.
+        // specs/02-extraction.md's SCIP table maps `Union` the same way so the
+        // two tiers agree.
+        kind_remap: &[("union", "type")],
+        export: Export::ChildKind("visibility_modifier"),
+        // `//!` is deliberately absent. It is an *inner* doc comment — it
+        // documents the enclosing module, not the item that follows it — so
+        // treating it as a marker attaches a file header to whatever definition
+        // happens to come first. Tier A emits no module-level doc; nothing else
+        // would be honest.
+        doc_markers: &["///", "/**"],
+        comment_kinds: &["line_comment", "block_comment"],
+        attribute_kinds: &["attribute_item", "inner_attribute_item"],
+        // A Rust definition node already contains its own head.
+        keyword_kinds: &[],
+        sig_stops: &['{', ';', '='],
+        indexer: "rust-analyzer scip .",
+    },
+];
 
 /// The language for a path, by extension.
 #[must_use]

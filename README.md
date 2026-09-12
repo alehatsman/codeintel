@@ -167,12 +167,13 @@ are import-complete, which is all conformance needs.
 
 ## Status
 
-M0–M3 shipped: the Datalog engine, the fact store, the tree-sitter tier for
-Rust, the SCIP tier and the anchor join, and the `index` and `query` verbs.
+M0–M4 shipped, and Go with them: the Datalog engine, the fact store, the
+tree-sitter tier, the SCIP tier and the anchor join, all five verbs and the MCP
+tool. **Rust and Go** index today, each with a committed fixture index and a
+100% / 94% anchor rate.
 
-Not built yet: the remaining three languages (M5), `schema` / `status` / `mcp`
-and the query-surface flags (M4), and any performance work (M6). See
-[docs/plan.md](docs/plan.md) for where the line is.
+Not built yet: Python and TypeScript (M5a/M5b), and any performance work (M6).
+See [docs/plan.md](docs/plan.md) for where the line is.
 
 Both examples above run today. The second one needs a SCIP index — without one
 it answers `status: "no-scip"` and prints the command that would build it,

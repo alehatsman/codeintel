@@ -7,7 +7,7 @@
 //! query time. Freezing resolution into a per-file fact is what makes
 //! incremental indexing unsound, so the extractor is not allowed to be clever.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use facts::{Interner, Segment};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
@@ -74,9 +74,44 @@ struct Item {
     lines: (u32, u32),
     /// 1-based line and 0-based byte column of the identifier token.
     name_at: (u32, u32),
+    /// The text of an `@owner` capture: an identifier *naming* this
+    /// definition's owner, where the owner does not enclose it. `None` for
+    /// every language that does not capture one.
+    owner: Option<String>,
     exported: bool,
     sig: String,
     doc: Option<String>,
+}
+
+/// What the preceding siblings of a definition node contributed to it.
+#[derive(Debug)]
+struct Preamble {
+    /// Where `def_span` starts: back over attributes, keywords and the doc
+    /// comment.
+    start: usize,
+    /// Where `def_sig` starts: back over adjacent keywords only. Attributes and
+    /// the doc comment are part of the definition, not part of its header.
+    sig_start: usize,
+    /// 1-based line of `start`.
+    start_line: u32,
+    /// The doc comment, markers stripped, or `None` when there was none.
+    doc: Option<String>,
+}
+
+/// One `tags.scm` match, before it becomes an [`Item`]. The captures the query
+/// produced, gathered so that adding one is not another positional argument.
+#[derive(Debug)]
+struct Tag<'a> {
+    /// The `@definition.*` or `@scope.*` node.
+    node: Node<'a>,
+    /// Its `@name` node.
+    name: Node<'a>,
+    kind: &'static str,
+    is_def: bool,
+    /// `name`'s source text.
+    text: String,
+    /// The `@owner` capture's source text, if the pattern had one.
+    owner: Option<&'a str>,
 }
 
 /// One `@reference.call` occurrence.
@@ -157,7 +192,8 @@ impl Extractor {
         let (items, occurrences) = self.scan(src, root)?;
         let mut spans: Vec<Span> = items.iter().map(|i| i.node).collect();
         spans.extend(occurrences.iter().map(|o| (o.at, o.at)));
-        let parents = sweep::containment(&spans);
+        let mut parents = sweep::containment(&spans);
+        reparent_by_owner(&items, &mut parents);
         let items = promote(items, &parents);
         let mut symbols = symbols_of(path, &items, &parents);
         let mut anchored = 0;
@@ -316,14 +352,15 @@ impl Extractor {
         while let Some(m) = matches.next() {
             let mut subject = None;
             let mut name = None;
+            let mut owner = None;
             for capture in m.captures() {
                 let Some(label) = self.tags.capture_names().get(capture.index as usize) else {
                     continue;
                 };
-                if *label == "name" {
-                    name = Some(capture.node);
-                } else {
-                    subject = Some((*label, capture.node));
+                match *label {
+                    "name" => name = Some(capture.node),
+                    "owner" => owner = capture.node.utf8_text(src.as_bytes()).ok(),
+                    label => subject = Some((label, capture.node)),
                 }
             }
             let (Some((label, node)), Some(name)) = (subject, name) else {
@@ -351,31 +388,39 @@ impl Extractor {
                 lang: self.lang.name,
                 capture: (*label).to_string(),
             })?;
-            items.push(self.item(src, node, name, kind, is_def, text));
+            items.push(self.item(
+                src,
+                Tag {
+                    node,
+                    name,
+                    kind,
+                    is_def,
+                    text,
+                    owner,
+                },
+            ));
         }
         Ok((items, occurrences))
     }
 
-    fn item(
-        &self,
-        src: &str,
-        node: Node<'_>,
-        name: Node<'_>,
-        kind: &'static str,
-        is_def: bool,
-        text: String,
-    ) -> Item {
-        let (start, start_line, doc) = self.preamble(src, node);
+    fn item(&self, src: &str, tag: Tag<'_>) -> Item {
+        let Preamble {
+            start,
+            sig_start,
+            start_line,
+            doc,
+        } = self.preamble(src, tag.node);
         Item {
-            kind,
-            is_def,
-            name: text,
-            node: (node.start_byte(), node.end_byte()),
-            span: (start, node.end_byte()),
-            lines: (start_line, line_of_end(node)),
-            name_at: (line_of(name), col_of(name)),
-            exported: self.is_exported(src, node, name),
-            sig: signature(src, node, self.lang.sig_stops),
+            kind: tag.kind,
+            is_def: tag.is_def,
+            name: tag.text,
+            node: (tag.node.start_byte(), tag.node.end_byte()),
+            span: (start, tag.node.end_byte()),
+            lines: (start_line, line_of_end(tag.node)),
+            name_at: (line_of(tag.name), col_of(tag.name)),
+            owner: tag.owner.map(str::to_string),
+            exported: self.is_exported(src, tag.node, tag.name),
+            sig: signature(src, sig_start, tag.node.end_byte(), self.lang.sig_stops),
             doc,
         }
     }
@@ -386,18 +431,40 @@ impl Extractor {
     /// comment (`specs/01-facts.md` § `def_span`), and tree-sitter puts both in
     /// preceding siblings rather than inside the item. A blank line ends the
     /// run: two items separated by one are not each other's documentation.
-    fn preamble(&self, src: &str, node: Node<'_>) -> (usize, u32, Option<String>) {
+    fn preamble(&self, src: &str, node: Node<'_>) -> Preamble {
         let mut start = node.start_byte();
+        let mut sig_start = node.start_byte();
+        // Only a run of keywords *adjacent* to the node is part of the
+        // signature. Once anything else has been walked over, a keyword further
+        // back belongs to something else.
+        let mut adjacent = true;
         let mut line = line_of(node);
         let mut docs: Vec<String> = Vec::new();
         let mut cur = node;
-        while let Some(prev) = cur.prev_sibling() {
+        loop {
+            let Some(prev) = cur.prev_sibling() else {
+                // Nothing else precedes us inside `cur`'s parent, so whatever
+                // precedes the parent precedes us too — but only if the parent
+                // begins where we have already walked back to. Go needs this:
+                // the definition is the `type_spec`, the `type` keyword is its
+                // only preceding sibling, and the doc comment is a sibling of
+                // the `type_declaration` one level up. Each step strictly grows
+                // the node, so this terminates at the root.
+                match cur.parent().filter(|p| p.start_byte() == start) {
+                    Some(parent) => {
+                        cur = parent;
+                        continue;
+                    }
+                    None => break,
+                }
+            };
             let kind = prev.kind();
             let is_attr = self.lang.attribute_kinds.contains(&kind);
+            let is_keyword = self.lang.keyword_kinds.contains(&kind);
             let comment = self.lang.comment_kinds.contains(&kind);
             let text = prev.utf8_text(src.as_bytes()).unwrap_or_default();
             let is_doc = comment && self.lang.doc_markers.iter().any(|m| text.starts_with(m));
-            if !is_attr && !is_doc {
+            if !is_attr && !is_keyword && !is_doc {
                 break;
             }
             let gap = src.get(prev.end_byte()..start).unwrap_or("");
@@ -407,13 +474,23 @@ impl Extractor {
             if is_doc {
                 docs.push(strip_markers(text, self.lang.doc_markers));
             }
+            if is_keyword && adjacent {
+                sig_start = prev.start_byte();
+            } else {
+                adjacent = false;
+            }
             start = prev.start_byte();
             line = line_of(prev);
             cur = prev;
         }
         docs.reverse();
         let doc = docs.join("\n");
-        (start, line, (!doc.trim().is_empty()).then_some(doc))
+        Preamble {
+            start,
+            sig_start,
+            start_line: line,
+            doc: (!doc.trim().is_empty()).then_some(doc),
+        }
     }
 
     fn is_exported(&self, src: &str, node: Node<'_>, name: Node<'_>) -> bool {
@@ -488,6 +565,52 @@ fn compile(
     })
 }
 
+/// Apply every `@owner` capture that resolves, overriding the span sweep.
+///
+/// `specs/02-extraction.md` § `@owner`: a Go method is declared at file scope
+/// and names its owner in its own receiver, so span nesting is not merely
+/// imprecise there — it synthesizes `local store.go Get().`, which every type
+/// in the file with a `Get` method would claim.
+///
+/// Candidates are the type-like definitions of this same file that **no other
+/// definition encloses**. Restricting them to the top level is what keeps the
+/// parent graph a forest: the only edge added runs from a nested definition to
+/// an unnested one, so a `type Store struct{}` declared inside a method body
+/// can never become that method's owner and close a cycle. Zero candidates or
+/// two is no override, never a choice between them — an extractor that picked
+/// would be guessing, which invariant 1 forbids.
+fn reparent_by_owner(items: &[Item], parents: &mut [Option<usize>]) {
+    if items.iter().all(|i| i.owner.is_none()) {
+        return;
+    }
+    let mut candidates: BTreeMap<&str, Option<usize>> = BTreeMap::new();
+    for (i, item) in items.iter().enumerate() {
+        if !item.is_def
+            || !TYPE_LIKE.contains(&item.kind)
+            || parents.get(i).copied().flatten().is_some()
+        {
+            continue;
+        }
+        // `None` is the poison value for "named twice, so unusable", which is
+        // why this is not a plain insert.
+        candidates
+            .entry(&item.name)
+            .and_modify(|slot| *slot = None)
+            .or_insert(Some(i));
+    }
+    for (i, item) in items.iter().enumerate() {
+        let Some(owner) = item.owner.as_deref() else {
+            continue;
+        };
+        if let Some(&Some(j)) = candidates.get(owner)
+            && j != i
+            && let Some(slot) = parents.get_mut(i)
+        {
+            *slot = Some(j);
+        }
+    }
+}
+
 /// A `function` owned by a type-like definition is a `method`.
 ///
 /// Done here rather than in `tags.scm` because a query cannot see its own
@@ -544,11 +667,11 @@ fn ancestor(parents: &[Option<usize>], i: usize, want: impl Fn(usize) -> bool) -
 /// The declaration header: source from the node's start to the first body
 /// delimiter, whitespace-collapsed and capped.
 ///
-/// It starts at the *syntactic* node, not at `def_span`'s start — the span
+/// It starts at the declaration head, not at `def_span`'s start — the span
 /// deliberately reaches back over attributes and the doc comment, and a
 /// signature that opened with three lines of prose would be useless.
-fn signature(src: &str, node: Node<'_>, stops: &[char]) -> String {
-    let text = src.get(node.start_byte()..node.end_byte()).unwrap_or("");
+fn signature(src: &str, start: usize, end: usize, stops: &[char]) -> String {
+    let text = src.get(start..end).unwrap_or("");
     let end = text
         .char_indices()
         .find(|(_, c)| stops.contains(c) || *c == '\n')

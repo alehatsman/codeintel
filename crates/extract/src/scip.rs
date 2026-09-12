@@ -230,6 +230,11 @@ impl Ingest {
         candidates: &mut BTreeMap<String, (String, String, String)>,
     ) {
         let path = document.relative_path.replace('\\', "/");
+        if escapes_root(&path) {
+            self.skipped
+                .push((path, "path escapes the repository root"));
+            return;
+        }
         let encoding = document.position_encoding.enum_value_or_default();
         let Some(columns) = Columns::for_document(document, root, encoding) else {
             self.skipped
@@ -303,6 +308,28 @@ impl Ingest {
 /// meant `extern/4` was **empty on every index that had no local dependency
 /// described** — including the fixture, where `HashMap` and `String` are
 /// referenced by name and were reported as no external packages at all.
+/// Whether a `Document.relative_path` names something outside the repository.
+///
+/// `relative_path` is specified as relative to the project root, and every fact
+/// this tool emits is keyed by a repo-relative path, so a document that climbs
+/// out of the root is not a fact about this repository and cannot be joined
+/// against one. `scip-go` emits exactly this: the generated test-main for a
+/// package with tests lives in the Go build cache, and the document arrives as
+/// `../../../../../../Library/Caches/go-build/…`. Ingesting it produced a
+/// `file` row outside the tree and, through it, `calls` edges whose caller was
+/// a path no reader could open.
+///
+/// Skipped and **reported** rather than silently dropped, like every other
+/// unusable document (`specs/00-overview.md` invariant 5).
+fn escapes_root(path: &str) -> bool {
+    path.starts_with('/')
+        || path.split('/').any(|part| part == "..")
+        // A Windows drive or UNC path. `\` is already normalized to `/`.
+        || path.split_once(':').is_some_and(|(head, _)| {
+            head.len() == 1 && head.chars().all(|c| c.is_ascii_alphabetic())
+        })
+}
+
 fn package_of(symbol: &str, into: &mut BTreeMap<String, (String, String, String)>) {
     let Ok(parsed) = scip::symbol::parse_symbol(symbol) else {
         return;
@@ -753,6 +780,41 @@ mod tests {
         assert_eq!(symbol.kind, "method");
         assert_eq!(symbol.name, "get");
         assert_eq!(symbol.doc.as_deref(), Some("Fetch one."));
+    }
+
+    #[test]
+    fn a_document_outside_the_repository_is_skipped_and_named() {
+        // `scip-go` emits the generated test-main out of the Go build cache,
+        // and the document arrives as `../../../../../../Library/Caches/…`.
+        // Ingesting it gave `calls` an edge whose caller was a path no reader
+        // could open.
+        for outside in [
+            "../../../../Library/Caches/go-build/9e/9ed0-d",
+            "/etc/passwd",
+            "a/../../b.go",
+            "C:/Users/x/main.go",
+        ] {
+            assert!(escapes_root(outside), "{outside} escapes the root");
+        }
+        for inside in ["src/store.rs", "a/b/c.go", "main.go", "..hidden/x.go"] {
+            assert!(!escapes_root(inside), "{inside} is inside the root");
+        }
+
+        let mut document = Document::new();
+        document.relative_path = "../outside.go".to_string();
+        document.text = "package p\n".to_string();
+        let mut index = Index::new();
+        index.documents.push(document);
+        let ingest = Ingest::of(&index, Path::new("."));
+        assert!(ingest.docs.is_empty(), "nothing outside the root is kept");
+        assert_eq!(
+            ingest.skipped,
+            vec![(
+                "../outside.go".to_string(),
+                "path escapes the repository root"
+            )],
+            "and the skip is reported, never silent"
+        );
     }
 
     #[test]

@@ -62,21 +62,63 @@ The per-language cost is therefore:
 
 ```
 queries/
-  rust/tags.scm        vendored from tree-sitter-rust
+  rust/tags.scm        ours
   rust/imports.scm     ours, ~10 lines
-  python/tags.scm
-  python/imports.scm
+  go/tags.scm
+  go/imports.scm
   ...
 ```
 
-`tags.scm` capture convention, already honoured upstream:
+`tags.scm` capture convention. Upstream honours the first three; the rest are
+ours, because the questions they answer are ones upstream does not ask.
 
 | Capture | Meaning |
 |---|---|
-| `@definition.function` `.method` `.class` `.interface` `.module` `.macro` `.constant` | the node is a definition; the capture suffix is the kind |
+| `@definition.<kind>` | the node is a definition; the capture suffix is the `Kind`, after the language's `kind_remap` |
 | `@name` | the identifier token within that definition |
 | `@reference.call` | a call site |
-| `@doc` | attached documentation (where the grammar provides it) |
+| `@scope.<kind>` | the node **owns** definitions but is not one. A Rust `impl Store` declares nothing that `struct Store` did not; it contributes the `Store#` descriptor and no `def` row |
+| `@owner` | an identifier **naming** this definition's owner, for a language where the owner does not enclose it |
+
+Every node carries at most one `@definition.*` or `@scope.*` capture, asserted
+by a test over every registered language.
+
+#### `@owner`, and why span nesting is not enough
+
+Span nesting answers "who contains this" and for Rust that is also "who owns
+this", once `impl` blocks are scopes. Go breaks the identification: a method is
+declared at file scope and its owner is named in its own receiver.
+
+```go
+func (s *Store) Get(key string) (Entry, bool)
+```
+
+Nothing encloses `Get`. Span nesting parents it to the file, which is not
+merely imprecise — it is **wrong at the symbol level**, because the synthesized
+symbol becomes `local store.go Get().`, so a second type with a `Get` method in
+the same file collides onto the same symbol and emits two `def` rows for one
+identity.
+
+So a language may capture `@owner` on an identifier inside the definition.
+Resolution is deliberately narrow, and it is still extraction, not inference —
+the owner's name was read out of the source, not guessed:
+
+1. The candidates are the definitions **in this same file** whose `Kind` is
+   type-like (`struct`, `enum`, `trait`, `class`, `interface`, `type`) and
+   which no other definition encloses.
+2. Exactly one candidate matching `@owner`'s text wins and becomes the parent,
+   for descriptor synthesis and for the `parent` row alike.
+3. **Zero or more than one, and there is no override** — span nesting stands
+   and the answer degrades to the file. An extractor that guessed between two
+   candidates would violate invariant 1.
+
+Restricting candidates to unenclosed definitions is what keeps the parent graph
+a forest: the only edge `@owner` adds runs from a nested definition to a
+top-level one, so `type Store struct{}` declared *inside* a method body can
+never become that method's own owner.
+
+Tier B overrides all of this where it has an answer (§ Parent precedence): the
+compiler knows the receiver's package-qualified type and we do not.
 
 Example, `tree-sitter-rust/queries/tags.scm`:
 ```scheme
@@ -119,6 +161,8 @@ Per file, one parse, then:
    -end_byte)`. Sweep with a stack: a definition's `parent` is the innermost
    enclosing definition, or the file path if none. This is the one non-trivial
    algorithm in tier A, it is ~30 lines, and **tier B reuses it verbatim** (§ Tier B).
+   A definition carrying an `@owner` capture that resolves overrides its swept
+   parent here, before any symbol is synthesized (§ `@owner`).
 3. `def_sig` = the definition's source text from `start_byte` up to the first
    body delimiter (`{`, `:` + newline, `=`, or end of line), whitespace-collapsed,
    capped at 512 bytes. Crude and honest — it is a display string, not a parse.
@@ -187,7 +231,7 @@ binary is on `PATH`, and shells out. That is the whole feature — a table, a
 | Rust | `rust-analyzer scip .` | a cargo workspace |
 | TypeScript/JS | `scip-typescript index --infer-tsconfig` | `node_modules` installed |
 | Python | `scip-python index . --output index.scip` | an environment with deps |
-| Go | `scip-go` | a buildable module |
+| Go | `scip-go` | a buildable module. Installed from `github.com/scip-code/scip-go/cmd/scip-go` — the project moved out of the `sourcegraph` org, and the old path now fails `go install` with a module-path conflict rather than a 404 |
 | Java/Scala/Kotlin | `scip-java index` | a working build |
 | C / C++ | `scip-clang --compdb-path compile_commands.json` | a compilation database |
 | Ruby | `scip-ruby` | a Sorbet-typechecked project |
@@ -298,9 +342,8 @@ and the rule decides what counts as a call.
 
 ### Parent precedence
 
-Both tiers can supply a parent and they disagree in real cases — most visibly a
-Go method, which is lexically at file scope but semantically owned by its type.
-`parent` carries the **semantic owner**, resolved by a fixed order
+Both tiers can supply a parent and they disagree in real cases. `parent` carries
+the **semantic owner**, resolved by a fixed order
 ([01-facts.md](01-facts.md) § `parent`):
 
 1. Drop the last descriptor from the SCIP symbol string. `pkg/Store#Get().` →
@@ -311,11 +354,12 @@ Go method, which is lexically at file scope but semantically owned by its type.
    symbol nothing defines is worse than no row at all.
 2. Else `SymbolInformation.enclosing_symbol`, which is how SCIP `local` symbols
    get an owner — subject to the same existence check.
-3. Else tier A's span nesting — the innermost enclosing span that is **itself a
-   definition**, else the file. Subject to the same existence check as 1 and 2,
-   for the same reason, and it is the rule that needs it most: it is the
-   fallback everything else falls through to, so a hole here is not an edge
-   case.
+3. Else tier A's answer — a resolved `@owner` where the language captured one
+   (§ `@owner`), else span nesting: the innermost enclosing span that is
+   **itself a definition**, else the file. Subject to the same existence check
+   as 1 and 2, for the same reason, and it is the rule that needs it most: it
+   is the fallback everything else falls through to, so a hole here is not an
+   edge case.
 
 Rule 3's check is not redundant with the span sweep. The sweep nests *spans*,
 and not every span is a definition — a Rust `impl` block encloses its methods

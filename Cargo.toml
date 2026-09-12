@@ -40,6 +40,10 @@ tempfile = "3"
 tree-sitter = "0.27"
 tree-sitter-rust = "0.24"
 ignore = "0.4"
+# ── M5a: the second language. Same budget row as the grammar above —
+# research.md § Language coverage names four grammar crates and this is the
+# second of them.
+tree-sitter-go = "0.25"
 # `04-storage.md`: segments are named by a content hash, and the manifest's
 # fast path hashes file contents. STACK default for speed-over-interop.
 blake3 = "1"
