@@ -27,11 +27,18 @@ guessing what an empty result means.
 | `stale` | sources changed and auto-refresh was skipped, exceeded `max_refresh_ms`, or `schema_version` mismatched | `run: codeintel index .` — names the N files |
 | `no-scip` | the goal's **relation-dependency closure** reaches a relation only SCIP populates, and none was ingested | which relations, and the indexer command for the languages present |
 | `scip-stale` | an indexed file is newer than `index.scip` | which files, and the indexer command |
-| `unsupported-language` | files present in a language with no grammar | which languages, how many files |
 | `invalid-query` | parse or safety failure | the rule, the variable, the violated rule |
 | `unstratified` | negation cycle | the cycle |
 | `timeout` / `budget-exceeded` | a limit aborted evaluation | the limit and its value |
 | `locked` | another index run holds the lock | its pid |
+| `corrupt` | a segment or the dictionary would not load | `run: codeintel index . --rebuild` |
+
+**There was an `unsupported-language` row here, and nothing ever emitted it.**
+Deciding it per query costs a full tree walk to find files no grammar covers,
+which is `codeintel status`'s job and is why the walk lives there. A status the
+taxonomy advertises and the code cannot produce is the same defect as a status
+the code produces and the taxonomy omits — `the_status_taxonomy_matches_the_spec`
+now fails on either. `status` reports unsupported extensions, biggest first.
 
 **`ok` with zero rows means "this is not true of your code."** That must be
 distinguishable from every failure above without reading prose. This is
@@ -331,6 +338,13 @@ EXAMPLES
   exported and unreferenced outside its own file
   ?- dead_export(S), def(S, F, _, _), match(F, "^src/").
 ```
+
+`--format json` carries the same catalogue **structurally**: `relations` with
+argument names and row counts, `kinds` and `roles` as the closed vocabulary with
+this index's count against every value including the zeros, `rules` with their
+signatures, and `text` for the rendered form. A consumer must never regex the
+prose to learn that a kind is at zero — that is the same defect as handing
+`query` a `display` column and no raw one.
 
 ### `status`
 

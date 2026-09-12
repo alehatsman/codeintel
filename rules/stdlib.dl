@@ -30,7 +30,7 @@ ref(S, F, L, C, From, "read", "name") :-
     name_ref(N, F, L, C, From), !local_def(F, N),
     def(S, _, _, N), exported(S), !ambiguous(N).
 
-%% local_def(F, N)  S is defined in F. Helper.
+%% local_def(F, N)  the NAME N has a definition in file F. Not a symbol.
 local_def(F, N) :- def(S, F, _, N).
 
 % Grouped, not a self-join: the self-join form emits k*k candidate pairs for a

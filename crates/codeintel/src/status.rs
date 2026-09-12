@@ -41,6 +41,24 @@ pub enum Status {
 }
 
 impl Status {
+    /// Every status, for the drift test and for anything enumerating them.
+    pub const ALL: [Self; 12] = [
+        Self::Ok,
+        Self::Truncated,
+        Self::NoIndex,
+        Self::Stale,
+        Self::NoScip,
+        Self::ScipStale,
+        Self::InvalidQuery,
+        Self::Unstratified,
+        Self::Timeout,
+        Self::BudgetExceeded,
+        Self::Locked,
+        Self::Corrupt,
+    ];
+}
+
+impl Status {
     /// Its wire name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -135,5 +153,51 @@ mod tests {
         assert!(!Status::NoIndex.answered());
         assert!(!Status::Locked.answered());
         assert!(!Status::Corrupt.answered());
+    }
+}
+
+#[cfg(test)]
+mod spec_tests {
+    use super::Status;
+
+    /// `specs/05-surface.md`'s status table, as the table itself.
+    const SPEC: &str = include_str!("../../../specs/05-surface.md");
+
+    /// The taxonomy is a contract, so both directions of drift are defects.
+    ///
+    /// A status the code emits and the table omits leaves a consumer branching
+    /// on something undocumented — `corrupt` was in exactly that state. A
+    /// status the table lists and the code cannot produce is the mirror image,
+    /// and `unsupported-language` was in *that* one: documented, never emitted,
+    /// and deciding it per query would have cost a full tree walk that belongs
+    /// in `codeintel status`.
+    #[test]
+    fn the_status_taxonomy_matches_the_spec() {
+        let documented: Vec<&str> = SPEC
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .flat_map(|row| {
+                // `timeout` / `budget-exceeded` share one row.
+                let head = row.split('|').next().unwrap_or_default();
+                head.split('/')
+                    .filter_map(|cell| cell.trim().trim_matches('`').into())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|name| !name.is_empty())
+            .collect();
+
+        for status in Status::ALL {
+            assert!(
+                documented.contains(&status.as_str()),
+                "`{}` is emitted but has no row in specs/05-surface.md",
+                status.as_str()
+            );
+        }
+        for name in &documented {
+            assert!(
+                Status::ALL.iter().any(|s| s.as_str() == *name),
+                "specs/05-surface.md documents `{name}`, which nothing emits"
+            );
+        }
     }
 }

@@ -159,18 +159,50 @@ fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
     let schema = Schema { census: &census };
     match format {
         Format::Text => print!("{schema}"),
+        // The counts go in structurally as well as inside `text`. The whole
+        // argument for the text form is that a value at 0 is a value not to
+        // query — and a consumer that has to regex prose to learn that is the
+        // same defect `query` has when `display` is the only thing on offer.
         Format::Json => println!(
             "{}",
             serde_json::json!({
                 "text": schema.to_string(),
+                "indexed": census.indexed,
                 "rules": schema::rules(schema::STDLIB)
                     .iter()
                     .map(|r| serde_json::json!({ "head": r.head, "doc": r.doc }))
                     .collect::<Vec<_>>(),
+                "relations": facts::RELATIONS
+                    .iter()
+                    .map(|rel| serde_json::json!({
+                        "name": rel.name,
+                        "args": schema::signature(rel.name).0,
+                        "rows": census.rows(rel.name),
+                    }))
+                    .collect::<Vec<_>>(),
+                "kinds": counted(extract::lang::KINDS, &census.kinds),
+                "roles": counted(extract::lang::ROLES, &census.roles),
             })
         ),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A closed vocabulary with this index's count against each value, zeros
+/// included — a value at 0 is a value not to query.
+fn counted(
+    vocabulary: &[&str],
+    counts: &std::collections::BTreeMap<String, usize>,
+) -> serde_json::Value {
+    serde_json::Value::Object(
+        vocabulary
+            .iter()
+            .map(|name| {
+                let n = counts.get(*name).copied().unwrap_or(0);
+                ((*name).to_string(), serde_json::json!(n))
+            })
+            .collect(),
+    )
 }
 
 /// Index freshness and per-language counts. `--format json` is the bug-report

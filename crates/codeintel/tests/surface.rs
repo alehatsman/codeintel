@@ -549,3 +549,49 @@ fn an_mcp_error_result_still_carries_a_status() {
     assert_eq!(result["structuredContent"]["status"], "no-index");
     assert!(result["structuredContent"]["hint"].is_string(), "{result}");
 }
+
+#[test]
+fn schema_json_carries_the_counts_structurally() {
+    // The whole argument for the text form is that a value at 0 is a value not
+    // to query. A consumer that has to regex prose to learn that is in the same
+    // position `query` puts one in when `display` is the only thing on offer.
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let out = stdout(dir.path(), &["schema", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_str(&out).expect("JSON");
+
+    assert!(
+        json["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("RELATIONS"))
+    );
+    assert_eq!(json["indexed"], true);
+
+    // Every relation, with its argument names and its row count.
+    let relations = json["relations"].as_array().expect("relations");
+    assert_eq!(relations.len(), facts::RELATIONS.len());
+    for rel in relations {
+        assert!(rel["args"].as_str().is_some_and(|a| a.starts_with('(')));
+        assert!(rel["rows"].is_number());
+    }
+
+    // Closed vocabularies, zeros included.
+    for kind in extract::lang::KINDS {
+        assert!(json["kinds"][*kind].is_number(), "{kind} missing");
+    }
+    for role in extract::lang::ROLES {
+        assert!(json["roles"][*role].is_number(), "{role} missing");
+    }
+    // This fixture is Rust with no SCIP: functions yes, classes no.
+    assert!(json["kinds"]["function"].as_u64().unwrap_or(0) > 0);
+    assert_eq!(json["kinds"]["class"], 0);
+
+    // Rules come through with their signatures, not just names.
+    let rules = json["rules"].as_array().expect("rules");
+    assert_eq!(rules.len(), schema::rules(schema::STDLIB).len());
+    assert!(
+        rules
+            .iter()
+            .all(|r| r["head"].as_str().is_some_and(|h| h.contains('(')))
+    );
+}
