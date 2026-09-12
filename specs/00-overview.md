@@ -124,34 +124,34 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 - **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
   Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
 - **Base relations: ≤ 16.** Currently 14 ([01-facts.md](01-facts.md)).
-- **Named predicates in `rules/stdlib.dl`: ≤ 40.** This is the one that grows.
-  The other three cannot, which is why asserting only those three would make the
-  founding thesis unfalsifiable. Flags do not count — `--raw` costs no verb —
-  but a flag that needs a paragraph in `schema` output is spending the budget
-  that actually binds: **`codeintel schema` must fit in ~1500 tokens with the
-  rule list complete.**
+- **`codeintel schema` output: ≤ 5,700 characters, with the rule list
+  complete.** This is the budget that binds, and it is the only one that is
+  measured rather than declared. Every rule must appear in `schema` with its
+  signature and a one-line doc, so the rule list pays for itself in the one
+  currency that matters: whether an agent can read the whole vocabulary before
+  it starts working. Flags do not cost a verb, but a flag needing a paragraph
+  here spends this.
 
-  **The number was 24, and 24 was never reconciled with the fact schema.**
-  `rules/stdlib.dl` shipped at M1 with 37 named predicates and every one of them
-  is specified in [01-facts.md](01-facts.md) § Derived relations: the cap and the
-  relation list were written separately and disagreed from the day both existed.
-  M4 resolved it by raising the cap rather than cutting thirteen rules, because
-  the cheapest thirteen are the `_exact` family and the aliases, and the `_exact`
-  family is the entire argument for tier B — M3 measured tier A over-reporting
-  252 call edges on this repository, 17% of what it claims, and those rules are
-  how a caller avoids them.
+  **There is deliberately no cap on the number of rules.** There was one — 24,
+  then 40 — and it was wrong twice, in the same way both times. It shipped at 24
+  while `stdlib.dl` already held 37, so the cap and
+  [01-facts.md](01-facts.md) § Derived relations disagreed from the day both
+  existed; M4 raised it to 40, which was one above the count, which is not where
+  a derived number lands. A bound that moves whenever it binds is not a
+  constraint, it is a decision wearing a constraint's clothes, and leaving it in
+  CI would have spent the credibility of the three limits that are real.
 
-  **State the cost plainly: moving a limit the first time it binds is how limits
-  stop binding.** What keeps this one honest is that it is not the constraint
-  that actually bites. The token budget is: every rule must appear in `schema`
-  with its signature and a one-line doc, and `schema` must fit ~1500 tokens.
-  Measured at M4 with **38** rules: 5,599 characters, which is ~1,400 tokens at
-  four characters per token and ~1,750 under a BPE-shaped count that charges per
-  punctuation mark. The output is *at* its budget, not inside it, and the RULES
-  section is over half of it — so 40 is about two more rules, not sixteen. A
-  41st is a conversation about what to delete, and if the copy is trimmed to
-  smuggle one in, the size assertion is the thing that has been gamed and it is
-  visible in the diff.
+  The deeper reason is that a rule cap points the wrong way. A new structural
+  question is supposed to become **a Datalog rule** — that is the entire
+  mechanism by which this stays small instead of growing dex's 34 store methods.
+  Capping rules puts pressure on the one release valve the design depends on,
+  and the places that pressure escapes to are Rust helpers and new verbs: the
+  exact failure this project exists to avoid. A size budget cannot be satisfied
+  that way. Moving logic into Rust does not shrink `schema`; deleting a rule
+  from the vocabulary does.
+
+  Size has its own failure mode — buying room by writing worse docs — and that
+  one is visible in the diff, which a count never was.
 
 If a new capability cannot be expressed as a Datalog rule over the existing
 relations, that is the signal to think hard — not the signal to add a verb.

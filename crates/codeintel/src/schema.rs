@@ -198,3 +198,44 @@ pub fn signature(name: &str) -> (&'static str, &'static str) {
         _ => ("", ""),
     }
 }
+
+/// What a base relation's column accepts, for diagnosing a constant that
+/// matched nothing (`specs/05-surface.md` § `query`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    /// Integers. A quoted constant here can never match: an integer and its
+    /// string form are different atoms.
+    Int,
+    /// A closed set of strings, listed with this index's counts.
+    Vocab(&'static [&'static str]),
+    /// Anything — a symbol id, a path, a name. Nothing useful to say.
+    Free,
+}
+
+/// Provenance is two values and nothing else, so it is written here rather than
+/// reached for through a tier module that has no reason to expose it.
+const PROVS: &[&str] = &["exact", "name"];
+
+/// The column types of `relation`, positionally.
+///
+/// Derived from [`signature`] rather than declared beside it, so the argument
+/// *names* stay the single source of truth — `every_typed_column_is_reachable`
+/// asserts every classified name actually occurs. Classification is by name
+/// because the names are already consistent and meaningful: a column called
+/// `StartLine` holds a line number in every relation that has one.
+#[must_use]
+pub fn columns(relation: &str) -> Vec<Column> {
+    let (args, _) = signature(relation);
+    args.trim_matches(['(', ')'])
+        .split(',')
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(|arg| match arg {
+            "Line" | "Col" | "StartLine" | "EndLine" | "StartByte" | "EndByte" => Column::Int,
+            "Kind" => Column::Vocab(extract::lang::KINDS),
+            "Role" => Column::Vocab(extract::lang::ROLES),
+            "Prov" => Column::Vocab(PROVS),
+            _ => Column::Free,
+        })
+        .collect()
+}

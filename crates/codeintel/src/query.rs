@@ -16,7 +16,7 @@ use facts::{Lock, Store};
 use crate::index::{self, Plan};
 use crate::render::{Row, Sites};
 use crate::status::Status;
-use crate::{Regexes, render};
+use crate::{Regexes, render, schema};
 
 /// The shipped rule library, compiled in.
 pub const STDLIB: &str = include_str!("../../../rules/stdlib.dl");
@@ -269,7 +269,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
     // case the status taxonomy cannot separate on its own
     // (`specs/05-surface.md` § Response contract).
     if hint.is_none() && printed.rows.is_empty() {
-        hint = Some(empty_hint(&result, &relations));
+        hint = Some(empty_hint(&result, &relations, &engine));
     }
     Ok(Answer {
         status,
@@ -294,7 +294,11 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
 /// literal's relation, which is what separates "wrong constant" from "that
 /// relation is empty — you need a SCIP index" from "this is not true of your
 /// code".
-fn empty_hint(result: &datalog::QueryResult, relations: &BTreeMap<&str, Relation>) -> String {
+fn empty_hint(
+    result: &datalog::QueryResult,
+    relations: &BTreeMap<&str, Relation>,
+    engine: &Engine,
+) -> String {
     let Some(literal) = &result.stats.empty_at else {
         return "the goal derived no rows: this is not true of your code as indexed".to_string();
     };
@@ -305,12 +309,131 @@ fn empty_hint(result: &datalog::QueryResult, relations: &BTreeMap<&str, Relation
         .unwrap_or_default();
     let held = relations.get(name).map_or(0, Relation::len);
     if facts::schema::by_name(name).is_some() {
+        // A constant in a typed column is the agent's most likely error, and
+        // the relation total says nothing about it
+        // (`specs/05-surface.md` § Response contract).
+        if let Some(column) = column_hint(literal, name, relations, engine) {
+            return format!("`{literal}` matched 0 rows; {column}");
+        }
         return format!(
             "`{literal}` matched 0 rows; the index holds {held} `{name}` row(s). \
              everything before it in the join matched"
         );
     }
     format!("`{literal}` matched 0 rows; everything before it in the join matched")
+}
+
+/// Diagnose the first constant sitting in a typed column of `relation`.
+///
+/// Returns `None` when every constant is in a `Free` column, which is the
+/// common case and leaves the relation-total hint alone. Nothing here suggests
+/// a *replacement* value: listing what the column holds is a fact about the
+/// index, proposing what the agent meant is a guess (invariant 1).
+fn column_hint(
+    literal: &str,
+    relation: &str,
+    relations: &BTreeMap<&str, Relation>,
+    engine: &Engine,
+) -> Option<String> {
+    let columns = schema::columns(relation);
+    for (i, arg) in arguments(literal).iter().enumerate() {
+        match columns.get(i) {
+            Some(schema::Column::Int) if arg.starts_with('"') => {
+                let bare = arg.trim_matches('"');
+                return Some(format!(
+                    "that column holds integers and {arg} is a string — they are \
+                     different atoms and can never match. write {bare} unquoted"
+                ));
+            }
+            Some(schema::Column::Vocab(values)) if arg.starts_with('"') => {
+                let counts = vocabulary(relation, i, values, relations, engine);
+                let listed = counts
+                    .iter()
+                    .map(|(value, n)| format!("{value} {n}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // The count for *this* value decides what is true. Saying "0
+                // rows" while the list beside it shows a non-zero count would
+                // be the hint contradicting its own evidence, and a literal
+                // constrains more than one column: a value with rows of its own
+                // means the emptiness came from somewhere else in the literal.
+                let bare = arg.trim_matches('"');
+                let lead = match counts.iter().find(|(value, _)| *value == bare) {
+                    None => format!("{arg} is not one of this column's values"),
+                    Some((_, 0)) => format!("{arg} has 0 rows in this index"),
+                    Some((_, n)) => format!(
+                        "{arg} has {n} row(s) here, so another constant in this \
+                         literal is what matched nothing"
+                    ),
+                };
+                return Some(format!("{lead}. the column holds: {listed}"));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// This index's count for every value of a closed vocabulary column, in the
+/// vocabulary's own order so the output is stable and a zero is visible in
+/// place rather than absent.
+fn vocabulary(
+    relation: &str,
+    column: usize,
+    values: &[&'static str],
+    relations: &BTreeMap<&str, Relation>,
+    engine: &Engine,
+) -> Vec<(&'static str, usize)> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    if let Some(rows) = relations.get(relation) {
+        for row in rows.iter() {
+            if let Some(value) = row.get(column).copied().and_then(|a| engine.resolve(a)) {
+                *counts.entry(value).or_default() += 1;
+            }
+        }
+    }
+    values
+        .iter()
+        .map(|v| (*v, counts.get(v).copied().unwrap_or(0)))
+        .collect()
+}
+
+/// The argument text of `name(a, b, c)`, split on commas that are not inside a
+/// quoted string — a symbol id contains commas often enough that a naive
+/// `split(',')` misreads the column positions and diagnoses the wrong one.
+fn arguments(literal: &str) -> Vec<String> {
+    let inner = literal
+        .split_once('(')
+        .map(|(_, rest)| rest.trim_end_matches(')'))
+        .unwrap_or_default();
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    // Accumulated character by character rather than sliced at byte offsets: a
+    // quoted name can hold any UTF-8, and an offset into the middle of a
+    // character panics.
+    let mut args = vec![String::new()];
+    let mut quoted = false;
+    for c in inner.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                push_char(&mut args, c);
+            }
+            ',' if !quoted => args.push(String::new()),
+            _ => push_char(&mut args, c),
+        }
+    }
+    args.iter().map(|a| a.trim().to_string()).collect()
+}
+
+/// Append to the argument being accumulated. Split out because `args` is never
+/// empty by construction and the `else` branch is unreachable, which is clearer
+/// stated once than as an `expect` at three call sites.
+fn push_char(args: &mut [String], c: char) {
+    if let Some(last) = args.last_mut() {
+        last.push(c);
+    }
 }
 
 /// What the index knows about its SCIP inputs, and what that means for an

@@ -6,12 +6,15 @@ binding: yes
 # 05 — Surface
 
 The surface budget from [00-overview.md](00-overview.md) is binding: **5 CLI
-verbs, 1 MCP tool, <= 16 base relations, <= 40 named predicates in
-`stdlib.dl`.** Growth requires deletion. The rule count is in the budget because
-it is the dimension that actually grows; asserting only the ones that do not
-makes the thesis unfalsifiable. `tests/surface.rs` asserts all four, and
-00-overview.md § Surface budget records why the rule cap moved from 24 and what
-now keeps it honest.
+verbs, 1 MCP tool, <= 16 base relations, and `schema` output <= 5,700
+characters with the rule list complete.** Growth requires deletion.
+
+There is **no cap on the rule count**. There was, twice, and both numbers were
+set rather than derived; 00-overview.md § Surface budget records why they were
+dropped. Rules are the growth path the design wants — a new structural question
+is meant to become a rule, not a verb or a Rust helper — so the thing to bound
+is what they cost an agent, which is `schema` bytes. `tests/surface.rs` asserts
+all four.
 
 ## Status taxonomy
 
@@ -284,10 +287,10 @@ mark and per identifier fragment, which is what dense tabular output actually
 looks like. Today: **5,599 characters, 38 rules**, and the honest statement is
 that `schema` is *at* its budget rather than inside it.
 
-That matters because it is the constraint the rule cap leans on. The RULES
-section is ~2,900 of those characters — **over half the output** — so the
-~1500-token budget and the 40-rule cap are in real tension, and the next rule
-added spends copy that is not there. The CI assertion is therefore on
+That matters because it is now the *only* constraint the standard library
+spends against. The RULES section is ~2,900 of those characters — **over half
+the output** — so every rule added spends copy that is genuinely not there, and
+it spends it visibly. The CI assertion is therefore on
 characters, which can be measured, at a ceiling the current output meets: it
 catches growth, which is what it is for. If it fires, the standard library is
 too big — cut rules, not the catalogue.
@@ -447,6 +450,27 @@ contract, and the whole transport is ~150 lines. Recorded in
   rows, which is indistinguishable from a typo, a wrong `Kind`, a path that is
   not indexed, and a missing SCIP index. The engine already evaluates
   literal-by-literal, so the first-zero literal is free.
+- **A constant in a typed column is diagnosed against that column, not against
+  the relation.** "the index holds 1448 `def` rows" is true and useless: the
+  agent's error was the *value*, and the relation total says nothing about it.
+  Two column types carry enough information to say more, and both are the
+  subject of a recorded eval failure:
+  - **Closed vocabulary** (`Kind`, `Role`, `Prov`, `Lang`) — report that
+    column's values with this index's counts. An agent that writes
+    `Kind="type"` for a Rust struct needs to see `struct 79` beside `type 1`;
+    an agent that writes `Kind="klass"` needs to see that no such value exists.
+    Listing the vocabulary is a fact about the index, not a guess about intent,
+    so it stays inside invariant 1 — **do not suggest a replacement value.**
+  - **Integer** (`Line`, `Col`, `StartLine`, `EndLine`, `StartByte`, `EndByte`)
+    — a quoted constant in one of these can *never* match, because an integer
+    and its string form are different atoms. Say so and show the unquoted form.
+    This is the footgun the `NOTES` block already warns about, which is
+    evidence a warning in the preamble is not where an agent reads it.
+
+  This stays a `hint` on an `ok` result rather than becoming `invalid-query`.
+  The query is well-formed and the answer — no rows — is true. Promoting it to
+  an error would make the taxonomy claim a malformed program where there is
+  only an empty one, and the taxonomy's whole job is keeping those apart.
 - Everything else carries a command the agent can run. `no-index` returns `run: codeintel index .`, not "index not
   found".
 - On `invalid-query`, `hint` contains the corrected shape where it can be

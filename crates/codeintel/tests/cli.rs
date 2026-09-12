@@ -758,3 +758,75 @@ fn a_symbol_with_no_name_renders_as_its_location() {
         assert!(!symbol.is_empty(), "empty symbol column in {row:?}");
     }
 }
+
+/// `specs/05-surface.md` § Response contract: a constant in a typed column is
+/// diagnosed against that column, because "the index holds 1448 `def` rows" is
+/// true and tells the agent nothing about the value it got wrong.
+///
+/// Both cases here are recorded agent-eval failures, not hypotheticals: an
+/// agent wrote `Kind="type"` for a Rust struct, and the integer-as-string trap
+/// had a warning in `schema`'s NOTES block that evidently is not where an agent
+/// reads it.
+#[test]
+fn an_empty_result_diagnoses_the_constant_not_the_relation() {
+    let dir = tree();
+    index(dir.path());
+
+    // A valid vocabulary value that has rows of its own: the emptiness came
+    // from elsewhere in the literal, and the hint must not claim otherwise
+    // while printing a non-zero count beside it.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, _, "struct", "NoSuchThing")."#);
+    assert!(stderr.contains("struct"), "{stderr}");
+    assert!(
+        stderr.contains("another constant in this literal"),
+        "a value with rows must not be blamed: {stderr}"
+    );
+
+    // A value the vocabulary does not contain at all.
+    let (_, stderr) = query(dir.path(), r#"?- def(S, _, "klass", _)."#);
+    assert!(
+        stderr.contains("not one of this column's values"),
+        "{stderr}"
+    );
+    // The vocabulary is listed with this index's counts, so the agent can see
+    // `struct` beside the `type` it guessed. Listing is a fact about the index;
+    // suggesting a replacement would be a guess (invariant 1).
+    assert!(stderr.contains("the column holds:"), "{stderr}");
+    assert!(stderr.contains("struct "), "{stderr}");
+
+    // An integer column with a quoted constant can never match, whatever the
+    // rest of the query says.
+    let (_, stderr) = query(dir.path(), r#"?- def_span(S, "10", E, A, B)."#);
+    assert!(stderr.contains("holds integers"), "{stderr}");
+    assert!(stderr.contains("write 10 unquoted"), "{stderr}");
+}
+
+/// Every column type that `schema::columns` classifies must actually occur in a
+/// signature. A classifier arm matching a name no relation uses is dead code
+/// that reads as coverage.
+#[test]
+fn every_typed_column_is_reachable() {
+    let typed: BTreeSet<&str> = RELATIONS
+        .iter()
+        .flat_map(|rel| {
+            let (args, _) = codeintel::schema::signature(rel.name);
+            args.trim_matches(['(', ')'])
+                .split(',')
+                .map(str::trim)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for name in [
+        "Line",
+        "Col",
+        "StartLine",
+        "EndLine",
+        "StartByte",
+        "EndByte",
+        "Kind",
+        "Role",
+        "Prov",
+    ] {
+        assert!(typed.contains(name), "`{name}` is classified but unused");
+    }
+}

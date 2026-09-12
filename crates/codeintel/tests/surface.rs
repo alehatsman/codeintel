@@ -72,8 +72,12 @@ fn stdout(root: &Path, args: &[&str]) -> String {
 /// prose-like) to **~1,750** (a BPE-shaped count that charges per punctuation
 /// mark and per identifier fragment, which is what dense tabular output really
 /// looks like). The honest statement is that the output sits *at* its budget,
-/// not comfortably inside it: `specs/05-surface.md` § `schema` records the band
-/// and the tension it implies with the 40-rule cap.
+/// not comfortably inside it: `specs/05-surface.md` § `schema` records the band.
+///
+/// This is now the *only* budget the standard library spends against — the rule
+/// count cap was dropped (`specs/00-overview.md` § Surface budget), because a
+/// rule's cost to an agent is the bytes it must read, and a count cap pushed
+/// back against the one growth path the design actually wants.
 ///
 /// So this asserts the thing it can: the text does not grow. A change that
 /// pushes past it is a change that has to argue for itself.
@@ -382,13 +386,13 @@ fn the_surface_budget_holds() {
         facts::RELATIONS.len()
     );
 
-    let predicates = schema::rules(schema::STDLIB).len();
-    assert!(
-        predicates <= 40,
-        "named predicates in stdlib.dl: {predicates}. the cap is 40 and \
-         00-overview.md records why it is not 24 — raising it again is a \
-         conversation about what to delete"
-    );
+    // There is deliberately no cap on the rule count; see
+    // `specs/00-overview.md` § Surface budget. The budget rules are spent
+    // against is `schema` output size, asserted by
+    // `the_schema_fits_its_size_budget_with_the_rule_list_complete`, because a
+    // rule's real cost is the bytes an agent reads before it can work. A count
+    // cap pushed back against the one growth path the design wants — a new
+    // question is meant to become a rule, not a verb or a Rust helper.
 }
 
 #[test]
