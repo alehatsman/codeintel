@@ -249,7 +249,8 @@ Class SingletonClass                             -> class
 Struct                                           -> struct
 Interface Protocol                               -> interface
 Trait TypeClass Concept                          -> trait
-Enum Union                                       -> enum
+Enum                                             -> enum
+Union                                            -> type
 Field Property StaticField StaticProperty
   StaticDataMember Key                           -> field
 Constant EnumMember                              -> constant
@@ -259,6 +260,12 @@ Type TypeAlias TypeFamily DataFamily
   AssociatedType                                 -> typealias
 everything else                                  -> unknown
 ```
+
+`Union` maps to `type`, not to `enum`. An earlier draft collapsed the two, which
+made a Rust `union` and a Rust `enum` produce identical rows — a smaller version
+of the upstream `tags.scm` defect that `docs/plan.md` M2's kind-fidelity test
+exists to catch, and the same class of extractor guess invariant 1 forbids. Both
+tiers map it the same way so the anchor join never has to reconcile a kind.
 
 ### Position normalization
 

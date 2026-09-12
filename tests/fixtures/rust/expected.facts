@@ -1,0 +1,209 @@
+def("local src/db/conn.rs open().", "src/db/conn.rs", "function", "open").
+def("local src/kinds.rs BANNER.", "src/kinds.rs", "variable", "BANNER").
+def("local src/kinds.rs Config#", "src/kinds.rs", "struct", "Config").
+def("local src/kinds.rs Config#handle().", "src/kinds.rs", "method", "handle").
+def("local src/kinds.rs Config#limit.", "src/kinds.rs", "field", "limit").
+def("local src/kinds.rs Config#quiet.", "src/kinds.rs", "field", "quiet").
+def("local src/kinds.rs Handler#", "src/kinds.rs", "trait", "Handler").
+def("local src/kinds.rs Handler#handle().", "src/kinds.rs", "method", "handle").
+def("local src/kinds.rs Handler#name().", "src/kinds.rs", "method", "name").
+def("local src/kinds.rs Key#", "src/kinds.rs", "typealias", "Key").
+def("local src/kinds.rs LIMIT.", "src/kinds.rs", "constant", "LIMIT").
+def("local src/kinds.rs Mode#", "src/kinds.rs", "enum", "Mode").
+def("local src/kinds.rs Mode#Careful.", "src/kinds.rs", "constant", "Careful").
+def("local src/kinds.rs Mode#Fast.", "src/kinds.rs", "constant", "Fast").
+def("local src/kinds.rs Word#", "src/kinds.rs", "type", "Word").
+def("local src/kinds.rs Word#bits.", "src/kinds.rs", "field", "bits").
+def("local src/kinds.rs Word#halves.", "src/kinds.rs", "field", "halves").
+def("local src/kinds.rs shout().", "src/kinds.rs", "macro", "shout").
+def("local src/store.rs Entry#", "src/store.rs", "struct", "Entry").
+def("local src/store.rs Entry#value.", "src/store.rs", "field", "value").
+def("local src/store.rs Store#", "src/store.rs", "struct", "Store").
+def("local src/store.rs Store#entries.", "src/store.rs", "field", "entries").
+def("local src/store.rs Store#evict().", "src/store.rs", "method", "evict").
+def("local src/store.rs Store#get().", "src/store.rs", "method", "get").
+def("local src/store.rs Store#put().", "src/store.rs", "method", "put").
+def("local src/store.rs detail/", "src/store.rs", "module", "detail").
+def("local src/store.rs detail/helper().", "src/store.rs", "function", "helper").
+def("local src/store.rs show().", "src/store.rs", "function", "show").
+def("local src/store.rs warm().", "src/store.rs", "function", "warm").
+def("local src/ui/panel.rs draw().", "src/ui/panel.rs", "function", "draw").
+def("local tests/store_test.rs it_warms().", "tests/store_test.rs", "function", "it_warms").
+def_doc("local src/db/conn.rs open().", "Open a connection.").
+def_doc("local src/kinds.rs BANNER.", "A static.").
+def_doc("local src/kinds.rs Config#", "A struct, with a documented field.").
+def_doc("local src/kinds.rs Config#limit.", "How many entries to keep.").
+def_doc("local src/kinds.rs Handler#", "A trait, with one required and one provided method.").
+def_doc("local src/kinds.rs Handler#handle().", "Required.").
+def_doc("local src/kinds.rs Handler#name().", "Provided.").
+def_doc("local src/kinds.rs Key#", "A type alias.").
+def_doc("local src/kinds.rs LIMIT.", "A constant.").
+def_doc("local src/kinds.rs Mode#", "An enum.").
+def_doc("local src/kinds.rs Word#", "A union. Distinct from an enum, which is the whole point.").
+def_doc("local src/kinds.rs shout().", "A macro.").
+def_doc("local src/store.rs Entry#", "An entry in the store.").
+def_doc("local src/store.rs Store#", "A tiny key-value store.").
+def_doc("local src/store.rs Store#get().", "Read one entry.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local src/store.rs Store#put().", "Write one entry.").
+def_doc("local src/store.rs detail/helper().", "Nested in a module, so the descriptor chain is more than one hop.").
+def_doc("local src/store.rs warm().", "A free function that calls a method, so `calls` has an edge to find.").
+def_doc("local src/ui/panel.rs draw().", "Draw the panel.").
+def_name("local src/db/conn.rs open().", 4, 7).
+def_name("local src/kinds.rs BANNER.", 44, 11).
+def_name("local src/kinds.rs Config#", 8, 11).
+def_name("local src/kinds.rs Config#handle().", 47, 7).
+def_name("local src/kinds.rs Config#limit.", 10, 8).
+def_name("local src/kinds.rs Config#quiet.", 11, 4).
+def_name("local src/kinds.rs Handler#", 30, 10).
+def_name("local src/kinds.rs Handler#handle().", 32, 7).
+def_name("local src/kinds.rs Handler#name().", 35, 7).
+def_name("local src/kinds.rs Key#", 27, 9).
+def_name("local src/kinds.rs LIMIT.", 41, 10).
+def_name("local src/kinds.rs Mode#", 15, 9).
+def_name("local src/kinds.rs Mode#Careful.", 17, 4).
+def_name("local src/kinds.rs Mode#Fast.", 16, 4).
+def_name("local src/kinds.rs Word#", 21, 10).
+def_name("local src/kinds.rs Word#bits.", 22, 4).
+def_name("local src/kinds.rs Word#halves.", 23, 4).
+def_name("local src/kinds.rs shout().", 54, 13).
+def_name("local src/store.rs Entry#", 9, 11).
+def_name("local src/store.rs Entry#value.", 10, 8).
+def_name("local src/store.rs Store#", 14, 11).
+def_name("local src/store.rs Store#entries.", 15, 4).
+def_name("local src/store.rs Store#evict().", 33, 7).
+def_name("local src/store.rs Store#get().", 22, 11).
+def_name("local src/store.rs Store#put().", 29, 11).
+def_name("local src/store.rs detail/", 43, 4).
+def_name("local src/store.rs detail/helper().", 45, 11).
+def_name("local src/store.rs show().", 50, 3).
+def_name("local src/store.rs warm().", 39, 7).
+def_name("local src/ui/panel.rs draw().", 9, 7).
+def_name("local tests/store_test.rs it_warms().", 4, 3).
+def_sig("local src/db/conn.rs open().", "pub fn open(url: &str) -> bool").
+def_sig("local src/kinds.rs BANNER.", "pub static BANNER: &str").
+def_sig("local src/kinds.rs Config#", "pub struct Config").
+def_sig("local src/kinds.rs Config#handle().", "fn handle(&self, key: &Key) -> bool").
+def_sig("local src/kinds.rs Config#limit.", "pub limit: u32").
+def_sig("local src/kinds.rs Config#quiet.", "quiet: bool").
+def_sig("local src/kinds.rs Handler#", "pub trait Handler").
+def_sig("local src/kinds.rs Handler#handle().", "fn handle(&self, key: &Key) -> bool").
+def_sig("local src/kinds.rs Handler#name().", "fn name(&self) -> &'static str").
+def_sig("local src/kinds.rs Key#", "pub type Key").
+def_sig("local src/kinds.rs LIMIT.", "pub const LIMIT: u32").
+def_sig("local src/kinds.rs Mode#", "pub enum Mode").
+def_sig("local src/kinds.rs Mode#Careful.", "Careful").
+def_sig("local src/kinds.rs Mode#Fast.", "Fast").
+def_sig("local src/kinds.rs Word#", "pub union Word").
+def_sig("local src/kinds.rs Word#bits.", "bits: u32").
+def_sig("local src/kinds.rs Word#halves.", "halves: [u16").
+def_sig("local src/kinds.rs shout().", "macro_rules! shout").
+def_sig("local src/store.rs Entry#", "pub struct Entry").
+def_sig("local src/store.rs Entry#value.", "pub value: String").
+def_sig("local src/store.rs Store#", "pub struct Store").
+def_sig("local src/store.rs Store#entries.", "entries: HashMap<String, Entry>").
+def_sig("local src/store.rs Store#evict().", "fn evict(&mut self)").
+def_sig("local src/store.rs Store#get().", "pub fn get(&self, key: &str) -> Option<Entry>").
+def_sig("local src/store.rs Store#put().", "pub fn put(&mut self, key: String, value: String)").
+def_sig("local src/store.rs detail/", "mod detail").
+def_sig("local src/store.rs detail/helper().", "pub fn helper() -> u32").
+def_sig("local src/store.rs show().", "fn show<T: Show>(_value: T)").
+def_sig("local src/store.rs warm().", "pub fn warm(store: &Store) -> Option<Entry>").
+def_sig("local src/ui/panel.rs draw().", "pub fn draw() -> bool").
+def_sig("local tests/store_test.rs it_warms().", "fn it_warms()").
+def_span("local src/db/conn.rs open().", 3, 6, 61, 138).
+def_span("local src/kinds.rs BANNER.", 43, 44, 891, 943).
+def_span("local src/kinds.rs Config#", 7, 12, 280, 411).
+def_span("local src/kinds.rs Config#handle().", 47, 49, 975, 1060).
+def_span("local src/kinds.rs Config#limit.", 9, 10, 343, 391).
+def_span("local src/kinds.rs Config#quiet.", 11, 11, 397, 408).
+def_span("local src/kinds.rs Handler#", 29, 38, 629, 845).
+def_span("local src/kinds.rs Handler#handle().", 31, 32, 709, 763).
+def_span("local src/kinds.rs Handler#name().", 34, 37, 769, 843).
+def_span("local src/kinds.rs Key#", 26, 27, 587, 627).
+def_span("local src/kinds.rs LIMIT.", 40, 41, 847, 889).
+def_span("local src/kinds.rs Mode#", 14, 18, 413, 466).
+def_span("local src/kinds.rs Mode#Careful.", 17, 17, 456, 463).
+def_span("local src/kinds.rs Mode#Fast.", 16, 16, 446, 450).
+def_span("local src/kinds.rs Word#", 20, 24, 468, 585).
+def_span("local src/kinds.rs Word#bits.", 22, 22, 551, 560).
+def_span("local src/kinds.rs Word#halves.", 23, 23, 566, 582).
+def_span("local src/kinds.rs shout().", 52, 58, 1064, 1168).
+def_span("local src/store.rs Entry#", 7, 11, 177, 271).
+def_span("local src/store.rs Entry#value.", 10, 10, 251, 268).
+def_span("local src/store.rs Store#", 13, 16, 273, 358).
+def_span("local src/store.rs Store#entries.", 15, 15, 324, 355).
+def_span("local src/store.rs Store#evict().", 33, 35, 750, 807).
+def_span("local src/store.rs Store#get().", 19, 25, 377, 591).
+def_span("local src/store.rs Store#put().", 27, 31, 597, 744).
+def_span("local src/store.rs detail/", 43, 48, 955, 1088).
+def_span("local src/store.rs detail/helper().", 44, 47, 972, 1086).
+def_span("local src/store.rs show().", 50, 50, 1090, 1120).
+def_span("local src/store.rs warm().", 38, 41, 811, 953).
+def_span("local src/ui/panel.rs draw().", 8, 11, 265, 344).
+def_span("local tests/store_test.rs it_warms().", 3, 6, 69, 113).
+exported("local src/db/conn.rs open().").
+exported("local src/kinds.rs BANNER.").
+exported("local src/kinds.rs Config#").
+exported("local src/kinds.rs Config#limit.").
+exported("local src/kinds.rs Handler#").
+exported("local src/kinds.rs Key#").
+exported("local src/kinds.rs LIMIT.").
+exported("local src/kinds.rs Mode#").
+exported("local src/kinds.rs Word#").
+exported("local src/store.rs Entry#").
+exported("local src/store.rs Entry#value.").
+exported("local src/store.rs Store#").
+exported("local src/store.rs Store#get().").
+exported("local src/store.rs Store#put().").
+exported("local src/store.rs detail/helper().").
+exported("local src/store.rs warm().").
+exported("local src/ui/panel.rs draw().").
+file("src/db/conn.rs", "rust").
+file("src/kinds.rs", "rust").
+file("src/store.rs", "rust").
+file("src/ui/panel.rs", "rust").
+file("tests/store_test.rs", "rust").
+import("src/store.rs", "std::collections::HashMap", "").
+import("src/store.rs", "std::fmt::Debug", "Show").
+import("src/ui/panel.rs", "crate::db::conn", "").
+import("src/ui/panel.rs", "std::fmt", "format_mod").
+name_ref("assert", "tests/store_test.rs", 5, 4, "local tests/store_test.rs it_warms().").
+name_ref("clear", "src/store.rs", 34, 21, "local src/store.rs Store#evict().").
+name_ref("cloned", "src/store.rs", 24, 14, "local src/store.rs Store#get().").
+name_ref("get", "src/store.rs", 23, 33, "local src/store.rs Store#get().").
+name_ref("get", "src/store.rs", 40, 10, "local src/store.rs warm().").
+name_ref("insert", "src/store.rs", 30, 21, "local src/store.rs Store#put().").
+name_ref("is_empty", "src/db/conn.rs", 5, 9, "local src/db/conn.rs open().").
+name_ref("is_empty", "src/kinds.rs", 48, 31, "local src/kinds.rs Config#handle().").
+name_ref("open", "src/ui/panel.rs", 10, 10, "local src/ui/panel.rs draw().").
+parent("local src/db/conn.rs open().", "src/db/conn.rs").
+parent("local src/kinds.rs BANNER.", "src/kinds.rs").
+parent("local src/kinds.rs Config#", "src/kinds.rs").
+parent("local src/kinds.rs Config#handle().", "local src/kinds.rs Config#").
+parent("local src/kinds.rs Config#limit.", "local src/kinds.rs Config#").
+parent("local src/kinds.rs Config#quiet.", "local src/kinds.rs Config#").
+parent("local src/kinds.rs Handler#", "src/kinds.rs").
+parent("local src/kinds.rs Handler#handle().", "local src/kinds.rs Handler#").
+parent("local src/kinds.rs Handler#name().", "local src/kinds.rs Handler#").
+parent("local src/kinds.rs Key#", "src/kinds.rs").
+parent("local src/kinds.rs LIMIT.", "src/kinds.rs").
+parent("local src/kinds.rs Mode#", "src/kinds.rs").
+parent("local src/kinds.rs Mode#Careful.", "local src/kinds.rs Mode#").
+parent("local src/kinds.rs Mode#Fast.", "local src/kinds.rs Mode#").
+parent("local src/kinds.rs Word#", "src/kinds.rs").
+parent("local src/kinds.rs Word#bits.", "local src/kinds.rs Word#").
+parent("local src/kinds.rs Word#halves.", "local src/kinds.rs Word#").
+parent("local src/kinds.rs shout().", "src/kinds.rs").
+parent("local src/store.rs Entry#", "src/store.rs").
+parent("local src/store.rs Entry#value.", "local src/store.rs Entry#").
+parent("local src/store.rs Store#", "src/store.rs").
+parent("local src/store.rs Store#entries.", "local src/store.rs Store#").
+parent("local src/store.rs Store#evict().", "local src/store.rs Store#").
+parent("local src/store.rs Store#get().", "local src/store.rs Store#").
+parent("local src/store.rs Store#put().", "local src/store.rs Store#").
+parent("local src/store.rs detail/", "src/store.rs").
+parent("local src/store.rs detail/helper().", "local src/store.rs detail/").
+parent("local src/store.rs show().", "src/store.rs").
+parent("local src/store.rs warm().", "src/store.rs").
+parent("local src/ui/panel.rs draw().", "src/ui/panel.rs").
+parent("local tests/store_test.rs it_warms().", "tests/store_test.rs").
