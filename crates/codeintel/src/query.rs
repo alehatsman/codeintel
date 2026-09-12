@@ -61,6 +61,10 @@ pub struct Answer {
     pub elapsed_ms: u64,
     /// Files re-extracted before the query ran.
     pub refreshed: usize,
+    /// Predicates demand transformation rewrote. Empty means it did not apply,
+    /// which on a seeded recursive rule is the difference between a seeded
+    /// traversal and all-pairs reachability.
+    pub transformed: Vec<String>,
 }
 
 impl Answer {
@@ -75,6 +79,7 @@ impl Answer {
             derived: 0,
             elapsed_ms: 0,
             refreshed: 0,
+            transformed: Vec::new(),
         }
     }
 }
@@ -158,6 +163,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         derived: result.stats.derived,
         elapsed_ms: result.stats.elapsed_ms,
         refreshed,
+        transformed: result.stats.transformed.clone(),
     })
 }
 
@@ -231,6 +237,7 @@ pub fn to_json(answer: &Answer) -> serde_json::Value {
             "derived": answer.derived,
             "elapsed_ms": answer.elapsed_ms,
             "refreshed": answer.refreshed,
+            "transformed": answer.transformed,
         },
     })
 }

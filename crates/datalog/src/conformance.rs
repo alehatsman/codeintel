@@ -826,3 +826,93 @@ fn the_standard_library_answers_over_hand_written_facts() {
         "no definition here is over 80 lines"
     );
 }
+
+/// Demand transformation must apply **against the shipped rule library**, not
+/// only against a two-rule test program.
+///
+/// This is the gate `docs/plan.md` M1 asked for, widened by what M2 found: the
+/// transformation is validated after rewriting and falls back to the plain
+/// program when the rewrite does not stratify, so a rewrite that stops applying
+/// is silent — the query still answers, it just answers by computing all-pairs
+/// reachability first. On a real repository that is a timeout rather than a
+/// wrong answer, which is why nothing caught it until there was a real
+/// repository.
+#[test]
+fn demand_transformation_applies_over_the_standard_library() {
+    let mut e = stdlib_engine();
+    e.load_rules(include_str!("../../../rules/stdlib.dl"))
+        .expect("stdlib loads");
+
+    for (query, wanted) in [
+        (
+            r#"?- innermost_at("src/store.rs", 15, S)."#,
+            "innermost_at@bbf",
+        ),
+        (
+            r#"?- def(S, _, _, "get"), impact_of(S, C)."#,
+            "impact_of@bf",
+        ),
+        (
+            r#"?- innermost_at("src/store.rs", 15, S), impact_of(S, C)."#,
+            "impact_of@bf",
+        ),
+        // Both at once. Seeding `!tighter_at` is what breaks `impact_of`'s
+        // stratification, so this is the query that proves the back-off is per
+        // predicate and not per program: before it was, this pair fell all the
+        // way back to the plain program and computed all-pairs reachability.
+        (
+            r#"?- innermost_at("src/store.rs", 15, S), impact_of(S, C)."#,
+            "tighter_at@bbb",
+        ),
+        (r#"?- reach_of("S#get().", C)."#, "reach_of@bf"),
+    ] {
+        let result = e.query(query, &Limits::default()).expect("answers");
+        assert!(
+            result.stats.transformed.iter().any(|n| n == wanted),
+            "{query}\n  wanted {wanted} among {:?}",
+            result.stats.transformed
+        );
+    }
+}
+
+/// Ground-negation seeding is what makes `innermost_at` cheap; backing it off
+/// for `ambiguous` is what keeps `impact_of` stratifiable. Assert both, so
+/// losing either is a test failure rather than a slow query.
+#[test]
+fn the_negation_backoff_keeps_what_it_can() {
+    let mut e = stdlib_engine();
+    e.load_rules(include_str!("../../../rules/stdlib.dl"))
+        .expect("stdlib loads");
+
+    let seeded = e
+        .query(
+            r#"?- innermost_at("src/store.rs", 15, S)."#,
+            &Limits::default(),
+        )
+        .expect("answers");
+    assert!(
+        seeded
+            .stats
+            .transformed
+            .iter()
+            .any(|n| n == "tighter_at@bbb"),
+        "the negated literal was not seeded: {:?}",
+        seeded.stats.transformed
+    );
+
+    let fell_back = e
+        .query(
+            r#"?- def(S, _, _, "get"), impact_of(S, C)."#,
+            &Limits::default(),
+        )
+        .expect("answers");
+    assert!(
+        !fell_back
+            .stats
+            .transformed
+            .iter()
+            .any(|n| n.starts_with("ambiguous@")),
+        "seeding a negated literal here makes the program unstratifiable: {:?}",
+        fell_back.stats.transformed
+    );
+}

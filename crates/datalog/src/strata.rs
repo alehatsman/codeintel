@@ -5,7 +5,7 @@
 //! a negative edge has no well-defined answer, so it is rejected by name rather
 //! than evaluated to whatever the iteration order happens to produce.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Expr, Literal, Program};
 use crate::diag::{Diagnostic, Result, Status};
@@ -49,7 +49,37 @@ struct Edge {
 ///
 /// # Errors
 /// Returns `unstratified` naming every relation in the offending cycle.
-pub fn stratify(program: &Program) -> Result<Strata> {
+/// The relations in the first cycle that contains a negative edge.
+///
+/// Separate from [`stratify`] because a caller may want to *react* to the cycle
+/// rather than report it: demand transformation seeds a negated literal and can
+/// pull it into a recursive component that was fine before, and the fix is to
+/// stop seeding the predicates named here and rewrite again
+/// (`specs/03-datalog.md` § Demand transformation).
+#[must_use]
+pub fn negative_cycle(program: &Program) -> Option<Vec<String>> {
+    let (names, edges) = graph(program);
+    let components = scc(names.len(), &edges);
+    for edge in &edges {
+        let (Some(a), Some(b)) = (components.get(edge.from), components.get(edge.to)) else {
+            continue;
+        };
+        if edge.negative && a == b {
+            return Some(
+                names
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| components.get(*i) == Some(a))
+                    .map(|(_, n)| (*n).to_string())
+                    .collect(),
+            );
+        }
+    }
+    None
+}
+
+/// The dependency graph: every derived relation, and every edge between them.
+fn graph(program: &Program) -> (Vec<&str>, Vec<Edge>) {
     let mut index: BTreeMap<&str, usize> = BTreeMap::new();
     let mut names: Vec<&str> = Vec::new();
     for rule in &program.rules {
@@ -73,30 +103,27 @@ pub fn stratify(program: &Program) -> Result<Strata> {
             }
         }
     }
+    (names, edges)
+}
 
-    let components = scc(names.len(), &edges);
-    for edge in &edges {
-        let (Some(a), Some(b)) = (components.get(edge.from), components.get(edge.to)) else {
-            continue;
-        };
-        if edge.negative && a == b {
-            let cycle: Vec<&str> = names
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| components.get(*i) == Some(a))
-                .map(|(_, n)| *n)
-                .collect();
-            return Err(Diagnostic::whole(
-                Status::Unstratified,
-                format!(
-                    "negation or an aggregate appears inside the recursive cycle `{}`; \
-                     a relation cannot depend on the absence of its own conclusions. \
-                     Split the recursion from the negation into two relations",
-                    cycle.join("` -> `")
-                ),
-            ));
-        }
+/// Stratify a program's derived relations.
+///
+/// # Errors
+/// Returns `unstratified` naming every relation in the offending cycle.
+pub fn stratify(program: &Program) -> Result<Strata> {
+    if let Some(cycle) = negative_cycle(program) {
+        return Err(Diagnostic::whole(
+            Status::Unstratified,
+            format!(
+                "negation or an aggregate appears inside the recursive cycle `{}`; \
+                 a relation cannot depend on the absence of its own conclusions. \
+                 Split the recursion from the negation into two relations",
+                cycle.join("` -> `")
+            ),
+        ));
     }
+    let (names, edges) = graph(program);
+    let components = scc(names.len(), &edges);
 
     // `scc` numbers components in the order it completes them, which for this
     // edge direction (head -> body) is dependencies first.
@@ -113,6 +140,71 @@ pub fn stratify(program: &Program) -> Result<Strata> {
         stratum.sort();
     }
     Ok(Strata { order })
+}
+
+impl Strata {
+    /// Drop every stratum the goal cannot reach.
+    ///
+    /// A relation the query does not depend on cannot change its answer, and
+    /// `rules/stdlib.dl` ships `reaches/2` — an unseeded all-pairs closure — so
+    /// evaluating the whole library for a single base-relation scan is the
+    /// difference between milliseconds and a timeout
+    /// (`specs/03-datalog.md` § Evaluation).
+    #[must_use]
+    pub fn restrict(self, wanted: &BTreeSet<String>) -> Self {
+        let order = self
+            .order
+            .into_iter()
+            .map(|stratum| {
+                stratum
+                    .into_iter()
+                    .filter(|name| wanted.contains(name))
+                    .collect::<Vec<String>>()
+            })
+            .filter(|stratum| !stratum.is_empty())
+            .collect();
+        Self { order }
+    }
+}
+
+/// Every predicate the query can reach, through positive literals, negations
+/// and aggregate goals alike.
+///
+/// Polarity is irrelevant here: `!ref_outside(S, F)` needs `ref_outside`
+/// computed just as much as a positive literal would.
+#[must_use]
+pub fn reachable(program: &Program) -> BTreeSet<String> {
+    let mut wanted: BTreeSet<String> = BTreeSet::new();
+    let mut seed = Vec::new();
+    if let Some(goal) = &program.query {
+        collect(&goal.body, false, &mut seed);
+    }
+    for rule in &program.rules {
+        // A rule with no body is a fact, and its head is data the goal may
+        // read directly.
+        if rule.body.is_empty() {
+            wanted.insert(rule.head.name.clone());
+        }
+    }
+    for (name, _) in seed {
+        wanted.insert(name.to_string());
+    }
+    loop {
+        let mut added = false;
+        for rule in &program.rules {
+            if !wanted.contains(&rule.head.name) {
+                continue;
+            }
+            let mut names = Vec::new();
+            collect(&rule.body, false, &mut names);
+            for (name, _) in names {
+                added |= wanted.insert(name.to_string());
+            }
+        }
+        if !added {
+            return wanted;
+        }
+    }
 }
 
 /// Every relation a body depends on, with the sign of the dependency.

@@ -6,7 +6,7 @@
 //! already-built rule set.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use crate::ast::{Literal, Program, Rule};
@@ -19,7 +19,7 @@ use crate::matcher::{Matcher, Regexes};
 use crate::parse::parse;
 use crate::relation::Relation;
 use crate::solve::{Layers, Solver};
-use crate::strata::{Strata, stratify};
+use crate::strata::{Strata, negative_cycle, reachable, stratify};
 use crate::symbols::Symbols;
 use crate::transform::transform;
 
@@ -52,6 +52,10 @@ enum Mode {
     #[cfg(test)]
     Naive,
 }
+
+/// How many times a rewrite may back off before the plain program is used.
+/// One per seeded negation is enough; this is the runaway guard.
+const MAX_DEMAND_ATTEMPTS: usize = 16;
 
 /// A Datalog engine over one set of base relations.
 pub struct Engine {
@@ -143,7 +147,7 @@ impl Engine {
         self.rules.len()
     }
 
-    fn base_arities(&self) -> Vec<(String, usize)> {
+    pub(crate) fn base_arities(&self) -> Vec<(String, usize)> {
         self.base
             .schema()
             .map(|(n, a)| (n.to_string(), a))
@@ -208,18 +212,19 @@ impl Engine {
         // rewrite does not survive the same two checks, evaluate the original
         // rather than reject a query the user wrote correctly.
         let demanded = demand
-            .then(|| transform(&plain, &schema.derived))
-            .flatten()
-            .and_then(|t| {
-                let schema = check(&t.program, self.base_arities()).ok()?;
-                let strata = stratify(&t.program).ok()?;
-                Some((t.program, schema, strata, t.names))
-            });
+            .then(|| self.demand(&plain, &schema.derived))
+            .flatten();
         let (combined, schema, strata, transformed) = match demanded {
             Some(parts) => parts,
             None => (plain, schema, strata, Vec::new()),
         };
         let goal = combined.query.clone().unwrap_or(goal);
+
+        // Evaluate only what the goal can reach. `rules/stdlib.dl` ships
+        // `reaches/2`, an unseeded all-pairs closure, so without this a scan of
+        // one base relation costs whole-graph reachability — measured at M2 as
+        // a timeout on a 1,070-definition repository.
+        let strata = strata.restrict(&reachable(&combined));
 
         let patterns = self.compile_patterns(&combined)?;
         let derived = Cell::new(0u64);
@@ -280,8 +285,47 @@ impl Engine {
         Ok(self.finish(&goal.columns, &goal.vars, &rows, limits, stats, ground))
     }
 
+    /// Rewrite for demand, backing off one broken component at a time.
+    ///
+    /// Seeding a negated literal is what makes `innermost_at` cheap and what
+    /// can make `impact_of` unstratifiable, and which of the two happens
+    /// depends on the rest of the query. So the rewrite is attempted, the
+    /// cycle it broke is asked for by name, those predicates stop being seeded,
+    /// and it is attempted again. Bounded by the number of seeded negations, so
+    /// it terminates; each attempt is validated, so nothing unsafe escapes.
+    fn demand(
+        &self,
+        plain: &Program,
+        derived: &BTreeSet<String>,
+    ) -> Option<(Program, Schema, Strata, Vec<String>)> {
+        let mut excluded: BTreeSet<String> = BTreeSet::new();
+        for _ in 0..MAX_DEMAND_ATTEMPTS {
+            let t = transform(plain, derived, &excluded)?;
+            let Ok(schema) = check(&t.program, self.base_arities()) else {
+                return None;
+            };
+            if let Ok(strata) = stratify(&t.program) {
+                return Some((t.program, schema, strata, t.names));
+            }
+            let cycle = negative_cycle(&t.program)?;
+            let mut progressed = false;
+            for name in &t.seeded_negations {
+                if cycle
+                    .iter()
+                    .any(|n| n == name || n.starts_with(&format!("{name}@")))
+                {
+                    progressed |= excluded.insert(name.clone());
+                }
+            }
+            if !progressed {
+                return None;
+            }
+        }
+        None
+    }
+
     /// Loaded rules minus any a query rule shadows, plus the query's own rules.
-    fn merge_rules(&self, program: &Program) -> (Vec<Rule>, Vec<String>) {
+    pub(crate) fn merge_rules(&self, program: &Program) -> (Vec<Rule>, Vec<String>) {
         let local: Vec<String> = program
             .rules
             .iter()

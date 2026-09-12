@@ -216,7 +216,45 @@ traversals, and honestly a special case rather than general evaluation. Ship it
 only as a stopgap with an issue open for the real transformation; a query
 language whose recursion is a builtin is a query language with an asterisk.
 
+#### Negated literals, and backing off
+
+A negated literal whose arguments are **all bound** is a ground membership test,
+and a demanded relation answers it exactly: its seed is that one tuple, so it
+holds the tuple iff the full relation does. Seeding it matters —
+`innermost_at` is `symbol_at(F, Line, S), !tighter_at(F, Line, S)`, and without
+it `tighter_at` is materialized over every line of every file.
+
+Seeding a negated predicate also adds a magic rule whose body is the *call
+site*. Magic sets always place a predicate, its magic relation and its callers
+in one strongly connected component; when the edge into that component is
+negative, the component is unstratifiable. That is exactly what happens to
+`!ambiguous(N)` inside `ref` once the query also reaches `impact_of`, because
+`impact_of`'s recursion closes the loop.
+
+So the decision is **per predicate**: rewrite, ask which cycle broke, stop
+seeding the predicates named in it, rewrite again — bounded by the number of
+seeded negations. `?- innermost_at(F, L, S), impact_of(S, C).` ends up with
+`tighter_at` seeded and `ambiguous` not, which is the most demand that query can
+carry. An all-or-nothing fallback gets this query wrong in the expensive
+direction: measured at M2, whole-program fallback left it running past 120 s on
+a 1,070-definition repository, and per-predicate back-off answers it in 168 ms.
+
+A predicate inside an **aggregate** goal is never seeded. Counting reads the
+whole relation, so restricting it would change the answer rather than the cost.
+
 ### Evaluation
+
+**Only the goal's dependency closure is evaluated.** Before the loop below
+runs, the predicates reachable from the query body — through rule bodies,
+negations and aggregates alike — are collected, and every stratum outside that
+set is dropped. This is not an optimization, it is what makes a shipped rule
+library usable: `rules/stdlib.dl` contains `reaches/2`, an unseeded all-pairs
+transitive closure, so evaluating every stratum would make
+`?- def(S, F, "function", N).` — a single scan of a base relation — cost
+all-pairs reachability over the whole repository. Measured at M2 on this repo
+(1,070 defs, 4,173 `name_ref`s) that query hit `max_time_ms` at 5,000 ms; with
+the closure it answers in single-digit milliseconds. The rows are identical
+either way: a relation the goal cannot reach cannot change the goal's answer.
 
 Semi-naive, the standard algorithm, the one `datafrog` implements in ~500 lines:
 

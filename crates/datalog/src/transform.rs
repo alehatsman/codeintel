@@ -11,10 +11,28 @@
 //! `?- innermost_at("src/store.rs", 142, S), impact_of(S, C).` is the headline
 //! pattern and it binds the seed sideways.
 //!
-//! Two deliberate conservatisms: a derived predicate under `!` or inside an
-//! aggregate goal is requested **unrestricted**, because negation and counting
-//! both read the whole relation. Restricting those would change the answer
-//! rather than the cost.
+//! A derived predicate inside an aggregate goal is always requested
+//! **unrestricted**: counting reads the whole relation, and restricting it
+//! would change the answer rather than the cost.
+//!
+//! A *negated* literal is the interesting case, and it is why this function
+//! takes an `excluded` set. When every argument is bound the literal is a
+//! ground membership test, and a demanded relation answers it exactly — that is
+//! `!tighter_at(F, Line, S)` in `innermost_at`, and without it the headline
+//! location query materializes `tighter_at` over every line of every file.
+//!
+//! But seeding a negated predicate adds a magic rule whose body is the *call
+//! site*, and magic sets always put a predicate, its magic relation and its
+//! callers in one strongly connected component. When the edge into it is
+//! negative, that component is unstratifiable — which is what happens to
+//! `!ambiguous(N)` inside `ref` as soon as the query also reaches `impact_of`,
+//! because `impact_of`'s own recursion closes the loop.
+//!
+//! So seeding is decided per predicate, not per program: the caller rewrites,
+//! asks [`crate::strata::negative_cycle`] what broke, adds those predicates to
+//! `excluded`, and rewrites again. Every attempt is a program that passed the
+//! same safety and stratification checks as the original, and the fixpoint of
+//! that loop is the most demand this program can carry.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -35,6 +53,9 @@ pub struct Transformed {
     pub program: Program,
     /// Adorned predicate names, for `stats.transformed`.
     pub names: Vec<String>,
+    /// Predicates whose negated occurrences were seeded. The caller excludes
+    /// these one component at a time when the rewrite does not stratify.
+    pub seeded_negations: BTreeSet<String>,
 }
 
 /// The adornment carried by a predicate name, if it has one.
@@ -58,11 +79,17 @@ pub fn adornment_of(name: &str) -> Option<&str> {
 /// Returns `None` when there is nothing to propagate — a fully free query over
 /// base relations, for instance.
 #[must_use]
-pub fn transform(program: &Program, derived: &BTreeSet<String>) -> Option<Transformed> {
+pub fn transform(
+    program: &Program,
+    derived: &BTreeSet<String>,
+    excluded: &BTreeSet<String>,
+) -> Option<Transformed> {
     let query = program.query.as_ref()?;
     let mut x = Xform {
         source: &program.rules,
         derived,
+        excluded,
+        seeded_negations: BTreeSet::new(),
         out: Vec::new(),
         seen: BTreeSet::new(),
         queue: VecDeque::new(),
@@ -81,12 +108,15 @@ pub fn transform(program: &Program, derived: &BTreeSet<String>) -> Option<Transf
             query: Some(goal),
         },
         names: x.names.into_iter().collect(),
+        seeded_negations: x.seeded_negations,
     })
 }
 
 struct Xform<'a> {
     source: &'a [Rule],
     derived: &'a BTreeSet<String>,
+    excluded: &'a BTreeSet<String>,
+    seeded_negations: BTreeSet<String>,
     out: Vec<Rule>,
     seen: BTreeSet<String>,
     queue: VecDeque<(String, Vec<bool>)>,
@@ -143,11 +173,40 @@ impl Xform<'_> {
                     ..pred.clone()
                 })
             }
-            // Negation and aggregation read the whole relation; asking for a
-            // restricted one would change the answer, not the cost.
+            // A negated literal whose arguments are *all* bound is a ground
+            // membership test, and a demanded relation answers it exactly: its
+            // seed is that one tuple, so it holds the tuple iff the full
+            // relation does. This is the `!tighter_at(F, Line, S)` in
+            // `innermost_at`, and without it the headline location query
+            // materializes tighter_at over the whole repository — measured at
+            // M2 as a timeout on 1,070 definitions.
+            //
+            // With anything free — `!calls(_, S)` — the relation really is read
+            // whole, and restricting it would change the answer rather than the
+            // cost.
             Literal::Neg(pred) if self.derived.contains(&pred.name) => {
-                self.request_plain(&pred.name);
-                lit.clone()
+                let adornment = adorn(&pred.args, bound);
+                if self.excluded.contains(&pred.name) || !adornment.iter().all(|b| *b) {
+                    self.request_plain(&pred.name);
+                    return lit.clone();
+                }
+                self.seeded_negations.insert(pred.name.clone());
+                self.out.push(Rule {
+                    head: Pred {
+                        name: magic_name(&pred.name, &adornment),
+                        args: keep(&pred.args, &adornment),
+                        span: pred.span,
+                    },
+                    body: preceding.to_vec(),
+                    vars: vars.to_vec(),
+                    span,
+                });
+                let name = adorned_name(&pred.name, &adornment);
+                self.request(&pred.name, adornment);
+                Literal::Neg(Pred {
+                    name,
+                    ..pred.clone()
+                })
             }
             Literal::Assign {
                 expr: Expr::Count { goal, .. },

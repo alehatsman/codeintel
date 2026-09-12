@@ -291,6 +291,54 @@ fn every_pattern_matches_at_least_once() {
 }
 
 #[test]
+fn no_node_takes_two_definition_captures() {
+    // The other half of query liveness. Upstream matches a method in a
+    // `declaration_list` as both `@definition.method` and
+    // `@definition.function`, which emits two `def` rows for one method. A
+    // query cannot be trusted to stay disjoint by inspection, so it is checked.
+    use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+
+    for lang in extract::LANGS {
+        let language = (lang.language)();
+        let query = Query::new(&language, lang.tags).expect("tags.scm compiles");
+        let mut parser = Parser::new();
+        parser.set_language(&language).expect("the grammar loads");
+
+        let (found, _) = walk(&fixture());
+        for candidate in found.iter().filter(|c| c.lang.name == lang.name) {
+            let src = std::fs::read_to_string(&candidate.abs).expect("source");
+            let tree = parser.parse(&src, None).expect("parses");
+            let mut claimed: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(&query, tree.root_node(), src.as_bytes());
+            while let Some(m) = matches.next() {
+                for capture in m.captures() {
+                    let Some(label) = query.capture_names().get(capture.index as usize) else {
+                        continue;
+                    };
+                    if label.starts_with("definition.") || label.starts_with("scope.") {
+                        claimed
+                            .entry(capture.node.id())
+                            .or_default()
+                            .push((*label).to_string());
+                    }
+                }
+            }
+            for (node, labels) in claimed {
+                let mut distinct: Vec<&String> = labels.iter().collect();
+                distinct.sort();
+                distinct.dedup();
+                assert!(
+                    distinct.len() == 1,
+                    "{}: node {node} is captured as {distinct:?}",
+                    candidate.path
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn facts_are_a_function_of_their_own_file() {
     // The mechanical guard on incremental soundness: every fact for file X is
     // reproducible by extracting X alone, with nothing else indexed.
