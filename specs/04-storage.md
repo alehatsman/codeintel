@@ -169,7 +169,10 @@ authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A
 mismatch forces a full re-extract.** Without it, incremental indexing means an
 extractor fix reaches only the files a user happens to edit afterwards: half the
 index is built by the old query and half by the new one, `status` says `ok`, and
-nothing will ever reconcile them. It also makes every bug report irreproducible,
+nothing will ever reconcile them. For the same reason the fingerprint is
+recorded only by a run that walked every language and finished: a `--lang`
+run, or one `max_refresh_ms` stopped, leaves the old value in place, so the
+next full run still re-extracts what it skipped. It also makes every bug report irreproducible,
 because the reporter's first move is `rm -rf .codeintel`, which destroys the
 evidence. Fifteen lines.
 

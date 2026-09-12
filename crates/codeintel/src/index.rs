@@ -386,7 +386,13 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             .collect();
     }
 
-    store.manifest_mut().extractor_fingerprint = fingerprint;
+    // Only a run that re-extracted everything the fingerprint covers may
+    // record it. A `--lang` run or one a deadline stopped leaves files built
+    // by the old extractor; writing the new fingerprint over them would make
+    // the next full run trust them (specs/04-storage.md § Manifest).
+    if plan.langs.is_empty() && report.stale.is_empty() {
+        store.manifest_mut().extractor_fingerprint = fingerprint;
+    }
     store.manifest_mut().scip = inputs;
     store.commit().context("committing the index")?;
     report.elapsed_ms = started.elapsed().as_millis();

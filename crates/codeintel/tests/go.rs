@@ -336,6 +336,56 @@ fn tier_b_owns_a_method_by_its_package_qualified_type() {
     );
 }
 
+/// A `--lang` run re-extracts one language. Recording the new extractor
+/// fingerprint would make the next full run trust the other language's
+/// segments, built by the old extractor (`specs/04-storage.md` § Manifest).
+#[test]
+fn a_lang_restricted_refresh_does_not_record_the_extractor_fingerprint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    copy(&fixture(), &dir.path().join("svc"));
+    copy(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rust"),
+        &dir.path().join("cli"),
+    );
+    for stale in [
+        "svc/expected.facts",
+        "svc/index.scip",
+        "cli/expected.facts",
+        "cli/index.scip",
+    ] {
+        drop(std::fs::remove_file(dir.path().join(stale)));
+    }
+    index(dir.path());
+    let manifest = dir.path().join(".codeintel/manifest.json");
+    let text = std::fs::read_to_string(&manifest).expect("manifest");
+    let current =
+        serde_json::from_str::<serde_json::Value>(&text).expect("json")["extractor_fingerprint"]
+            .as_str()
+            .expect("recorded")
+            .to_string();
+
+    // Pretend the index was built by an older extractor.
+    std::fs::write(&manifest, text.replace(&current, "blake3:older-extractor")).expect("writes");
+
+    let out = run(dir.path(), &["index", ".", "--lang", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let after = std::fs::read_to_string(&manifest).expect("manifest");
+    assert!(
+        after.contains("blake3:older-extractor"),
+        "a partial run recorded the fingerprint"
+    );
+
+    // The full run notices and re-extracts what the partial one skipped.
+    let summary = index(dir.path());
+    assert!(!summary.contains("0 indexed"), "{summary}");
+    let after = std::fs::read_to_string(&manifest).expect("manifest");
+    assert!(after.contains(&current), "{after}");
+}
+
 #[test]
 fn a_lang_restricted_refresh_carries_the_other_language_forward() {
     // `--lang go` does not walk the Rust files, so they are never seen. They
