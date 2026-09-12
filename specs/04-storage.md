@@ -19,8 +19,14 @@ That property is what buys the simplicity below. We are not a database.
   dict.bin               string interner, append-only
   dict.idx               offset table into dict.bin
   seg/<blake3-of-path>.bin   one segment per source file
-  seg/_scip.bin          facts from SCIP documents with no tier-A counterpart
 ```
+
+**There is no `seg/_scip.bin`.** An earlier draft put facts from SCIP documents
+with no tier-A counterpart into one blob. They get an ordinary per-file segment
+instead, because the blob buys nothing and costs three things: a second load
+path, a manifest field to name it, and the loss of per-file forgetting — a
+tier-B-only file that is deleted can no longer be dropped on its own. Every
+argument for per-file segments applies to them unchanged.
 
 Add `.codeintel/` to `.gitignore` on `codeintel index` if a `.gitignore` exists
 and does not already ignore it. Announce it; do not do it silently.
@@ -125,7 +131,7 @@ deliberately deferred.
   "dict_generation": 3,
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
-      "mtime": 1757000000, "documents": 812 }
+      "mtime": 1757000000, "size": 40218811, "documents": 812 }
   ],
   "files": {
     "src/store.rs": {
@@ -138,6 +144,13 @@ deliberately deferred.
 
 `hash` is content, `mtime`+`size` is the fast path. A file is unchanged iff
 mtime and size both match; otherwise hash before deciding to re-extract.
+
+**A SCIP input carries `mtime` and `size` for the same reason, and `tool` and
+`documents` are *not* compared.** Those two are only known after the index is
+parsed, and a refresh that changes nothing must not parse it — a large
+`index.scip` on the query path would put a protobuf decode in front of every
+answer. Comparing them would make every refresh look like a changed SCIP input
+and re-extract the whole tree.
 
 **`extractor_fingerprint` is blake3 over the binary version, every vendored and
 authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A
@@ -172,8 +185,14 @@ walk the tree (ignore crate, gitignore-aware)
   unchanged file    -> skip
   vanished file     -> delete segment, drop entry
 if any SCIP input changed (mtime or size):
-  re-ingest all SCIP -> rewrite _scip.bin -> re-run the anchor join
+  re-extract every file with the new ingest -> the anchor join runs inline
 ```
+
+The anchor join is not a pass over written facts. Tier A consults what SCIP
+knows about a file *while it emits*, so a definition adopts its SCIP symbol
+before any row exists and nothing is rewritten twice
+([02-extraction.md](02-extraction.md) § The anchor join). That is why a changed
+SCIP input re-extracts rather than rewrites: there is nothing to rewrite.
 
 Single-file change: one parse, one segment write, one manifest write. Target
 < 1 s, dominated by the tree walk.

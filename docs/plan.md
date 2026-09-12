@@ -405,11 +405,22 @@ printed command is copy-pasteable and the user runs it.
 
 **Done when**
 - On `tests/fixtures/rust/` with both tiers, >= 95% of tier-A definitions carry
-  `resolved(S)`.
+  `resolved(S)`, **counting definitions a position join can reach**. Modules
+  are exempt and the exemption is pinned by count
+  ([02-extraction.md](02-extraction.md) § Validation): tier A places module
+  `conn` at `mod conn;` in one file and rust-analyzer places it at line 1 of
+  another, so no join on identifier position can match them. Measured: 33/33
+  non-module, 0/9 module.
 - Tier-A precision test passes: every `"name"` ref either matches an `"exact"`
   ref at the same position or is listed in `known-imprecise.txt` with a reason.
-- `?- calls_exact(A, B).` returns edges that `?- calls(A, B).` misses, and a
-  hand-audited sample of 20 is correct in both directions.
+- `?- calls_exact(A, B).` returns edges that a **tier-A-only** `?- calls(A, B).`
+  misses, and the set is hand-audited in both directions. The original wording
+  was unsatisfiable: `calls_exact` is `calls_at` with `Prov` pinned to
+  `"exact"`, so against a full index it is a subset of `calls` by construction.
+  What it buys there is precision, not reach. The fixture carries `open`
+  exported twice so that tier A's `!ambiguous(N)` guard correctly refuses the
+  edge and tier B supplies it; "a sample of 20" is also more edges than a
+  fixture this size should have, and the whole set is audited instead.
 - Deleting `index.scip` and reindexing degrades cleanly to `"name"` only, with
   `status: "no-scip"` on a query that needs precision.
 - **`no-scip` fires on the relation-dependency closure, not on literal syntax.**
@@ -418,10 +429,79 @@ printed command is copy-pasteable and the user runs it.
   on a fresh install — the exact failure invariant 6 exists to prevent.
 - `codeintel index` prints the exact indexer command for every detected language.
 - **A file edited after `index.scip` was built reports `scip-stale`, and the
-  spec states which `SymId` its tier-A rows carry.** Auto-refresh is tier-A only;
-  the anchor join runs tier-A-then-tier-B over the whole repo. What happens to a
-  single refreshed file is currently undefined, and the honest answer is that it
-  leaves the resolved identity until the next full index.
+  spec states which `SymId` its tier-A rows carry.** Settled: auto-refresh
+  carries the manifest's SCIP inputs forward and re-extracts the changed file
+  against the *existing* ingest, so a definition whose name token has not moved
+  keeps its resolved identity and one that has moved reverts to the synthesized
+  `local <path> ...` form. A full `codeintel index` reconciles it. What
+  auto-refresh must never do is refresh with no SCIP at all — that silently
+  deletes every tier-B fact ([05-surface.md](../specs/05-surface.md) § `query`).
+
+### What M3 actually cost, and what it found
+
+Shipped: `crates/extract`'s `scip.rs` (normalization) and `tier_b.rs` (the join
+and tier-B facts); anchors threaded through tier A; `--scip`; the `no-scip` and
+`scip-stale` statuses; `Stats.depends` in the engine. The fixture became a real
+cargo crate with a committed `index.scip` from `rust-analyzer scip .`.
+
+**The anchor join was the easy half.** The join itself is one `BTreeMap` keyed
+by identifier position, and doing it *before* tier A writes — rather than as a
+rewrite pass afterwards — made `def_span`, `parent` and every reference's `From`
+land on the resolved identity for free. That is what the spec said; it is
+cheaper than it sounds.
+
+What actually cost time:
+
+1. **`query`'s auto-refresh deleted tier B.** The refresh built its `Plan` with
+   no SCIP inputs, which reads as "the SCIP index disappeared" — all-or-nothing
+   invalidation then re-extracted the tree tier-A-only and dropped every
+   `scip_ref`, `resolved`, `implements` and `extern` row. Three queries in a row
+   and the index had silently lost half of itself, with `status: ok` throughout.
+   Found by querying the fixture after indexing it, not by any test that existed.
+   Auto-refresh now carries the manifest's inputs forward, and
+   `auto_refresh_does_not_delete_tier_b` pins it.
+2. **Two of the milestone's own done-whens were wrong.** The 95% anchor rate is
+   unreachable while tier A treats `mod x;` as a definition — the two tiers put
+   a module in different *files*. And `calls_exact` is a subset of `calls` by
+   construction, so "edges `calls` misses" only means anything against a
+   tier-A-only index. Both are corrected above with the reasoning, not quietly
+   relaxed.
+3. **Parsing `index.scip` on every query is not free.** The ingest is now
+   stat-gated: the inputs are `stat`ed, and the protobuf is decoded only when a
+   file actually needs re-extracting. A refresh that changes nothing reads no
+   protobuf at all.
+4. **SCIP's `extern` test had to be inverted.** "Package ≠ project package" is
+   not checkable — SCIP never says what packages a project is. It says exactly
+   what symbols the project defines, so `extern` is the complement.
+
+Two spec deviations were surfaced rather than reconciled silently: `seg/_scip.bin`
+is gone in favour of ordinary per-file segments for tier-B-only files, and
+`ScipInput` compares `mtime`+`size` while ignoring `tool` and `documents`, which
+are only known after a parse. Both are written into
+[04-storage.md](../specs/04-storage.md).
+
+Measurements worth keeping. On `tests/fixtures/rust/`, tier A alone finds two
+call edges, one of which is a false positive; with SCIP, `calls_exact` finds
+three and all three are correct. On **this repository** — 61 files, 1,262 tier-A
+definitions, `rust-analyzer scip .` in 4.3 s, index in 717 ms:
+
+| | |
+|---|---|
+| anchored | 1,185/1,262 (93.9%); 97.4% of non-module definitions |
+| `?- calls(A, B).` | 1,473 edges, 355 ms |
+| `?- calls_exact(A, B).` | 1,221 edges, 364 ms |
+| the headline query | 21 rows, 376 ms |
+
+**Tier A over-reports 252 call edges here, 17% of what it claims.** That number
+is the entire argument for tier B, and it is also the argument for keeping both
+provenances rather than collapsing them: the 252 are inspectable, and a jump in
+that figure means one of the tiers changed behaviour.
+
+Still open, and named rather than hidden: SCIP emits a `local` definition for
+every parameter and binding — 16 in this fixture — and the collapse table has no
+word for `Parameter`, so they land in `def` as `unknown`. That is the spec as
+written and invariant 1 forbids the extractor deciding a parameter is not a
+definition. A `stdlib.dl` rule naming the set is the cheap fix if it bites.
 
 ---
 

@@ -233,7 +233,7 @@ From `scip.proto` (field names verbatim):
 | `symbol_roles` bits | `Role`: `WriteAccess`→`write`, `ReadAccess`→`read`, `Import`→`import`, `Test`→`test`, `Generated`→`generated`, `ForwardDefinition`→`forward`, `Definition`→`def` |
 | `Relationship.is_implementation` | `implements(S, T, "exact")` |
 | `Relationship.is_type_definition` | `has_type(S, T, "exact")` |
-| symbol string `Package{manager,name,version}` ≠ project package | `extern(S, Manager, Pkg, Version)` |
+| symbol string names a package **and no document defines it** | `extern(S, Manager, Pkg, Version)` |
 | every ingested definition | `resolved(S)` |
 
 `SymbolInformation.kind` has **80+ values**; we collapse them:
@@ -304,11 +304,13 @@ Go method, which is lexically at file scope but semantically owned by its type.
 ([01-facts.md](01-facts.md) § `parent`):
 
 1. Drop the last descriptor from the SCIP symbol string. `pkg/Store#Get().` →
-   `pkg/Store#`. If that names an indexed definition, it is the parent.
-   Preferred because the descriptor grammar is mandatory, so every indexer
-   supplies it.
+   `pkg/Store#`. **If that names a definition this SCIP index actually has**, it
+   is the parent. Preferred because the descriptor grammar is mandatory, so
+   every indexer supplies it. The existence check is not optional: a Go method
+   truncates to a type the index may not define, and a `parent` pointing at a
+   symbol nothing defines is worse than no row at all.
 2. Else `SymbolInformation.enclosing_symbol`, which is how SCIP `local` symbols
-   get an owner.
+   get an owner — subject to the same existence check.
 3. Else tier A's span nesting.
 
 Tier B **replaces** tier A's row rather than adding one, so the
@@ -319,6 +321,13 @@ Descriptor truncation must be done on the parsed descriptor list, not by string
 surgery — descriptor names can contain `#`, `.`, and `/` when backtick-quoted
 (SCIP escapes them as `` `name with spaces` ``), so a naive `rsplit` on the
 suffix character corrupts them.
+
+### External symbols
+
+"Package ≠ project package" is not directly checkable: SCIP never states which
+packages a project *is*. It states, exactly, which symbols the project defines.
+So `extern` is the complement — a symbol that names a package and that no
+document in this index defines — and needs no guess.
 
 ### Local symbols
 
@@ -388,6 +397,16 @@ hand-written golden fact file.
    until someone applies an edit.
 3. **Anchor coverage.** On a fixture with both tiers, assert ≥ 95% of tier-A
    definitions get `resolved(S)`. A drop means the anchor join is drifting.
+
+   **Modules are exempt, and the exemption is pinned by count.** Tier A places
+   module `conn` at the `mod conn;` declaration in `src/db/mod.rs`;
+   rust-analyzer places it at line 1 of `src/db/conn.rs`. They are in different
+   files, so a join on identifier position structurally cannot match them. This
+   is a property of the two models, not a defect in the join, and the fix is not
+   a looser join — it is either a second `parent`-shaped relation for module
+   containment or an extractor that stops treating `mod x;` as a definition.
+   Both are out of scope here and neither is urgent. Measured on
+   `tests/fixtures/rust/`: 33/33 non-module definitions anchor, 0/9 modules do.
 4. **Tier-A precision.** On a fixture with both tiers, every derived `"name"`
    `ref` must either match an `"exact"` `ref` at the same position or be listed
    in `known-imprecise.txt` with a reason. This bounds tier A's false-positive

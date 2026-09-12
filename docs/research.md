@@ -371,8 +371,8 @@ The whole binary, as specified:
 |---|---|---|
 | `tree-sitter` | parsing | 0.27.0, 2026-08-30 — no STACK entry |
 | 4 grammar crates (below) | grammars | no STACK entry |
-| `scip` | protobuf bindings for the SCIP tier | 0.10.0, 2026-09-03 — no STACK entry |
-| `protobuf` | transitive, required by `scip` | 4.36.1 |
+| `scip` | SCIP bindings and the descriptor parser | 0.10.0, 2026-09-03 — **deviation**, see below |
+| `protobuf` | required by `scip`, and by us directly | 3.7 — see below |
 | `memmap2` | segment loading | 0.9.11 — **deviation**, see below |
 | `blake3` | segments are named by a content hash (`04-storage.md`) | STACK default (`sha2`/`blake3`) |
 | `regex` | the `match`/`prefix`/`suffix`/`contains` builtins | STACK default; already transitive via `tree-sitter` |
@@ -405,6 +405,19 @@ model backend.
   fixed-width row of `u32`, so the on-disk bytes *are* the in-memory
   representation (§5). Loading is `mmap` plus concatenate; a serialization
   library would be a parse step over data that needs none.
+- **`scip` deviates from STACK.md's `prost`.** Trigger: the protobuf here is
+  not a schema we own, it is SCIP, and the `scip` crate is that schema's
+  canonical Rust binding. It also carries `parse_symbol`, which is what makes
+  `02-extraction.md` § Parent precedence correct rather than approximately
+  correct: a backtick-quoted descriptor name may contain `#`, `.` and `/`, so
+  truncating a symbol by `rsplit` corrupts it. Taking `prost` instead would mean
+  vendoring `scip.proto`, putting `protoc` on the build path, and hand-writing
+  that parser. Cost: `protobuf` 3.7 as a second protobuf runtime alongside
+  nothing — we have no other. STACK.md now carries a SCIP row of its own.
+- **`protobuf` is a direct dependency, not only a transitive one.** Trigger:
+  `scip` deliberately does not re-export its runtime, and parsing an index or
+  reading a `symbol_roles` bitset needs it by name. Same version `scip`
+  resolves, so it is one runtime and not two.
 - **`fd-lock` has no STACK entry.** Trigger: `04-storage.md` § Concurrency
   requires an advisory `flock` on `.codeintel/lock`, `query`'s auto-refresh is a
   writer and must take the same one, and std has no file locking at all. It was

@@ -23,8 +23,8 @@ guessing what an empty result means.
 | `truncated` | query ran, a cap fired | which cap (`max_result_rows` / `max_result_bytes`), and its value |
 | `no-index` | no `.codeintel/` here | `run: codeintel index .` |
 | `stale` | sources changed and auto-refresh was skipped, exceeded `max_refresh_ms`, or `schema_version` mismatched | `run: codeintel index .` — names the N files |
-| `no-scip` | query needs `"exact"` provenance, none available | the indexer command for the languages present |
-| `scip-stale` | `index.scip` older than sources | the indexer command |
+| `no-scip` | the goal's **relation-dependency closure** reaches a relation only SCIP populates, and none was ingested | which relations, and the indexer command for the languages present |
+| `scip-stale` | an indexed file is newer than `index.scip` | which files, and the indexer command |
 | `unsupported-language` | files present in a language with no grammar | which languages, how many files |
 | `invalid-query` | parse or safety failure | the rule, the variable, the violated rule |
 | `unstratified` | negation cycle | the cycle |
@@ -34,6 +34,17 @@ guessing what an empty result means.
 **`ok` with zero rows means "this is not true of your code."** That must be
 distinguishable from every failure above without reading prose. This is
 invariant 6 and the most common way a tool like this lies to an agent.
+
+`no-scip` is that invariant at its sharpest, and it fires on the **closure, not
+the syntax**. `?- impact_of(S, C).` mentions no base relation at all; its
+closure reaches `scip_ref`. Without the closure test the README's own headline
+query returns `ok` with zero rows on a fresh install.
+
+**`stale`, `truncated`, `no-scip` and `scip-stale` all carry rows and all exit
+0.** They are answers about a known-imperfect index, not failures: the caller
+gets what there is and is told exactly what is wrong with it. Only `no-index`,
+`invalid-query`, `unstratified`, `timeout`, `budget-exceeded`, `locked` and
+`corrupt` exit 2.
 
 ---
 
@@ -107,6 +118,13 @@ the worst failure this tool has, because it looks like a right one.
   the SCIP index was built has fresh `name_ref` and stale `scip_ref`. That
   mixture is reported as `scip-stale`, which auto-refresh makes **more** likely,
   not less — so the status matters more now, not less.
+- **Auto-refresh carries the manifest's SCIP inputs forward.** It re-extracts a
+  changed file against the *existing* ingest, so the file keeps whatever
+  resolved identity still matches at the old positions and loses the rest. What
+  it must never do is refresh with no SCIP at all: that looks like "the index
+  disappeared", re-extracts the tree tier-A-only, and deletes every tier-B fact
+  — the store would degrade a little more with each query, silently. A full
+  `codeintel index` is what reconciles a `scip-stale` index.
 - Bounded by `max_refresh_ms` (default 2,000). If the refresh would exceed it,
   it is abandoned, the query runs against the index as it stands, and the
   response carries `status: "stale"` naming the files it could not refresh.
@@ -255,7 +273,8 @@ Exactly one of `query`, `rule`, `schema` per call; two is `invalid-query`.
   "rows": [["handle_read", "src/api/handler.rs", 42]],
   "truncated": false,
   "hint": null,
-  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": [], "transformed": ["impact_of"] }
+  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": [], "transformed": ["impact_of"],
+             "depends": ["def", "name_ref", "scip_ref"] }
 }
 ```
 

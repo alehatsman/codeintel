@@ -200,6 +200,13 @@ Scope for v1:
   Sideways information passing handles this; a transformation scoped to goal
   constants does not. Test this shape explicitly, not just the constant-goal one.
 - Not applied to fully-free goals, where there is nothing to propagate.
+**`stats.depends` names the base relations the goal's dependency closure
+reaches**, taken from the plain program rather than the demand rewrite, so the
+names are relations and not adornments. The engine has no opinion about what
+that means; it is what lets the layer above distinguish "your code does not do
+this" from "this index could not see it" without parsing the query text
+([05-surface.md](05-surface.md) § Status, `no-scip`).
+
 - The transformation is reported in `stats.transformed`, so an unexpectedly slow
   query can be diagnosed as "demand transformation did not apply here" rather
   than guessed at.
@@ -359,7 +366,8 @@ pub struct QueryResult {
     pub rows:      Vec<Vec<Atom>>,
     pub truncated: bool,
     pub cap:       Option<&'static str>,
-    pub stats:     Stats,         // derived tuples, elapsed, strata, plan
+    pub stats:     Stats,         // derived tuples, elapsed, strata, plan,
+                                  // transformed, shadowed, depends
 }
 
 pub struct Diagnostic {
