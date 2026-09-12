@@ -168,11 +168,22 @@ Per file, one parse, then:
    capped at 512 bytes. Crude and honest — it is a display string, not a parse.
 4. `def_doc` = contiguous comment lines immediately preceding `def_span.start`,
    marker prefixes stripped. Emitted only if non-empty.
-5. `exported` per the language's export predicate.
+5. `visibility(S, Vis)` per the language's visibility predicate — one row for
+   every definition, always. The extractor reports what the definition *states*
+   (`public`, or `restricted` when it states a bounded visibility or states
+   nothing where the grammar offers the slot), or `inherited` when the node kind
+   has no slot at all. It does **not** walk ancestors to decide whether the
+   symbol is reachable from outside: `exported` is a rule over `parent`
+   (`01-facts.md` § Derived relations), and an extractor answering it here would
+   be inferring, which is invariant 1. `@scope.*` items define nothing and get
+   no row.
 6. Run `imports.scm` → `import` rows. The module specifier is captured **as
    written**; no resolution.
 7. `@reference.call` captures → `name_ref(Name, F, Line, Col, From)` rows, with
    `From` from the same span sweep. **Tier A does not resolve names to symbols.**
+8. `@impl` captures → `name_impl(F, TypeName, TraitName, Line)` rows, both names
+   as the grammar's final identifier. Same rule as 7: the names are recorded,
+   not resolved. An inherent `impl` has no trait and emits nothing.
 
 ### Tier A does not resolve names
 
@@ -275,7 +286,7 @@ From `scip.proto` (field names verbatim):
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
 | `Occurrence` without `Definition` role | `scip_ref(S, F, L, C, From, Role)` |
 | `symbol_roles` bits | `Role`: `WriteAccess`→`write`, `ReadAccess`→`read`, `Import`→`import`, `Test`→`test`, `Generated`→`generated`, `ForwardDefinition`→`forward`, `Definition`→`def`, empty bitset (`UnspecifiedSymbolRole`)→`unknown` |
-| `Relationship.is_implementation` | `implements(S, T, "exact")` |
+| `Relationship.is_implementation` | `scip_impl(S, T)` — `implements(S, T, "exact")` is the rule over it |
 | `Relationship.is_type_definition` | `has_type(S, T, "exact")` |
 | symbol string names a package **and no document defines it** | `extern(S, Manager, Pkg, Version)` |
 | every ingested definition | `resolved(S)` |

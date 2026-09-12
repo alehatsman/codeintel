@@ -643,8 +643,8 @@ fn demand_transformation_agrees_with_naive_evaluation() {
 
 // ── the standard library ────────────────────────────────────────────────────
 
-/// The 14 base relations of `specs/01-facts.md`, empty.
-const BASE: [(&str, usize); 14] = [
+/// The 15 base relations of `specs/01-facts.md`, empty.
+const BASE: [(&str, usize); 15] = [
     ("file", 2),
     ("def", 4),
     ("def_span", 5),
@@ -652,12 +652,13 @@ const BASE: [(&str, usize); 14] = [
     ("def_sig", 2),
     ("def_doc", 2),
     ("parent", 2),
-    ("exported", 1),
+    ("visibility", 2),
     ("resolved", 1),
     ("import", 3),
     ("scip_ref", 6),
     ("name_ref", 5),
-    ("implements", 3),
+    ("scip_impl", 2),
+    ("name_impl", 4),
     ("extern", 4),
 ];
 

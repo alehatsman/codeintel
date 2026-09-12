@@ -12,6 +12,56 @@
 %     so it ships in both forms: the `name`-tolerant one and the `_exact` one
 %     that gates on SCIP evidence.
 
+% === visibility ========================================================
+% `exported` is DERIVED. The extractor records what a definition SAYS about
+% itself (`visibility`); whether that makes it visible outside the crate is a
+% question about its ancestors, which is a join and not a token.
+
+%% exported(S)  S is visible outside its crate.
+exported(S) :- visibility(S, "public").
+
+% An enum variant, a trait item and a trait-impl method have nowhere to write
+% `pub`, so they are as visible as whatever owns them. Recursive, so a variant
+% of a public enum inside a public module needs no special case and depth is
+% not capped. A trait-impl method reaches its answer through `parent`, which is
+% the TYPE: a `pub` trait implemented for a private type gives methods nobody
+% outside can name, and calling those exported would make `dead_export` demand
+% documentation for unreachable code.
+exported(S) :- visibility(S, "inherited"), parent(S, P), exported(P).
+
+% `restricted` appears in no rule, and that is the point: `pub(crate)` and a
+% bare `fn` are both "not visible outside the crate", which is exactly the
+% question `exported` asks.
+
+% === implements ========================================================
+% Also DERIVED, for the reason `ref` is: tier B states it exactly when the
+% indexer bothers to — rust-analyzer never does — and tier A can state it by
+% name from one file's syntax.
+
+%% implements(S, T, Prov)  S implements or overrides T.
+implements(S, T, "exact") :- scip_impl(S, T).
+
+% Tier A resolves both written names with the policy `ref` uses, reusing
+% `local_def` and `ambiguous` below. The guard is per-PAIR: `scip_impl` is
+% method-level where an indexer emits it at all and `name_impl` is type-level,
+% so they are different granularities and both rows are true.
+implements(S, T, "name") :-
+    name_impl(F, TypeN, TraitN, _),
+    impl_sym(F, TypeN, S), impl_sym(F, TraitN, T), !scip_impl(S, T).
+
+%% impl_sym(F, N, S)  a name an `impl` writes, as a symbol.
+% Four clauses: either side of the `for`, each resolved same-file-first. The
+% leading `name_impl` binds F and N POSITIVELY, which is what makes the negated
+% branches safe — a rule whose only binder for a variable is `!local_def(F, N)`
+% is rejected by the engine, and that is why `ref` leads with `name_ref` too.
+impl_sym(F, N, S) :- name_impl(F, N, _, _), def(S, F, _, N).
+impl_sym(F, N, S) :- name_impl(F, _, N, _), def(S, F, _, N).
+% else a unique exported definition repo-wide
+impl_sym(F, N, S) :- name_impl(F, N, _, _),
+    !local_def(F, N), def(S, _, _, N), exported(S), !ambiguous(N).
+impl_sym(F, N, S) :- name_impl(F, _, N, _),
+    !local_def(F, N), def(S, _, _, N), exported(S), !ambiguous(N).
+
 % === reference resolution ==============================================
 % `ref` is DERIVED. Tier B contributes resolved occurrences directly; tier A
 % contributes names that these rules resolve against the whole-repo def set.
@@ -84,10 +134,10 @@ calls(From, S) :- calls_at(From, S, _, _, _).
 %% calls_exact(From, S)  From calls S, SCIP-resolved only.
 calls_exact(From, S) :- calls_at(From, S, _, _, "exact").
 
-%% callers(C, S)  C calls S. calls/2, arguments the other way.
-callers(C, S) :- calls(C, S).
-%% callees(S, C)  S calls C.
-callees(S, C) :- calls(S, C).
+% `callers`/`callees` were here until schema 2. Both were `calls/2` verbatim
+% with the variables renamed, so they bought an agent nothing it could not ask
+% of `calls` directly, and the schema budget is the one that binds. Ask
+% `?- calls(C, S)` and bind whichever argument you know.
 
 %% callers_by_name(C, N)  C calls something named N. No SymId needed.
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
@@ -122,8 +172,8 @@ recursive(S) :- reaches(S, S).
 % === location helpers ==================================================
 %% file_of(S, F)  the file S is defined in.
 file_of(S, F) :- def(S, F, _, _).
-%% defines(F, S)  file_of, arguments the other way.
-defines(F, S) :- def(S, F, _, _).
+% `defines(F, S)` was here until schema 2: `file_of` with the arguments the
+% other way, and Datalog does not need a second spelling to bind either one.
 %% at(S, F, L)  where S starts: file and first line.
 at(S, F, L) :- def(S, F, _, _), def_span(S, L, _, _, _).
 

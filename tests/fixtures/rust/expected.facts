@@ -187,34 +187,6 @@ def_span("local src/store.rs warm().", 38, 41, 811, 953).
 def_span("local src/ui/mod.rs panel/", 3, 3, 19, 33).
 def_span("local src/ui/panel.rs draw().", 8, 11, 265, 344).
 def_span("local tests/store_test.rs it_warms().", 3, 6, 69, 113).
-exported("local src/app.rs start().").
-exported("local src/db/conn.rs open().").
-exported("local src/db/mod.rs conn/").
-exported("local src/kinds.rs BANNER.").
-exported("local src/kinds.rs Config#").
-exported("local src/kinds.rs Config#limit.").
-exported("local src/kinds.rs Handler#").
-exported("local src/kinds.rs Key#").
-exported("local src/kinds.rs LIMIT.").
-exported("local src/kinds.rs Mode#").
-exported("local src/kinds.rs Word#").
-exported("local src/lib.rs app/").
-exported("local src/lib.rs db/").
-exported("local src/lib.rs kinds/").
-exported("local src/lib.rs net/").
-exported("local src/lib.rs store/").
-exported("local src/lib.rs ui/").
-exported("local src/net/conn.rs open().").
-exported("local src/net/mod.rs conn/").
-exported("local src/store.rs Entry#").
-exported("local src/store.rs Entry#value.").
-exported("local src/store.rs Store#").
-exported("local src/store.rs Store#get().").
-exported("local src/store.rs Store#put().").
-exported("local src/store.rs detail/helper().").
-exported("local src/store.rs warm().").
-exported("local src/ui/mod.rs panel/").
-exported("local src/ui/panel.rs draw().").
 file("src/app.rs", "rust").
 file("src/db/conn.rs", "rust").
 file("src/db/mod.rs", "rust").
@@ -231,6 +203,7 @@ import("src/store.rs", "std::collections::HashMap", "").
 import("src/store.rs", "std::fmt::Debug", "Show").
 import("src/ui/panel.rs", "crate::db::conn", "").
 import("src/ui/panel.rs", "std::fmt", "format_mod").
+name_impl("src/kinds.rs", "Config", "Handler", 46).
 name_ref("assert", "tests/store_test.rs", 5, 4, "local tests/store_test.rs it_warms().").
 name_ref("clear", "src/store.rs", 34, 21, "local src/store.rs Store#evict().").
 name_ref("cloned", "src/store.rs", 24, 14, "local src/store.rs Store#get().").
@@ -284,3 +257,45 @@ parent("local src/store.rs warm().", "src/store.rs").
 parent("local src/ui/mod.rs panel/", "src/ui/mod.rs").
 parent("local src/ui/panel.rs draw().", "src/ui/panel.rs").
 parent("local tests/store_test.rs it_warms().", "tests/store_test.rs").
+visibility("local src/app.rs start().", "public").
+visibility("local src/db/conn.rs open().", "public").
+visibility("local src/db/mod.rs conn/", "public").
+visibility("local src/kinds.rs BANNER.", "public").
+visibility("local src/kinds.rs Config#", "public").
+visibility("local src/kinds.rs Config#handle().", "inherited").
+visibility("local src/kinds.rs Config#limit.", "public").
+visibility("local src/kinds.rs Config#quiet.", "restricted").
+visibility("local src/kinds.rs Handler#", "public").
+visibility("local src/kinds.rs Handler#handle().", "inherited").
+visibility("local src/kinds.rs Handler#name().", "inherited").
+visibility("local src/kinds.rs Key#", "public").
+visibility("local src/kinds.rs LIMIT.", "public").
+visibility("local src/kinds.rs Mode#", "public").
+visibility("local src/kinds.rs Mode#Careful.", "inherited").
+visibility("local src/kinds.rs Mode#Fast.", "inherited").
+visibility("local src/kinds.rs Word#", "public").
+visibility("local src/kinds.rs Word#bits.", "restricted").
+visibility("local src/kinds.rs Word#halves.", "restricted").
+visibility("local src/kinds.rs shout().", "restricted").
+visibility("local src/lib.rs app/", "public").
+visibility("local src/lib.rs db/", "public").
+visibility("local src/lib.rs kinds/", "public").
+visibility("local src/lib.rs net/", "public").
+visibility("local src/lib.rs store/", "public").
+visibility("local src/lib.rs ui/", "public").
+visibility("local src/net/conn.rs open().", "public").
+visibility("local src/net/mod.rs conn/", "public").
+visibility("local src/store.rs Entry#", "public").
+visibility("local src/store.rs Entry#value.", "public").
+visibility("local src/store.rs Store#", "public").
+visibility("local src/store.rs Store#entries.", "restricted").
+visibility("local src/store.rs Store#evict().", "restricted").
+visibility("local src/store.rs Store#get().", "public").
+visibility("local src/store.rs Store#put().", "public").
+visibility("local src/store.rs detail/", "restricted").
+visibility("local src/store.rs detail/helper().", "public").
+visibility("local src/store.rs show().", "restricted").
+visibility("local src/store.rs warm().", "public").
+visibility("local src/ui/mod.rs panel/", "public").
+visibility("local src/ui/panel.rs draw().", "public").
+visibility("local tests/store_test.rs it_warms().", "restricted").

@@ -8,7 +8,7 @@
 
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use common::{Extracted, extract_tree, fixture};
@@ -232,29 +232,39 @@ fn a_declaration_keyword_is_in_the_span_and_in_the_signature() {
     );
 }
 
+/// Go states visibility in the identifier itself, so every definition says
+/// something and none of them inherit. `exported` is the rule over this
+/// (`specs/01-facts.md` § Derived relations); what the extractor owes is the
+/// `Vis` value, and that is what this asserts.
 #[test]
 fn export_is_capitalization() {
     let extracted = extracted();
-    let exported: Vec<String> = extracted
-        .rows("exported")
+    let vis: BTreeMap<String, String> = extracted
+        .rows("visibility")
         .into_iter()
-        .filter_map(|r| r.first().cloned())
+        .filter_map(|r| Some((r.first()?.clone(), r.get(1)?.clone())))
         .collect();
     for sym in [
         "local kinds.go Config#",
         "local kinds.go Config#Handle().",
         "local store/store.go Store#Get().",
     ] {
-        assert!(exported.contains(&sym.to_string()), "{sym} is exported");
+        assert_eq!(vis.get(sym).map(String::as_str), Some("public"), "{sym}");
     }
     for sym in [
         "local kinds.go Config#quiet.",
         "local kinds.go Config#describe().",
         "local store/store.go Store#evict().",
     ] {
-        assert!(
-            !exported.contains(&sym.to_string()),
-            "{sym} is not exported"
+        assert_eq!(
+            vis.get(sym).map(String::as_str),
+            Some("restricted"),
+            "{sym}"
         );
     }
+    // `visibility` is a TOTAL function of the definition, so one row each and
+    // never an absent one. Nothing in Go inherits — `vis_inherits_under` is
+    // empty for it — so a row here would mean the extractor lost a modifier.
+    assert_eq!(vis.len(), extracted.rows("def").len());
+    assert!(!vis.values().any(|v| v == "inherited"));
 }

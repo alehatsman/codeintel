@@ -50,9 +50,37 @@
 ; in its body, so it contributes the `Store#` descriptor and no `def` row, and
 ; `parent` for a method becomes the type rather than the file.
 
-(impl_item type: (type_identifier) @name) @scope.type
-(impl_item type: (generic_type type: (type_identifier) @name)) @scope.type
-(impl_item type: (scoped_type_identifier name: (type_identifier) @name)) @scope.type
+; An INHERENT impl: `impl Store`. The `!trait` guard is what keeps this pattern
+; and the trait-impl one below mutually exclusive, so the "at most one capture
+; per node" convention above still holds.
+(impl_item
+  !trait
+  type: [
+    (type_identifier) @name
+    (generic_type type: (type_identifier) @name)
+    (scoped_type_identifier name: (type_identifier) @name)
+  ]) @scope.type
+
+; A TRAIT impl: `impl Handler for Config`. Captured apart from the inherent case
+; for two reasons. It is the source of `name_impl`, which needs both names. And
+; Rust rejects `pub` on a method inside one, so a missing modifier there is
+; silence rather than privacy: `visibility` emits `inherited` and the rule layer
+; resolves it through `parent` (specs/01-facts.md § `visibility`).
+;
+; Both names are the grammar's FINAL identifier, so `impl fmt::Display for Key`
+; yields `Display` and `Key`. Reading that segment off the tree is what keeps it
+; from being a string split in a rule, which no rule could do.
+(impl_item
+  trait: [
+    (type_identifier) @trait
+    (generic_type type: (type_identifier) @trait)
+    (scoped_type_identifier name: (type_identifier) @trait)
+  ]
+  type: [
+    (type_identifier) @name
+    (generic_type type: (type_identifier) @name)
+    (scoped_type_identifier name: (type_identifier) @name)
+  ]) @scope.impl
 
 ; --- call sites ------------------------------------------------------------
 ;

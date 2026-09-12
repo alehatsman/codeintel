@@ -168,19 +168,22 @@ pub fn emit(
         }
     }
 
-    // `implements` and `extern` are keyed by symbol, and a symbol is defined in
+    // `scip_impl` and `extern` are keyed by symbol, and a symbol is defined in
     // exactly one file, so emitting them beside that definition keeps every row
     // a function of its own file.
+    //
+    // No provenance column: everything here came from the indexer, so it is
+    // `exact` by construction exactly as `scip_ref` is. `implements(S, T,
+    // "exact")` is the one-line rule over it in `stdlib.dl`.
     for def in &doc.defs {
         let s = atom(interner, &def.symbol)?;
-        let exact = atom(interner, "exact")?;
         for target in ingest
             .symbols
             .get(&def.symbol)
             .map(|i| i.implements.as_slice())
             .unwrap_or_default()
         {
-            push(seg, "implements", &[s, atom(interner, target)?, exact]);
+            push(seg, "scip_impl", &[s, atom(interner, target)?]);
         }
     }
 
@@ -530,8 +533,11 @@ mod tests {
         let anchored = vec![((36, 76), "sc cargo p 1.0 store/Store#get().".to_string())];
         let (seg, _, interner) = emitted(&anchored);
         assert_eq!(
-            rows(&seg, "implements", &interner),
-            vec!["sc cargo p 1.0 store/Store#get(). sc cargo p 1.0 store/Store# exact"]
+            // No provenance column since schema 2: everything the indexer said
+            // is `exact` by construction, and `implements(S, T, "exact")` is
+            // the rule over this in `stdlib.dl`.
+            rows(&seg, "scip_impl", &interner),
+            vec!["sc cargo p 1.0 store/Store#get(). sc cargo p 1.0 store/Store#"]
         );
         assert_eq!(
             rows(&seg, "extern", &interner),

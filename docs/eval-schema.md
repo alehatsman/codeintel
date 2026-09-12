@@ -81,7 +81,6 @@ callable(Kind)                      function, method, constructor, macro
 calls_at(From, S, F, L, Prov)       a call, with its position and provenance
 calls(From, S)                      From calls S
 calls_exact(From, S)                ...with SCIP evidence only
-callers(C, S)   callees(S, C)       the two directions, spelled out
 callers_by_name(C, N)               callers of anything named N
 impact_by_name(C, N)                transitive impact of anything named N
 
@@ -90,7 +89,7 @@ reach_of(Seed, C)                   what Seed reaches, transitively. SEEDED.
 impact_of_exact(Seed, C)            ...SCIP evidence only
 reaches(A, B)   recursive(S)        whole-graph closure. Expensive, unseeded.
 
-file_of(S, F)   defines(F, S)       the two directions
+file_of(S, F)                       the file S is defined in
 at(S, F, L)                         S is defined in F at line L
 within(Child, Ancestor)             containment closure, up to the file
 is_test(F)                          F is a test file

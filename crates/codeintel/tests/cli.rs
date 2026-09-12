@@ -804,13 +804,29 @@ fn an_empty_result_diagnoses_the_constant_not_the_relation() {
 /// Every column type that `schema::columns` classifies must actually occur in a
 /// signature. A classifier arm matching a name no relation uses is dead code
 /// that reads as coverage.
+///
+/// Derived signatures count, not only base ones. Since schema 2 no *base*
+/// relation carries a `Prov` column — `implements` became a rule and
+/// `scip_impl` is `exact` by construction — yet `Prov` is exactly what a user
+/// reads off `ref` and `implements`, so a base-only scan would call a live
+/// classifier arm dead.
 #[test]
 fn every_typed_column_is_reachable() {
+    let stdlib = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules/stdlib.dl"),
+    )
+    .expect("stdlib.dl is readable");
+    let heads: Vec<String> = codeintel::schema::rules(&stdlib)
+        .into_iter()
+        .map(|rule| rule.head)
+        .collect();
     let typed: BTreeSet<&str> = RELATIONS
         .iter()
-        .flat_map(|rel| {
-            let (args, _) = codeintel::schema::signature(rel.name);
-            args.trim_matches(['(', ')'])
+        .map(|rel| codeintel::schema::signature(rel.name).0)
+        .chain(heads.iter().map(String::as_str))
+        .flat_map(|sig| {
+            sig.split_once('(')
+                .map_or("", |(_, args)| args.trim_end_matches(')'))
                 .split(',')
                 .map(str::trim)
                 .collect::<Vec<_>>()

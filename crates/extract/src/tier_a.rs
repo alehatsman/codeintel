@@ -13,7 +13,7 @@ use facts::{Interner, Segment};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
 use crate::error::{Error, Result};
-use crate::lang::{Export, Lang, TYPE_LIKE};
+use crate::lang::{Export, Lang, TYPE_LIKE, Vis};
 use crate::sweep::{self, Span};
 use crate::symbol;
 use crate::tier_b::Anchors;
@@ -78,7 +78,15 @@ struct Item {
     /// definition's owner, where the owner does not enclose it. `None` for
     /// every language that does not capture one.
     owner: Option<String>,
-    exported: bool,
+    /// What this definition states about its own visibility. Whether that makes
+    /// it visible outside the crate is `stdlib.dl`'s question, not this one's.
+    vis: Vis,
+    /// True for a `@scope.impl` item: a block implementing a trait for a type.
+    /// Definitions inside one cannot state a visibility, so they inherit.
+    is_impl: bool,
+    /// The trait a `@scope.impl` names, as the grammar's final identifier.
+    /// `None` for everything else, an inherent `impl` included.
+    trait_name: Option<String>,
     sig: String,
     doc: Option<String>,
 }
@@ -112,6 +120,10 @@ struct Tag<'a> {
     text: String,
     /// The `@owner` capture's source text, if the pattern had one.
     owner: Option<&'a str>,
+    /// The `@trait` capture's source text: the trait a `@scope.impl` implements.
+    trait_name: Option<&'a str>,
+    /// The capture was `@scope.impl` rather than `@scope.type`.
+    is_impl: bool,
 }
 
 /// One `@reference.call` occurrence.
@@ -195,6 +207,7 @@ impl Extractor {
         let mut parents = sweep::containment(&spans);
         reparent_by_owner(&items, &mut parents);
         let items = promote(items, &parents);
+        let items = inherit_visibility(items, &parents, self.lang);
         let mut symbols = symbols_of(path, &items, &parents);
         let mut anchored = 0;
         for (i, item) in items.iter().enumerate() {
@@ -281,9 +294,14 @@ impl Extractor {
             {
                 push(&mut seg, "def_doc", &[s, atom(interner, doc)?]);
             }
-            if item.exported {
-                push(&mut seg, "exported", &[s]);
-            }
+            // Always a row, never a conditional one: `visibility` is a total
+            // function of the definition, and an absent row would be a third
+            // value the vocabulary does not have.
+            push(
+                &mut seg,
+                "visibility",
+                &[s, atom(interner, item.vis.as_str())?],
+            );
             // Exactly one `parent` row per `def`. `parent` carries the
             // *semantic* owner, so tier B's answer replaces this one rather
             // than adding a second row — a Go method is lexically at file
@@ -309,6 +327,26 @@ impl Extractor {
                 },
             };
             push(&mut seg, "parent", &[s, owner]);
+        }
+
+        // `impl Trait for Type` -> `name_impl`. Both names as written, neither
+        // resolved: turning them into symbols needs the whole repo, so it is
+        // the rule layer's job (`specs/01-facts.md` § `name_impl`). An inherent
+        // `impl` carries no `@trait` capture and so emits nothing.
+        for item in items.iter().filter(|i| i.is_impl) {
+            let Some(trait_name) = item.trait_name.as_deref() else {
+                continue;
+            };
+            push(
+                &mut seg,
+                "name_impl",
+                &[
+                    file,
+                    atom(interner, &item.name)?,
+                    atom(interner, trait_name)?,
+                    int(path, item.lines.0)?,
+                ],
+            );
         }
 
         for (k, occurrence) in occurrences.iter().enumerate() {
@@ -353,6 +391,7 @@ impl Extractor {
             let mut subject = None;
             let mut name = None;
             let mut owner = None;
+            let mut trait_name = None;
             for capture in m.captures() {
                 let Some(label) = self.tags.capture_names().get(capture.index as usize) else {
                     continue;
@@ -360,6 +399,7 @@ impl Extractor {
                 match *label {
                     "name" => name = Some(capture.node),
                     "owner" => owner = capture.node.utf8_text(src.as_bytes()).ok(),
+                    "trait" => trait_name = capture.node.utf8_text(src.as_bytes()).ok(),
                     label => subject = Some((label, capture.node)),
                 }
             }
@@ -397,6 +437,8 @@ impl Extractor {
                     is_def,
                     text,
                     owner,
+                    trait_name,
+                    is_impl: !is_def && suffix == "impl",
                 },
             ));
         }
@@ -419,7 +461,9 @@ impl Extractor {
             lines: (start_line, line_of_end(tag.node)),
             name_at: (line_of(tag.name), col_of(tag.name)),
             owner: tag.owner.map(str::to_string),
-            exported: self.is_exported(src, tag.node, tag.name),
+            vis: self.visibility(src, tag.node, tag.name),
+            is_impl: tag.is_impl,
+            trait_name: tag.trait_name.map(str::to_string),
             sig: signature(src, sig_start, tag.node.end_byte(), self.lang.sig_stops),
             doc,
         }
@@ -493,11 +537,19 @@ impl Extractor {
         }
     }
 
-    fn is_exported(&self, src: &str, node: Node<'_>, name: Node<'_>) -> bool {
-        match self.lang.export {
-            Export::ChildKind(kind) => {
+    /// What this node *states* about its visibility — never what that implies.
+    ///
+    /// `specs/01-facts.md` § `visibility(S, Vis)`. The ancestor walk that turns
+    /// `inherited` into an answer lives in `stdlib.dl`, so that a variant of a
+    /// public enum inside a private module comes out right without this
+    /// function knowing what a module is.
+    fn visibility(&self, src: &str, node: Node<'_>, name: Node<'_>) -> Vis {
+        let public = match self.lang.export {
+            Export::ChildWord { kind, words } => {
                 let mut cursor = node.walk();
-                node.children(&mut cursor).any(|c| c.kind() == kind)
+                node.children(&mut cursor)
+                    .filter(|c| c.kind() == kind)
+                    .any(|c| words.contains(&c.utf8_text(src.as_bytes()).unwrap_or_default()))
             }
             Export::Capitalized => name
                 .utf8_text(src.as_bytes())
@@ -509,7 +561,8 @@ impl Extractor {
                 .utf8_text(src.as_bytes())
                 .unwrap_or_default()
                 .starts_with('_'),
-        }
+        };
+        if public { Vis::Public } else { Vis::Restricted }
     }
 
     fn emit_imports(
@@ -609,6 +662,38 @@ fn reparent_by_owner(items: &[Item], parents: &mut [Option<usize>]) {
             *slot = Some(j);
         }
     }
+}
+
+/// A definition whose owner forbids it a visibility of its own `inherit`s one.
+///
+/// Rust rejects `pub` on an enum variant, on any trait item, and on a
+/// trait-impl method, so a missing modifier in those places is silence rather
+/// than privacy. The member's own node kind cannot detect it — a provided trait
+/// method and a free function are both `function_item` — so the test is on the
+/// owner: its `Kind` for the first two ([`Lang::vis_inherits_under`]), and the
+/// `@scope.impl` capture for the third, which `tags.scm` separates from
+/// `@scope.type` precisely because an inherent `impl` carries the same `Kind`
+/// and its methods *may* say `pub`.
+///
+/// Done here for the same reason [`promote`] is: a query cannot see its own
+/// nesting without matching the node twice.
+fn inherit_visibility(mut items: Vec<Item>, parents: &[Option<usize>], lang: &Lang) -> Vec<Item> {
+    let inherits: Vec<bool> = (0..items.len())
+        .map(|i| {
+            parents
+                .get(i)
+                .copied()
+                .flatten()
+                .and_then(|j| items.get(j))
+                .is_some_and(|p| p.is_impl || lang.vis_inherits_under.contains(&p.kind))
+        })
+        .collect();
+    for (item, inherits) in items.iter_mut().zip(inherits) {
+        if inherits {
+            item.vis = Vis::Inherited;
+        }
+    }
+    items
 }
 
 /// A `function` owned by a type-like definition is a `method`.

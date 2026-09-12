@@ -98,7 +98,7 @@ impl fmt::Display for Schema<'_> {
              ?- innermost_at(\"src/store.rs\", 142, S).   from ripgrep / git diff / a stack trace\n  \
              ?- def(S, F, _, N), contains(N, \"auth\").    from a word\n  \
              ?- about(S, Rel, A, B, L).                  everything about S, one round trip\n\n\
-             RELATIONS  base facts, extracted. Counts are from THIS index.\n",
+             RELATIONS  base facts, extracted. Counts from THIS index.\n",
         )?;
         for rel in facts::RELATIONS {
             let (args, note) = signature(rel.name);
@@ -111,10 +111,7 @@ impl fmt::Display for Schema<'_> {
             writeln!(f, "{}", row.trim_end())?;
         }
 
-        f.write_str(
-            "\nVALUES  closed sets, counted in THIS index. A value at 0 is a value\n        \
-             you will get no rows for -- do not query it.\n  Kind ",
-        )?;
+        f.write_str("\nVALUES  closed sets, counted here. A value at 0 returns no rows.\n  Kind ")?;
         for kind in extract::lang::KINDS {
             write!(f, " {kind} {}", census.kinds.get(*kind).unwrap_or(&0))?;
         }
@@ -135,7 +132,7 @@ impl fmt::Display for Schema<'_> {
             write!(f, " {lang} {} files", counts.files)?;
         }
 
-        f.write_str("\n\nRULES  derived. A new question is a rule here, not a new verb.\n")?;
+        f.write_str("\n\nRULES  derived. A new question is a rule, not a verb.\n")?;
         for rule in rules(STDLIB) {
             let row = format!("  {:<30} {}", rule.head, rule.doc);
             writeln!(f, "{}", row.trim_end())?;
@@ -188,12 +185,13 @@ pub fn signature(name: &str) -> (&'static str, &'static str) {
         "def_sig" => ("(S, Sig)", ""),
         "def_doc" => ("(S, Doc)", ""),
         "parent" => ("(Child, Parent)", "one level; see within/2"),
-        "exported" => ("(S)", ""),
+        "visibility" => ("(S, Vis)", "public|restricted|inherited"),
         "resolved" => ("(S)", "a SCIP symbol anchored to this def"),
         "import" => ("(F, Module, Alias)", ""),
         "scip_ref" => ("(S, F, Line, Col, From, Role)", "compiler-resolved"),
         "name_ref" => ("(Name, F, Line, Col, From)", "unresolved, tier A"),
-        "implements" => ("(S, T, Prov)", ""),
+        "scip_impl" => ("(S, T)", "compiler-resolved"),
+        "name_impl" => ("(F, Type, Trait, Line)", "unresolved, tier A"),
         "extern" => ("(S, Manager, Package, Version)", ""),
         _ => ("", ""),
     }

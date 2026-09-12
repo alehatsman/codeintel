@@ -73,6 +73,16 @@ exact    from SCIP. type-resolved by a real compiler front-end.
 name     from tree-sitter. matched by identifier text. may be wrong, may be missing.
 ```
 
+**`Vis`** — what a definition states about its own visibility. Three values:
+```
+public       states unrestricted visibility outside its module.
+restricted   states a bounded one, or states none where the grammar allows one.
+inherited    the grammar gives this node kind no slot to state one.
+```
+This is a vocabulary about *syntax*, not about reachability. `exported` is the
+reachability question and it is derived (§ Derived relations). See
+§ `visibility(S, Vis)` for why `restricted` conflates `pub(crate)` with silence.
+
 **`Lang`** — lowercase SCIP `Language` enum names: `rust`, `python`,
 `typescript`, `typescriptreact`, `javascript`, `go`, `java`, `ruby`, `cpp`, `c`,
 `csharp`, ...
@@ -110,6 +120,9 @@ signature together with SCIP's global identity. See
 ## Base relations
 
 15 relations. Ceiling is 16 ([00-overview.md](00-overview.md) § Surface budget).
+The deferred `has_type` below carries a heading but is not one of the 15; it is
+documented so that re-adding it is a decision with a written record rather than
+a rediscovery. Count the headings and you get 16 — that is why.
 
 ### `file(F, Lang)`
 One row per indexed source file. `F` is the repo-relative path.
@@ -217,11 +230,39 @@ lexical_parent(C, P) :- def(C, F, _, _), def_span(C, A, B, _, _),
                         P != C, X <= A, B <= Y.
 ```
 
-### `exported(S)`
-Present iff the symbol is visible outside its defining module, per that
-language's rules (Rust `pub`, Go capitalization, TS `export`, Python
-`__all__`/leading-underscore convention). Best-effort; absence is not proof of
-privacy in dynamic languages.
+### `visibility(S, Vis)`
+What `S` says about its own visibility, and nothing about what that implies.
+Exactly one row per definition. `Vis` is from the closed vocabulary § Atom
+vocabularies § `Vis`:
+
+| `Vis` | Meaning | Rust | Go |
+|---|---|---|---|
+| `public` | States unrestricted visibility outside its module. | `pub` | capitalized name |
+| `restricted` | States a *bounded* visibility, or states none where the grammar offers the slot. | `pub(crate)`, `pub(super)`, `pub(in ...)`, bare `fn` | lowercase name |
+| `inherited` | The grammar gives this node kind no slot to state one. | enum variant, trait item | — |
+
+```
+visibility("local src/kinds.rs Mode#", "public").
+visibility("local src/kinds.rs Mode#Fast.", "inherited").
+visibility("local src/store.rs detail/helper().", "restricted").
+```
+
+`exported` is **derived** from this (§ Derived relations). The split is
+invariant 1: a `pub` token has a byte range, so it is a fact; "this variant is
+visible outside the crate *because its enum is*" is a join over `parent`, so it
+is a rule. An extractor that walked ancestors to answer the second would be
+answering a question the rule layer owns.
+
+`restricted` deliberately conflates "said `pub(crate)`" with "said nothing".
+Both mean *not visible outside the crate*, which is the only distinction
+`exported` asks for, and keeping them apart would put Rust's visibility lattice
+into a language-neutral vocabulary to serve no query. A language that needs the
+distinction re-adds it as a value, which is a schema bump and a decision.
+
+`inherited` is a statement about the **grammar**, not about the symbol: it says
+the node kind has nowhere to write a modifier, so the answer must come from the
+enclosing definition. A Rust struct field is `restricted`, not `inherited` —
+the grammar lets a field say `pub`, so one that does not has stated privacy.
 
 ### `resolved(S)`
 Present iff `S` has SCIP-grade identity. The gate for precision-critical
@@ -269,10 +310,47 @@ are load-bearing:
    reasonably want to tighten or loosen. In `stdlib.dl` it is four readable
    rules; in Rust it is a decision nobody can see.
 
-### `implements(S, T, Prov)`
-`S` implements, satisfies, or overrides `T`. From SCIP
-`Relationship.is_implementation`. Covers interface impls, trait impls, method
-overrides, and protocol conformance uniformly.
+### `scip_impl(S, T)`
+`S` implements, satisfies, or overrides `T`, as the **compiler** said so: from
+SCIP `Relationship.is_implementation`. Covers interface impls, trait impls,
+method overrides, and protocol conformance uniformly. No provenance column —
+everything here is `exact` by construction, exactly like `scip_ref`.
+
+```
+scip_impl("... Config#handle().", "... Handler#handle().").
+```
+
+**Zero rows under `rust-analyzer scip .`**, which does not populate the field.
+Decoding this repository's own `index.scip` and the fixture's with
+`protoc --decode_raw` finds no `Relationship` message at all. That is why
+`implements` is derived rather than being this relation under a friendlier
+name: a proto field existing is not the indexer emitting it, and a base
+relation no shipped indexer populates is a zero-row trap.
+
+### `name_impl(F, TypeName, TraitName, Line)`
+An `impl TraitName for TypeName` block at `F:Line`, recorded as the two **names
+written in the source** and nothing more. It names no symbols.
+
+```
+name_impl("src/kinds.rs", "Config", "Handler", 46).
+```
+
+Like `name_ref`, this relation is deliberately *local*: every column is
+derivable from that one file, so it stays a function of its own file and
+incremental indexing stays sound (§ `name_ref` gives the argument in full).
+Turning the two names into symbols needs whole-repo knowledge, so it happens in
+the rule layer, where the policy is four readable lines instead of a decision
+nobody can see.
+
+`TraitName` and `TypeName` are **final identifiers**, not paths: for
+`impl fmt::Display for Key` the row holds `"Display"` and `"Key"`. The grammar
+supplies that segment directly — `tags.scm` matches
+`scoped_type_identifier name: (type_identifier)`, the same shape the `@scope.type`
+patterns already use — so it is read off the tree rather than computed by
+splitting a string, which no rule could do anyway.
+
+An **inherent** `impl Type` block emits no row. It implements nothing, and
+inventing a trait name for it would be the guess invariant 1 forbids.
 
 ### `has_type(S, T, Prov)` — DEFERRED, not in v1
 
@@ -280,8 +358,7 @@ The type of `S` is `T`, from SCIP `Relationship.is_type_definition`. Cut from
 v1: no `stdlib.dl` rule consumes it, it is present only for languages whose
 indexer supplies it — so it is a zero-row trap for most users — and its `Prov`
 column can only ever hold `"exact"`, since tier A cannot produce types. Re-add
-when a query needs it, at which point it costs one of the two free base-relation
-slots.
+when a query needs it, at which point it costs the one free base-relation slot.
 
 ### `extern(S, Manager, Pkg, Version)`
 `S` belongs to a third-party package, parsed from the SCIP symbol string's
@@ -299,6 +376,31 @@ extern("scip-go gomod github.com/gin-gonic/gin v1.9.1 gin/Context#JSON().",
 Shipped as Datalog, not Rust. Users can read them, override them, or ignore
 them. This is invariant 3 in [00-overview.md](00-overview.md), and the reason
 `calls` is not an extractor output.
+
+```prolog
+% === visibility ========================================================
+% `exported` is DERIVED. The extractor records what each definition SAYS about
+% itself (`visibility`); whether that makes it visible outside the crate is a
+% question about the definition's ancestors, which is a join, not a token.
+
+exported(S) :- visibility(S, "public").
+% An enum variant or a trait item has nowhere to write `pub`, so it is as
+% visible as the thing that owns it. Recursive, so a variant of a public enum
+% in a public module needs no special case, and depth is not capped.
+exported(S) :- visibility(S, "inherited"), parent(S, P), exported(P).
+```
+
+`restricted` appears in no rule. That is the point: `pub(crate)` and a bare
+`fn` are both "not visible outside the crate", and `exported` is exactly the
+question `dead_export` asks, so neither yields a row.
+
+A trait-impl method reaches the right answer through `parent` rather than
+through a rule of its own. `parent` for a method in `impl Handler for Config`
+is `Config#` (§ `parent`), the method is `inherited`, so it is exported iff
+`Config` is. This is the honest file-local answer and it costs no rule. It is
+*not* the trait's visibility: a `pub` trait implemented for a private type
+gives methods nobody outside the crate can name, and reporting those as
+exported would make `dead_export` demand documentation for unreachable code.
 
 ```prolog
 % === reference resolution ==============================================
@@ -363,6 +465,33 @@ is an inference; keeping one the compiler has already refuted is inferring over
 evidence, which is the failure `exact` exists to make impossible.
 
 ```prolog
+% === implements ========================================================
+% Also DERIVED, for the same reason `ref` is: tier B states it exactly when the
+% indexer bothers to, and tier A can state it by name from one file's syntax.
+
+implements(S, T, "exact") :- scip_impl(S, T).
+
+% Tier A resolves both written names against the whole-repo def set with the
+% same policy `ref` uses, reusing `local_def` and `ambiguous` above. The guard
+% is per-PAIR: tier A does not restate what the compiler already gave.
+implements(S, T, "name") :-
+    name_impl(F, TypeN, TraitN, _),
+    impl_sym(F, TypeN, S), impl_sym(F, TraitN, T), !scip_impl(S, T).
+
+% Either side of the `for`. This exists to bind F and N POSITIVELY before the
+% negation below: a rule whose only binder for a variable is `!local_def(F, N)`
+% is unsafe and the engine rejects it, which is why `ref` leads with `name_ref`
+% and this leads with `impl_name`.
+impl_name(F, N) :- name_impl(F, N, _, _).
+impl_name(F, N) :- name_impl(F, _, N, _).
+
+% same file wins, else a unique exported definition repo-wide
+impl_sym(F, N, S) :- impl_name(F, N), def(S, F, _, N).
+impl_sym(F, N, S) :-
+    impl_name(F, N), !local_def(F, N), def(S, _, _, N), exported(S), !ambiguous(N).
+% `scip_impl` is method-level where an indexer emits it at all; `name_impl` is
+% type-level. Different granularities, both true, so they coexist rather than
+% one masking the other -- which is why the guard compares the PAIR and not S.
 
 % === the location bridge ===============================================
 % Turns a file:line from ripgrep, git diff, a stack trace, or a compiler
@@ -400,8 +529,8 @@ calls_at(From, S, F, L, Prov) :-
 calls(From, S) :- calls_at(From, S, _, _, _).
 calls_exact(From, S) :- calls_at(From, S, _, _, "exact").
 
-callers(C, S) :- calls(C, S).
-callees(S, C) :- calls(S, C).
+% No `callers`/`callees`: both were `calls/2` with the variables renamed, and
+% a Datalog goal reads either direction by binding either argument.
 
 % name-taking variants, because a SymId is unwieldy to type by hand
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
@@ -431,7 +560,6 @@ recursive(S)  :- reaches(S, S).
 
 % --- location helpers --------------------------------------------------
 file_of(S, F)  :- def(S, F, _, _).
-defines(F, S)  :- def(S, F, _, _).
 at(S, F, L)    :- def(S, F, _, _), def_span(S, L, _, _, _).
 
 % --- containment closure -----------------------------------------------
@@ -583,4 +711,5 @@ that `name_ref` exists to prevent.
 
 | schema_version | Change |
 |---|---|
-| 1 | Initial. 15 relations. `ref` is derived from `scip_ref` + `name_ref`; tier A does not resolve names. |
+| 1 | Initial. 14 relations. `ref` is derived from `scip_ref` + `name_ref`; tier A does not resolve names. |
+| 2 | 15 relations. `exported` and `implements` become derived, each over a narrower base fact — the same move `ref` made in v1. `exported/1` → `visibility/2`; `implements/3` → `scip_impl/2` + `name_impl/4`. Both derived relations keep their v1 name and arity, so no query or rule that *consumed* them changes. |

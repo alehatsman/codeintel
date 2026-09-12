@@ -58,18 +58,59 @@ pub const ROLES: &[&str] = &[
 /// method.
 pub const TYPE_LIKE: &[&str] = &["struct", "enum", "trait", "class", "interface", "type"];
 
-/// How a language says "visible outside the defining module".
+/// How a language *states* visibility, which is not the same question as
+/// whether a symbol is reachable from outside the crate.
 ///
-/// Best-effort by specification (`specs/01-facts.md` § `exported`): absence is
-/// not proof of privacy.
+/// This decides `visibility(S, Vis)` only. `exported` is a rule over `parent`
+/// in `rules/stdlib.dl` (`specs/01-facts.md` § Derived relations); an extractor
+/// that walked ancestors to answer it here would be inferring, which invariant
+/// 1 forbids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Export {
-    /// The definition node has a direct child of this kind. Rust `pub`.
-    ChildKind(&'static str),
+    /// The definition node has a direct child of this kind whose text is
+    /// exactly one of `words`.
+    ///
+    /// Rust: a `visibility_modifier` reading `pub`. It must be the *text* and
+    /// not merely the node, because `pub(crate)` is also a `visibility_modifier`
+    /// and states a bounded visibility, which is `restricted`.
+    ChildWord {
+        /// The child node kind that carries the modifier.
+        kind: &'static str,
+        /// The exact texts of that child which mean unrestricted visibility.
+        words: &'static [&'static str],
+    },
     /// The name starts with an upper-case letter. Go.
     Capitalized,
     /// The name does not start with `_`. Python convention.
     NotUnderscored,
+}
+
+/// What a definition states about its own visibility.
+///
+/// The `Vis` vocabulary of `specs/01-facts.md` § Atom vocabularies. Three
+/// values, and the third is a statement about the *grammar* rather than about
+/// the symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vis {
+    /// States unrestricted visibility outside its module.
+    Public,
+    /// States a bounded one, or states none where the grammar allows one.
+    Restricted,
+    /// The grammar gives this node kind no slot to state one, so the answer
+    /// comes from the enclosing definition — in the rule layer, not here.
+    Inherited,
+}
+
+impl Vis {
+    /// As it appears in `visibility(S, Vis)`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Restricted => "restricted",
+            Self::Inherited => "inherited",
+        }
+    }
 }
 
 /// One language.
@@ -87,8 +128,24 @@ pub struct Lang {
     pub imports: &'static str,
     /// Capture-suffix overrides, applied before [`KINDS`] is checked.
     pub kind_remap: &'static [(&'static str, &'static str)],
-    /// The export predicate.
+    /// The visibility predicate: how a node states `public` vs `restricted`.
     pub export: Export,
+    /// [`Kind`s](KINDS) of an owner whose members cannot state a visibility, so
+    /// theirs is `inherited` and the rule layer resolves it through `parent`.
+    ///
+    /// Keyed on the **owner**, not on the member's node kind, because the node
+    /// kind does not decide it: a provided trait method and a free function are
+    /// both `function_item`, and only the first is forbidden a `pub`. Keying on
+    /// the owner also collapses what would otherwise be a list of node kinds
+    /// per language into the language-neutral `Kind` vocabulary.
+    ///
+    /// Rust: `enum` (a variant cannot say `pub`) and `trait` (nor can a trait
+    /// item, required or provided). `struct` is deliberately absent — a Rust
+    /// field *can* say `pub`, so one that does not has stated privacy.
+    /// Trait `impl` blocks are handled by their own `@scope.impl` capture,
+    /// since an inherent `impl` owns members that may say `pub` and carries the
+    /// same `Kind`.
+    pub vis_inherits_under: &'static [&'static str],
     /// Comment prefixes that count as documentation.
     pub doc_markers: &'static [&'static str],
     /// Node kinds that are comments.
@@ -149,6 +206,9 @@ pub const LANGS: &[Lang] = &[
         // than here, where it could only be guessed at.
         kind_remap: &[],
         export: Export::Capitalized,
+        // Go decides visibility from the identifier, and every declaration has
+        // one — an interface method included — so nothing inherits.
+        vis_inherits_under: &[],
         // Go has no distinguished doc-comment syntax: a doc comment is an
         // ordinary comment immediately preceding the declaration. That is the
         // language's own rule — `go doc` reads exactly this — not an inference.
@@ -171,8 +231,24 @@ pub const LANGS: &[Lang] = &[
         // is what docs/plan.md M2's kind-fidelity test is for.
         // specs/02-extraction.md's SCIP table maps `Union` the same way so the
         // two tiers agree.
-        kind_remap: &[("union", "type")],
-        export: Export::ChildKind("visibility_modifier"),
+        // `impl` is the `@scope.impl` capture: still a type-like owner for
+        // descriptor synthesis, exactly as `@scope.type` is, but a distinct
+        // capture so the extractor can tell a trait impl from an inherent one.
+        kind_remap: &[("union", "type"), ("impl", "type")],
+        // `pub` only. `pub(crate)`, `pub(super)` and `pub(in path)` are all
+        // `visibility_modifier` nodes too, and all state a visibility bounded
+        // by the crate — which is the boundary `exported` asks about, so they
+        // are `restricted`. Matching the node rather than its text was the bug
+        // in #13.
+        export: Export::ChildWord {
+            kind: "visibility_modifier",
+            words: &["pub"],
+        },
+        // A variant, and any trait item, have nowhere to write `pub`; they are
+        // as visible as the enum or trait that owns them, which `stdlib.dl`
+        // resolves through `parent`. `struct` is not here: Rust lets a field
+        // say `pub`.
+        vis_inherits_under: &["enum", "trait"],
         // `//!` is deliberately absent. It is an *inner* doc comment — it
         // documents the enclosing module, not the item that follows it — so
         // treating it as a marker attaches a file header to whatever definition
@@ -223,7 +299,10 @@ mod tests {
         assert_eq!(rust.kind("struct"), Some("struct"));
         assert_eq!(rust.kind("union"), Some("type"));
         assert_eq!(rust.kind("class"), Some("class"));
-        assert_eq!(rust.kind("impl"), None);
+        // `@scope.impl` is a type-like owner for descriptor synthesis, exactly
+        // as `@scope.type` is; the separate capture exists so the extractor can
+        // tell a trait impl from an inherent one, not to make a new Kind.
+        assert_eq!(rust.kind("impl"), Some("type"));
     }
 
     #[test]

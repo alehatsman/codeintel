@@ -116,7 +116,7 @@ line read "412 ignored, 3 too large, ...".
 ### `query`
 
 ```sh
-codeintel query '?- callers(C, S), def(S, _, _, "get").'
+codeintel query '?- calls(C, S), def(S, _, _, "get").'
 codeintel query - < investigation.dl
 ```
 

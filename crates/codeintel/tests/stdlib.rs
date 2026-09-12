@@ -293,11 +293,14 @@ fn calls_at_carries_the_site_and_the_provenance() {
     assert!(sites[0].ends_with("\t9\texact"), "{sites:?}");
 }
 
+/// `calls/2` is read in both directions by binding either argument. The
+/// `callers`/`callees` aliases were cut at schema 2 — they were `calls`
+/// verbatim with the variables renamed, and the schema budget binds.
 #[test]
-fn callers_and_callees_read_calls_both_ways() {
-    let callers = rows(r#"?- def(S, _, _, "get"), callers(C, S), def(C, _, _, "warm")."#);
+fn calls_reads_both_ways_from_either_end() {
+    let callers = rows(r#"?- def(S, _, _, "get"), calls(C, S), def(C, _, _, "warm")."#);
     assert_eq!(callers.len(), 1, "{callers:?}");
-    let callees = rows(r#"?- def(S, _, _, "warm"), callees(S, C), def(C, _, _, "get")."#);
+    let callees = rows(r#"?- def(S, _, _, "warm"), calls(S, C), def(C, _, _, "get")."#);
     assert_eq!(callees.len(), 1, "{callees:?}");
 }
 
@@ -380,13 +383,15 @@ fn reaches_and_recursive_are_the_unseeded_pair() {
 // --------------------------------------------------------------- location helpers
 
 #[test]
-fn file_of_defines_and_at_are_three_views_of_def() {
+fn file_of_and_at_are_two_views_of_def() {
     let file_of = rows(r#"?- def(S, _, _, "warm"), file_of(S, F)."#);
     assert_eq!(file_of.len(), 1, "{file_of:?}");
     assert!(file_of[0].ends_with("src/store.rs"), "{file_of:?}");
 
+    // `defines(F, S)` was cut at schema 2: `file_of` with the arguments the
+    // other way, which Datalog does not need a second spelling for.
     assert_eq!(
-        rows(r#"?- defines("src/db/conn.rs", S), def(S, _, _, "open")."#).len(),
+        rows(r#"?- file_of(S, "src/db/conn.rs"), def(S, _, _, "open")."#).len(),
         1
     );
 
@@ -613,28 +618,99 @@ fn extern_and_uses_package_see_the_standard_library() {
     assert!(!rows(r#"?- about(S, "extern", A, B, L)."#).is_empty());
 }
 
-/// The rules this fixture cannot exercise positively, pinned as empty so the
-/// gap is visible rather than assumed covered.
+// ---------------------------------------------------------------- visibility
+
+/// `exported` is derived, and the point of deriving it is that a definition
+/// with nowhere to write `pub` still gets the right answer.
 ///
-/// **`implements/3` is empty for an upstream reason, and it was measured.**
-/// `rust-analyzer scip .` emits **zero** `relationships` for this crate — not
-/// merely none marked `is_implementation` — so there is no implementation edge
-/// to read for `impl Handler for Config`. Our side of it is exercised by
-/// `tier_b.rs`'s unit tests, which build the ingest directly. Closing this
-/// needs an indexer that emits relationships, not a bigger fixture.
+/// Regression for #13. Under schema 1 `exported` was a base fact emitted iff
+/// the node had a `visibility_modifier` child, so every symbol below was
+/// silently absent — and `dead_export` and `undocumented_export` inherited the
+/// gap without reporting one.
 #[test]
-fn the_rules_with_no_positive_coverage_are_named() {
-    for goal in [
-        "?- implements(S, T, P).",
-        r#"?- about(S, "implements", A, B, L)."#,
-        r#"?- about(S, "implementor", A, B, L)."#,
-    ] {
+fn exported_reaches_what_cannot_say_pub() {
+    // Variants of a `pub enum`, and both kinds of trait item: `handle` is
+    // required (no body) and `name` is provided (a body). Those are different
+    // grammar nodes, which is exactly why the rule keys on the owner.
+    // Named through `def` rather than by symbol string: with SCIP present these
+    // carry anchored identities, and the point is the rule, not the spelling.
+    for name in ["Fast", "Careful", "handle", "name"] {
         assert!(
-            rows(goal).is_empty(),
-            "{goal} unexpectedly has rows now — give it a real assertion and \
-             remove it from this list"
+            !rows(&format!(
+                r#"?- def(S, "src/kinds.rs", _, "{name}"), exported(S)."#
+            ))
+            .is_empty(),
+            "{name} is exported through its owner"
         );
     }
+
+    // A field CAN say `pub`, so one that does not has stated privacy. This is
+    // the boundary that keeps `inherited` from swallowing everything.
+    for (file, name) in [("src/kinds.rs", "quiet"), ("src/store.rs", "entries")] {
+        assert!(
+            rows(&format!(
+                r#"?- def(S, "{file}", _, "{name}"), exported(S)."#
+            ))
+            .is_empty(),
+            "{name} states its own privacy"
+        );
+    }
+}
+
+/// The three `Vis` values, and the fact that `restricted` reaches no rule.
+#[test]
+fn visibility_separates_stating_from_implying() {
+    let vis = |name: &str| {
+        rows(&format!(
+            r#"?- def(S, "src/kinds.rs", _, "{name}"), visibility(S, V)."#
+        ))
+    };
+    assert_eq!(vis("Mode"), vec!["Mode src/kinds.rs:14\tpublic"]);
+    assert_eq!(vis("Fast"), vec!["Fast src/kinds.rs:16\tinherited"]);
+    assert_eq!(vis("quiet"), vec!["quiet src/kinds.rs:11\trestricted"]);
+    assert!(rows(r#"?- visibility(S, "restricted"), exported(S)."#).is_empty());
+}
+
+// ---------------------------------------------------------------- implements
+
+/// `implements` answers on tier A alone, which is the whole of #6.
+///
+/// `rust-analyzer scip .` emits **zero** `relationships` for this crate — not
+/// merely none marked `is_implementation` — so `scip_impl` is empty and every
+/// row here is `name`-provenance, resolved out of `impl Handler for Config` in
+/// `src/kinds.rs`. Under schema 1 this relation was a base fact fed only by
+/// SCIP, so it was a permanent zero-row trap for the one shipped language.
+#[test]
+fn implements_answers_by_name_without_scip() {
+    assert!(
+        rows("?- scip_impl(S, T).").is_empty(),
+        "rust-analyzer now emits relationships; revisit this test's premise"
+    );
+    assert_eq!(
+        rows(r#"?- implements(S, T, P), def(S, _, _, "Config")."#),
+        vec!["Config src/kinds.rs:7\tHandler src/kinds.rs:29\tname"]
+    );
+    // `about` comes back to life on tier A, in both directions.
+    assert!(!rows(r#"?- about(S, "implements", A, B, L)."#).is_empty());
+    assert!(!rows(r#"?- about(S, "implementor", A, B, L)."#).is_empty());
+}
+
+/// The helper under `implements`, which resolves the written names.
+#[test]
+fn impl_sym_resolves_both_sides_of_the_for() {
+    // Same file wins: both names are defined in kinds.rs.
+    assert_eq!(
+        rows(r#"?- impl_sym("src/kinds.rs", "Handler", S)."#),
+        vec!["Handler src/kinds.rs:29"]
+    );
+    // Both sides of the `for` resolve.
+    assert_eq!(
+        rows(r#"?- impl_sym("src/kinds.rs", "Config", S)."#),
+        vec!["Config src/kinds.rs:7"]
+    );
+    // An inherent `impl` names no trait and contributes nothing, so `store.rs`
+    // and its `impl Store` must not appear at all.
+    assert!(rows(r#"?- impl_sym("src/store.rs", N, S)."#).is_empty());
 }
 
 /// Every rule `schema` advertises is exercised by some test in this file, or is

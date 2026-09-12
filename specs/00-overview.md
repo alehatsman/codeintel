@@ -123,7 +123,7 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 - **MCP tools: 1.** Named `code_query`. Growing to 2 requires deleting one.
 - **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
   Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
-- **Base relations: ≤ 16.** Currently 14 ([01-facts.md](01-facts.md)).
+- **Base relations: ≤ 16.** Currently 15 ([01-facts.md](01-facts.md)).
 - **`codeintel schema` output: ≤ 5,700 characters, with the rule list
   complete.** This is the budget that binds, and it is the only one that is
   measured rather than declared. Every rule must appear in `schema` with its

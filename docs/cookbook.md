@@ -133,7 +133,7 @@ The 17 that *are* questions:
 
 | dex method | here |
 |---|---|
-| `SymbolsByFile` | `?- defines("src/store.rs", S), def(S, _, K, N).` |
+| `SymbolsByFile` | `?- file_of(S, "src/store.rs"), def(S, _, K, N).` |
 | `SelectSymbols` | `?- def(S, F, K, N), contains(N, "auth").` |
 | `ExportedSymbolsByDir` | `?- exported(S), def(S, F, _, N), prefix(F, "src/api/").` |
 | `GraphQualifiedNameAt` | `?- innermost_at(F, L, S), within(S, A), def(A, _, _, N).` |

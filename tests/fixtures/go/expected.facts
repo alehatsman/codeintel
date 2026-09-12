@@ -118,27 +118,6 @@ def_span("local store/store.go Store#evict().", 38, 40, 885, 930).
 def_span("local store/store.go Warm().", 48, 51, 1157, 1296).
 def_span("local store/store_test.go TestWarm().", 6, 11, 98, 244).
 def_span("local ui/panel.go Draw().", 11, 14, 308, 388).
-exported("local app/app.go Start().").
-exported("local db/conn.go Open().").
-exported("local kinds.go Banner.").
-exported("local kinds.go Config#").
-exported("local kinds.go Config#Handle().").
-exported("local kinds.go Config#Limit.").
-exported("local kinds.go Handler#").
-exported("local kinds.go Handler#Handle().").
-exported("local kinds.go Key#").
-exported("local kinds.go Limit.").
-exported("local kinds.go Mode#").
-exported("local net/conn.go Open().").
-exported("local store/store.go Entry#").
-exported("local store/store.go Entry#Describe().").
-exported("local store/store.go Entry#Value.").
-exported("local store/store.go Store#").
-exported("local store/store.go Store#Get().").
-exported("local store/store.go Store#Put().").
-exported("local store/store.go Warm().").
-exported("local store/store_test.go TestWarm().").
-exported("local ui/panel.go Draw().").
 file("app/app.go", "go").
 file("db/conn.go", "go").
 file("kinds.go", "go").
@@ -188,3 +167,28 @@ parent("local store/store.go Store#evict().", "local store/store.go Store#").
 parent("local store/store.go Warm().", "store/store.go").
 parent("local store/store_test.go TestWarm().", "store/store_test.go").
 parent("local ui/panel.go Draw().", "ui/panel.go").
+visibility("local app/app.go Start().", "public").
+visibility("local db/conn.go Open().", "public").
+visibility("local kinds.go Banner.", "public").
+visibility("local kinds.go Config#", "public").
+visibility("local kinds.go Config#Handle().", "public").
+visibility("local kinds.go Config#Limit.", "public").
+visibility("local kinds.go Config#describe().", "restricted").
+visibility("local kinds.go Config#quiet.", "restricted").
+visibility("local kinds.go Handler#", "public").
+visibility("local kinds.go Handler#Handle().", "public").
+visibility("local kinds.go Key#", "public").
+visibility("local kinds.go Limit.", "public").
+visibility("local kinds.go Mode#", "public").
+visibility("local net/conn.go Open().", "public").
+visibility("local store/store.go Entry#", "public").
+visibility("local store/store.go Entry#Describe().", "public").
+visibility("local store/store.go Entry#Value.", "public").
+visibility("local store/store.go Store#", "public").
+visibility("local store/store.go Store#Get().", "public").
+visibility("local store/store.go Store#Put().", "public").
+visibility("local store/store.go Store#entries.", "restricted").
+visibility("local store/store.go Store#evict().", "restricted").
+visibility("local store/store.go Warm().", "public").
+visibility("local store/store_test.go TestWarm().", "public").
+visibility("local ui/panel.go Draw().", "public").

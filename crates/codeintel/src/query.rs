@@ -32,7 +32,12 @@ pub const MAX_REFRESH_MS: u64 = 2_000;
 /// README's own headline query would otherwise return `ok` and nothing on a
 /// fresh install — the exact failure invariant 6 exists to prevent
 /// (`docs/plan.md` M3).
-pub const SCIP_BACKED: &[&str] = &["scip_ref", "resolved", "implements", "extern"];
+/// `implements` is deliberately absent. Since schema 2 it is a rule with a
+/// tier-A `name` branch over `name_impl`, so it answers without SCIP, and
+/// `no-scip` would disclaim rows the index really has. `scip_impl`, the base
+/// relation beneath it, stays: a query naming that one directly is asking for
+/// the compiler's answer specifically.
+pub const SCIP_BACKED: &[&str] = &["scip_ref", "resolved", "scip_impl", "extern"];
 
 /// How much larger the engine's raw-atom byte budget is than the printed one.
 ///

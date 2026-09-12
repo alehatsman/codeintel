@@ -41,6 +41,15 @@ samples.** The gate is ≥ 24/30; the worst single round was 28/30.
 
 ## The two failures, verbatim
 
+> **Vocabulary note, schema 2.** The transcripts below are reproduced exactly as
+> the agents typed them, and two of them call `callers/2`, which no longer
+> exists — it was `calls/2` with the variables renamed and was cut to pay for
+> `exported` and `implements` becoming rules. Read `callers(A, S)` as
+> `calls(A, S)`. The eval is **not** re-run here: editing a recorded answer to
+> match a later vocabulary would make the measurement say something it did not
+> say.
+
+
 **Q5, round 2** — *Who calls the symbol `"scip demo store/Store#get()."`?*
 
 ```prolog

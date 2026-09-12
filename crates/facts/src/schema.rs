@@ -6,12 +6,18 @@
 //! mismatch on open is `stale` with the reindex command — never a silent read
 //! of rows against the wrong column meanings.
 //!
-//! Fourteen relations against a ceiling of sixteen
+//! Fifteen relations against a ceiling of sixteen
 //! (`specs/00-overview.md` § Surface budget). `has_type` is deferred and
 //! deliberately absent (`specs/01-facts.md`).
+//!
+//! Note what is **not** here: `exported` and `implements`. Both are derived in
+//! `rules/stdlib.dl` over the narrower facts below — `visibility` and
+//! `scip_impl`/`name_impl` — because whether a symbol is visible outside its
+//! crate, or implements a trait named in another file, is a join and not a
+//! token. That is invariant 3, and it is the same move `ref` made in v1.
 
 /// Bumped whenever a relation is added, removed, or changes arity.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// One base relation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,8 +72,8 @@ pub const RELATIONS: &[Rel] = &[
     },
     Rel {
         id: 7,
-        name: "exported",
-        arity: 1,
+        name: "visibility",
+        arity: 2,
     },
     Rel {
         id: 8,
@@ -91,11 +97,16 @@ pub const RELATIONS: &[Rel] = &[
     },
     Rel {
         id: 12,
-        name: "implements",
-        arity: 3,
+        name: "scip_impl",
+        arity: 2,
     },
     Rel {
         id: 13,
+        name: "name_impl",
+        arity: 4,
+    },
+    Rel {
+        id: 14,
         name: "extern",
         arity: 4,
     },
@@ -139,9 +150,9 @@ mod tests {
 
     #[test]
     fn the_base_relation_budget_holds() {
-        // `specs/00-overview.md` § Surface budget: <= 16, currently 14. This is
+        // `specs/00-overview.md` § Surface budget: <= 16, currently 15. This is
         // one of the four numbers CI asserts; growing it is a spec change.
         assert!(RELATIONS.len() <= 16, "base relations: {}", RELATIONS.len());
-        assert_eq!(RELATIONS.len(), 14);
+        assert_eq!(RELATIONS.len(), 15);
     }
 }
