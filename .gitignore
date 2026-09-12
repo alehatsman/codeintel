@@ -2,3 +2,9 @@
 .codeintel/
 .DS_Store
 .gate/
+
+# `rust-analyzer scip .` output for this repository: a build artifact, 2.6 MB,
+# regenerated in ~14s. Root-anchored on purpose — `tests/fixtures/rust/index.scip`
+# is committed so the tier-B tests run without rust-analyzer installed, and an
+# unanchored pattern would match it too.
+/index.scip
