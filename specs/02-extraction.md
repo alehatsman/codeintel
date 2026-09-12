@@ -311,7 +311,24 @@ Go method, which is lexically at file scope but semantically owned by its type.
    symbol nothing defines is worse than no row at all.
 2. Else `SymbolInformation.enclosing_symbol`, which is how SCIP `local` symbols
    get an owner — subject to the same existence check.
-3. Else tier A's span nesting.
+3. Else tier A's span nesting — the innermost enclosing span that is **itself a
+   definition**, else the file. Subject to the same existence check as 1 and 2,
+   for the same reason, and it is the rule that needs it most: it is the
+   fallback everything else falls through to, so a hole here is not an edge
+   case.
+
+Rule 3's check is not redundant with the span sweep. The sweep nests *spans*,
+and not every span is a definition — a Rust `impl` block encloses its methods
+and is emitted as no `def` row. Taking the innermost enclosing *item* rather
+than the innermost enclosing *definition* therefore produced
+`parent(Get, "local src/store.rs Store#")`, naming a symbol with no `def` row
+and no `parent` row of its own. `within/2` recurses through `parent`, so it
+terminated one hop short of the file and silently omitted every method in an
+`impl` block from any transitive containment query. Silent, because the query
+*succeeded*: the status taxonomy can see a failed answer, not a short one. That
+is the failure mode invariant 5 exists to prevent, arriving through a door
+invariant 5 does not watch — which is why the check belongs here, in the
+extractor, and not in a status code.
 
 Tier B **replaces** tier A's row rather than adding one, so the
 one-row-per-definition guarantee holds. Replacement happens after the anchor

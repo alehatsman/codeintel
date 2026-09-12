@@ -149,8 +149,8 @@ The **semantic owner**, one hop. `Parent` is a `SymId` for owned definitions or
 a file path `F` for top-level ones — both are atoms, so the column is uniform.
 **Exactly one row per `def`**, guaranteed by the precedence below.
 ```
-parent("local src/store.rs Store#get().", "local src/store.rs Store#").
-parent("local src/store.rs Store#",       "src/store.rs").
+parent("local src/store.rs Store#entries.", "local src/store.rs Store#").
+parent("local src/store.rs Store#",         "src/store.rs").
 ```
 
 Semantic, not lexical — and the two genuinely differ. A Go method is *not*
@@ -177,6 +177,20 @@ this fixed order:**
    nothing indexed. This is the path for SCIP `local` symbols.
 3. **Tier A span nesting** — the innermost enclosing definition, or the file.
    The only source for unresolved symbols, and the fallback everywhere else.
+   *Definition*, not *span*: a Rust `impl` block encloses its methods and is no
+   `def`, so the walk continues past it. See
+   [02-extraction.md](02-extraction.md) § Parent precedence for what shipping
+   the span version cost.
+
+The example above is a field, not a method, because a method in a Rust `impl`
+block does **not** reach `Store#` — and that is a known limit, not an accident.
+`rust-analyzer` names the method `store/impl#[Store]get().`, whose descriptor
+prefix is `store/impl#[Store]`, which nothing defines; rule 1 declines, and the
+walk lands on the file. Getting `Store#` would mean teaching the extractor that
+`impl#[T]` means `T` — per-language descriptor knowledge, and a guess invariant
+1 forbids. So for Rust inherent impls this fact is *coarse but true* rather than
+precise and invented. Go, whose methods carry `Store#Get().` directly, is
+unaffected and still resolves to the type.
 
 Deterministic, total, and exactly one row. The tradeoff is deliberate: lexical
 containment is no longer recoverable from `parent` for the cases where the two

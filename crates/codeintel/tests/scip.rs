@@ -356,16 +356,62 @@ fn local_symbols_are_not_cross_linked_between_files() {
 fn a_tier_b_definition_carries_its_semantic_owner() {
     let dir = tree();
     index(dir.path());
-    // Rule 1 of parent precedence: the descriptor prefix. `Store::get` is owned
-    // by the impl block's type, not by the file it sits in.
+    // Rule 1 of parent precedence: the descriptor prefix. A field truncates to
+    // the type that declares it, and that type is indexed, so the existence
+    // check passes and the field is owned by the type, not by the file.
     let owners = rows(
         dir.path(),
-        r#"?- def(S, _, "method", "get"), parent(S, P)."#,
+        r#"?- def(S, _, "field", "entries"), parent(S, P)."#,
     );
     assert_eq!(owners.len(), 1, "{owners:?}");
     let owner = owners[0].split('\t').nth(1).unwrap_or_default();
-    assert!(
-        owner.contains("impl#[Store]") || owner.contains("Store#"),
-        "{owners:?}"
+    assert!(owner.ends_with("Store#"), "{owners:?}");
+
+    // This test used to use `Store::get` and assert only that the owner
+    // *string* contained `Store#`. It passed against
+    // `local src/store.rs Store#` — tier A's symbol for the `impl` block, which
+    // after anchoring names nothing at all. Asserting the shape of an
+    // identifier without asserting that the identifier resolves is how a
+    // dangling edge stays green for a milestone;
+    // `every_parent_names_something_that_exists` is the assertion that catches
+    // it.
+}
+
+/// Precedence rule 3's existence check, as a property over the whole index:
+/// every `parent` target is a definition or a file. Nothing else is a thing
+/// that can own a definition.
+///
+/// This guards a *silent* defect. `within/2` recurses through `parent`, so a
+/// target that is neither ends the recursion early and the query returns a
+/// short answer with `status=ok` — no truncation, no degradation, nothing
+/// invariant 5 can report. Before the fix this found four rows: every method of
+/// a Rust `impl` block in the fixture.
+#[test]
+fn every_parent_names_something_that_exists() {
+    let dir = tree();
+    index(dir.path());
+    let dangling = rows(
+        dir.path(),
+        "?- parent(C, P), !def(P, _, _, _), !file(P, _).",
     );
+    assert!(dangling.is_empty(), "parent names nothing: {dangling:?}");
+}
+
+/// The consequence, as the query an agent actually asks: a method inside an
+/// `impl` block is transitively within the file that holds it.
+///
+/// Rust methods are the case that broke, because `rust-analyzer` names them
+/// `store/impl#[Store]get().` and the descriptor prefix `store/impl#[Store]` is
+/// not a definition — so rules 1 and 2 both decline and rule 3 decides.
+#[test]
+fn an_impl_block_method_is_within_its_file() {
+    let dir = tree();
+    index(dir.path());
+    for method in ["get", "put", "evict"] {
+        let found = rows(
+            dir.path(),
+            &format!(r#"?- def(S, _, "method", "{method}"), within(S, "src/store.rs")."#),
+        );
+        assert_eq!(found.len(), 1, "`{method}` is not within its own file");
+    }
 }

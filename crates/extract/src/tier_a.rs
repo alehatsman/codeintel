@@ -7,6 +7,8 @@
 //! query time. Freezing resolution into a per-file fact is what makes
 //! incremental indexing unsound, so the extractor is not allowed to be clever.
 
+use std::collections::BTreeSet;
+
 use facts::{Interner, Segment};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
@@ -176,6 +178,21 @@ impl Extractor {
         let file = atom(interner, path)?;
         push(&mut seg, "file", &[file, atom(interner, self.lang.name)?]);
 
+        // Every symbol this file is about to emit a `def` for, so precedence
+        // rule 3 can apply the same existence check rules 1 and 2 apply
+        // (`specs/02-extraction.md` § Parent precedence). The check is on the
+        // *symbol*, not on the item: a Rust `impl` block is not a `def`, but
+        // `symbols_of` gives it the same symbol as the type it implements, so
+        // in a tier-A-only index it names a definition and is a fine parent.
+        // Anchoring is what breaks that — the type takes its SCIP identity and
+        // the `impl` block keeps the stale local one, which then names nothing.
+        let defined: BTreeSet<&str> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.is_def)
+            .filter_map(|(i, _)| symbols.get(i)?.as_deref())
+            .collect();
+
         for (i, item) in items.iter().enumerate() {
             if !item.is_def {
                 continue;
@@ -236,14 +253,20 @@ impl Extractor {
             // than adding a second row — a Go method is lexically at file
             // scope and semantically owned by its type
             // (`specs/02-extraction.md` § Parent precedence). Where tier B has
-            // no answer, the sweep's innermost enclosing item stands.
+            // no answer, the sweep's innermost enclosing span *that this file
+            // actually defines* stands, else the file. Taking the innermost
+            // enclosing span unchecked named a symbol with no `def` row, which
+            // stopped `within/2` one hop short of the file without failing the
+            // query — a short answer no status code can report.
             let owner = match anchor.and_then(|a| a.parent.as_deref()) {
                 Some(parent) => atom(interner, parent)?,
-                None => match parents
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .and_then(|j| symbols.get(j))
+                None => match ancestor(&parents, i, |j| {
+                    symbols
+                        .get(j)
+                        .and_then(Option::as_deref)
+                        .is_some_and(|sym| defined.contains(sym))
+                })
+                .and_then(|j| symbols.get(j))
                 {
                     Some(Some(sym)) => atom(interner, sym)?,
                     _ => file,

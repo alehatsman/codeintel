@@ -620,12 +620,46 @@ commit invalidates them, including the one that fixes an eval finding. Full meth
 failures are one line of schema copy**: `long_def(S, N)` reads as parameterised
 by `N` when `N` is an output and the threshold is fixed at 80.
 
-Building the eval found a **tier-B defect M4's own rule tests had missed**:
+Building the eval found a **defect M4's own rule tests had missed**:
 `parent(S)` for a method inside an `impl` block points at a symbol with no `def`
 row, so `within/2` and `about(S, "parent", ...)` join to nothing for every
 method in an `impl`. `tests/stdlib.rs` tested containment with module nesting and
-sailed past it. Not fixed here — parent precedence is tier-B ingest, M3's
-territory, and the fix has blast radius.
+sailed past it.
+
+**Fixed after M4 closed**, once measuring it showed it was worse than the
+"dangling id" it had been filed as. `within/2` did not return an error or an
+empty result — it returned a *short* one, with `status=ok`, omitting every
+`impl`-block method from any transitive containment query while looking
+perfectly well-formed. Invariant 5 exists to stop exactly that, and could not
+see it, because nothing failed.
+
+Three things are worth carrying forward from the fix, none of them about impl
+blocks:
+
+1. **It was tier A, not tier B.** It was filed as tier-B ingest with blast
+   radius, and that was wrong — precedence rules 1 and 2 both carry the
+   existence check that `specs/02-extraction.md` called non-optional, and rule
+   3, tier A's span fallback, did not. The rule everything falls through to was
+   the one exempted from the check.
+2. **The correct code was already in the file.** `ancestor()` walks to the
+   nearest enclosing item satisfying a predicate, and the reference path called
+   it with `is_def`. The `parent` path twenty lines earlier took a single
+   unchecked hop. References got the check; definitions did not.
+3. **A test asserted the bug.** `a_tier_b_definition_carries_its_semantic_owner`
+   checked that the owner *string* contained `Store#` — which the dangling
+   `local src/store.rs Store#` satisfies. Asserting an identifier's shape
+   without asserting that it resolves is how a dangling edge stays green for a
+   whole milestone. The replacement,
+   `every_parent_names_something_that_exists`, is a property over the entire
+   index rather than a claim about one row.
+
+The check is on the **symbol**, not on the item, and the first attempt got that
+wrong. An `impl` block is not a `def`, but `symbols_of` gives it the same
+synthesized symbol as the type it implements — so in a tier-A-only index it
+names a real definition and is the right parent, and the golden facts say so.
+Anchoring is what breaks it: the type takes its SCIP identity, the `impl` block
+keeps the stale local one, and only then does it name nothing. Checking
+`item.is_def` would have fixed the SCIP path by regressing the no-SCIP one.
 
 **M4 item 2's `--raw` generation guard is not built, and will not be.** The
 plan says raw output carries the manifest's dictionary generation and a mismatch
