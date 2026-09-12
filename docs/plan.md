@@ -563,6 +563,65 @@ definition. A `stdlib.dl` rule naming the set is the cheap fix if it bites.
 - A no-SCIP run of the eval, recorded separately, in the README.
 - Surface-budget test is in CI.
 
+### What M4 actually cost, and what it found
+
+Shipped: symbol rendering and `--raw`; the empty-result `hint`; `schema` and
+`status` over a shared `Census`; `codeintel mcp`; `--rules` and
+`--expect-empty`; the surface-budget test; `docs/cookbook.md`; and a per-rule
+fixture test file.
+
+**The rule cap was raised from 24 to 40, not met.** The reason is written into
+[00-overview.md](../specs/00-overview.md) § Surface budget rather than left as a
+number that moved: 24 was never reconciled with the fact schema — `stdlib.dl`
+shipped at M1 with 37 predicates and every one is specified in
+[01-facts.md](../specs/01-facts.md) — and the thirteen cheapest cuts are the
+`_exact` family, which is the entire argument for tier B. What keeps the budget
+honest is that 40 is not the constraint that binds: `schema` must carry every
+rule and fit ~1500 tokens, and 37 rules leave ~1,391.
+
+Four defects in what M4 itself had just written, all found by an adversarial
+review rather than by the gate:
+
+1. **`rows` and `display` were two independent sorts of one answer.** Each
+   notation was rendered and sorted on its own key, so `rows[i]` and
+   `display[i]` described different tuples — and the documented workflow is to
+   read one and feed the other into the next query. Both notations are now
+   produced per row and ordered once.
+2. **The byte cap measured the wrong text.** The engine's cap runs over raw
+   atoms and the rendered form is *shorter*, so the engine always truncated
+   first, on rows that fit the printed budget. The claim in the spec was simply
+   false, and a caller with a SCIP index silently got a fraction of the answer.
+3. **`count{}` corrupted the empty-result hint.** The aggregate evaluates its
+   sub-goal through the same recursion and shared the depth cell, so the
+   diagnostic named the wrong literal or degraded to the generic message.
+4. **A wrapped `%%` doc was dropped**, so `schema` advertised five of `about`'s
+   ten `Rel` values with a trailing `|`.
+
+Two spec conflicts were surfaced rather than reconciled silently. The MCP tool's
+`rule` + `args` carried the identical defect that deleted the `rules` CLI verb —
+`args: ["142"]` binds the string — and was **dropped**, which the user decided.
+And `--rules` files turned out to be **additive**, not shadowing: a predicate is
+the union of its clauses, so a file defining `is_test` widens it. The doc
+comment claimed shadowing, the test disagreed, and the doc was wrong.
+
+**One done-when is not met, and is not being counted as met.** "Every rule in
+`stdlib.dl` has a fixture test with a hand-verified answer" holds for 32 of 37.
+`implements/3` and `extern/4` are both **zero rows** on `tests/fixtures/rust/`
+even with `index.scip` present: the fixture has no external dependency, and
+`rust-analyzer scip .` emits no implementation relationship for
+`impl Handler for Config`. So `uses_package`, `uses_package_exact` and the
+`implements` / `implementor` / `extern` arms of `about` are asserted *empty* —
+which tests the plumbing, not the meaning. `the_rules_with_no_positive_coverage_are_named`
+pins the list and fails if any of them starts returning rows. Closing it needs a
+fixture with a real dependency and an implementation SCIP actually emits.
+
+Two artifacts worth keeping, both traced to the module-symbol placement M3
+recorded. `?- within(C, P).` returns a row whose child has an empty name, and
+`?- depends(F, G).` claims `src/app.rs` depends on `tests/store_test.rs` —
+because the crate-root module symbol is defined, per SCIP, in a document that is
+not where the `mod` statement is. `cookbook.md` § 4 tells a reader how to read
+such a row rather than leaving them to trust it.
+
 ---
 
 ## M5 — Languages
