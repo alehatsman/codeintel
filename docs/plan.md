@@ -604,11 +604,18 @@ And `--rules` files turned out to be **additive**, not shadowing: a predicate is
 the union of its clauses, so a file defining `is_test` widens it. The doc
 comment claimed shadowing, the test disagreed, and the doc was wrong.
 
-**The agent eval passed both sets.** 88/90 on the M1 thirty retargeted to real
-extracted facts, 43/45 on fifteen held-out questions against this repository
-with no SCIP index — which is also the no-SCIP run the done-when asks for.
-88/90 is exactly M1's score against hand-written facts, so making the facts real
-and the schema generated cost nothing. Full method and every failure verbatim in
+**The agent eval passed both sets.** 85/90 on the M1 thirty retargeted to real
+extracted facts, 45/45 on fifteen held-out questions against this repository
+pinned at `8471824` with no SCIP index — which is also the no-SCIP run the
+done-when asks for.
+
+**The first numbers were withdrawn, not amended.** An earlier pass scored 88/90
+and 43/45; then the eval's own finding — `long_def`'s copy — was fixed, which
+changed that rule's signature, and scoring old transcripts against a new
+standard library measures nothing about the agents. Both sets were re-run with
+fresh agents against the shipped schema. Set B is now **pinned to a commit**,
+because its reference answers are facts about this repository's source and any
+commit invalidates them, including the one that fixes an eval finding. Full method and every failure verbatim in
 [agent-eval.md](agent-eval.md); the headline is that **three of the four
 failures are one line of schema copy**: `long_def(S, N)` reads as parameterised
 by `N` when `N` is an output and the threshold is fixed at 80.

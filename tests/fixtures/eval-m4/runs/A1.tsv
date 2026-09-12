@@ -1,5 +1,5 @@
 1	?- def(A, _, "function", _).
-2	?- def(_, A, _, "warm").
+2	?- def(S, A, _, "warm").
 3	?- innermost_at("src/store.rs", 23, A).
 4	?- symbol_at("src/store.rs", 45, A).
 5	?- callers(A, "rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().").
@@ -10,13 +10,13 @@
 10	?- def(A, F, _, _), is_test(F).
 11	?- undocumented_export(A).
 12	?- dead_export(A).
-13	?- def(T, _, "type", "Store"), def(A, _, "field", _), parent(A, T).
+13	?- def(T, _, "type", "Store"), parent(A, T), def(A, _, "field", _).
 14	?- within("rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().", A).
 15	?- import(A, "crate::db::conn", _).
 16	?- uses_package(A, B).
 17	?- implements(A, "rust-analyzer cargo fixture 0.1.0 store/Store#", _).
-18	?- def_span(A, S, E, _, _), B = E - S, B > 8.
-19	?- A = count{S : calls(S, "rust-analyzer cargo fixture 0.1.0 db/conn/open().")}.
+18	?- def_lines(A, B), B > 8.
+19	?- A = count{C : calls(C, "rust-analyzer cargo fixture 0.1.0 db/conn/open().")}.
 20	?- def(A, F, _, _), prefix(F, "src/").
 21	?- innermost_at("src/store.rs", 23, S), impact_of(S, A).
 22	?- exported(A), resolved(A).

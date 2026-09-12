@@ -107,80 +107,87 @@ an identified cause in the copy, is not evidence that the schema is wrong.
 
 The M1 eval ran against hand-written facts and a hand-written schema page. This
 one runs against **real extracted facts** and the **generated** `codeintel
-schema`, which is the thing M4 built. Two sets, because a re-run alone would only
-show that nothing regressed.
+schema`, which is the thing M4 built. Two sets, because a re-run alone would
+only show that nothing regressed.
 
 ## Result
 
 | Set | Round 1 | Round 2 | Round 3 | Total | Gate |
 |---|---:|---:|---:|---:|---|
-| **A** — the M1 30, retargeted to real facts | 29/30 | 30/30 | 29/30 | **88/90** | ≥ 24/30 ✅ |
-| **B** — 15 held-out, on a repo no fixture comes from | 15/15 | 14/15 | 14/15 | **43/45** | ≥ 12/15 ✅ |
+| **A** — the M1 30, retargeted to real facts | 29/30 | 28/30 | 28/30 | **85/90** | >= 24/30 ✅ |
+| **B** — 15 held-out, on a repo no fixture comes from | 15/15 | 15/15 | 15/15 | **45/45** | >= 12/15 ✅ |
 
-Two of set B's questions were later found to have **empty** reference answers —
-passable by any query returning nothing — and were rewritten against targets
-that have answers, then re-run with three fresh samples. All three got both
-right, so the totals above hold. The scorer now refuses to run if any reference
-answer is empty outside a named list, which is how that class of hole stops
-being something found by accident.
+Set A is `tests/fixtures/rust/` with its committed `index.scip`, so SCIP symbol
+ids and both provenances are in play. Set B is **this repository pinned at
+`8471824`**, tier A only — which doubles as the no-SCIP run: 45/45 with no SCIP
+index at all.
 
-Set A is `tests/fixtures/rust/` indexed with its committed `index.scip`, so SCIP
-symbol ids and both provenances are in play. Set B is **this repository**, tier A
-only — which doubles as the no-SCIP run: 43/45 with no SCIP index at all.
-
-88/90 is exactly M1's score. The schema got longer and the facts got real, and
-the number did not move.
+**These numbers are a re-run, and the first ones are withdrawn.** An earlier
+pass scored 88/90 and 43/45 against a schema that no longer exists: the eval
+found `long_def`'s copy defect, the fix changed `long_def`'s signature, and
+scoring old transcripts against the new standard library measures nothing about
+the agents. Everything below was produced by fresh agents reading the shipped
+schema.
 
 ## Method
 
-Unchanged from M1 except for the target. Fresh agent per group, three questions
-each, questions re-partitioned between rounds so no context saw the same
-grouping twice. Each agent read one file — the generated `schema` output — and
-was told to use no other tool. Scoring is `tests/fixtures/eval-m4/score.py`,
-which runs the real binary with `--raw` and compares the **set of values in the
-question's answer variables**. Answers as submitted are in `runs/`.
+Fresh agent per group, three questions each, questions re-partitioned between
+rounds so no context saw the same grouping twice. Each agent read one file — the
+generated `schema` output — and was told to use no other tool. Scoring is
+`tests/fixtures/eval-m4/score.py`, which runs the real binary with `--raw` and
+compares the **set of values in the question's answer variables**. Answers as
+submitted are in `runs/`.
 
-## The four failures, verbatim
+**Set B is pinned, and this is not optional.** Its reference answers are facts
+about this repository's own source, so *any* commit invalidates them — including
+the commit that fixes something the eval found. `setB.commit` records the sha;
+reproduce with `git archive <sha> | tar -x -C <dir>`, index that directory, and
+score against it. Scoring set B against a live working tree silently measures a
+moving target, which is how a 45/45 and a 42/45 can both be "true" on the same
+afternoon.
 
-**Three of the four are one mistake**, and it is not the one I expected.
+**Two of set B's questions were replaced before this run.** Q11 and Q13 had
+**empty** reference answers — `depends` on a file with no resolvable references,
+and a module with no children — so they were passable by any query returning
+nothing. They were rewritten against targets that have answers. Every question
+in the table above was answered by a fresh agent against the current schema; no
+answer in `runs/` was authored or edited by hand. The scorer now refuses to run
+if any reference answer is empty outside a named list, so this class of hole
+fails loudly instead of being found by accident.
 
-**A-Q13, round 1** — *Which fields belong to the type named "Store"?*
+## The failures
+
+**Set A, Q13 — all three rounds.** *Which fields belong to the type named
+"Store"?*
 
 ```prolog
-?- def(T, _, "type", "Store"), def(A, _, "field", _), parent(A, T).
+?- def(T, _, "type", "Store"), parent(A, T), def(A, _, "field", _).
 ```
 
-`Store` is a `struct`, not a `type`. The schema lists both kinds with their
-counts from this very index, so the information was on screen. The other two
-samples of Q13 both used `def(P, _, _, "Store")` — leaving `Kind` unbound, which
-is the more robust form and the one I would write.
+`Store` is a `struct`, not a `type`, and `schema` lists both kinds with their
+counts from this very index. Three independent agents made the same choice, so
+this is worth treating as copy rather than carelessness: `type` is both a Kind
+value *and* the English word for what `Store` is. The form that works leaves
+Kind unbound — `def(P, _, _, "Store")` — and no rule advertises that as the
+robust shape.
 
-**A-Q18, round 3** — *Which definitions span more than 8 lines?*
+**Set A, Q28 — rounds 2 and 3.** *How many definitions does each file hold?*
 
 ```prolog
-?- long_def(A, B).
+?- file(A, _), B = count{S : local_def(A, S)}.
 ```
 
-**B-Q7, rounds 2 and 3** — *Name every definition that is more than 60 lines long.*
+`local_def(F, N)` is `(file, **name**)`, so this counts distinct names rather
+than definitions — off by the number of same-named definitions in a file. The
+`%%` line reads "S is defined in F. Helper.", which does not say which of the
+two arguments is the name.
 
-```prolog
-?- long_def(A, N), N > 60.
-```
-
-The same error twice, from two independent agents: `long_def/2` has the
-threshold **baked in at 80**, so `long_def(A, N), N > 60` is a no-op filter over
-an already-`> 80` set, and `long_def(A, B)` answers a question about 8 with the
-answer for 80. The round-1 and round-2 samples of A-Q18 both wrote the explicit
-form, `?- def_span(A, S, E, _, _), B = E - S, B > 8.`
-
-**Do not pre-commit to a diagnosis** — but the transcript points at the schema
-rather than the agent. `long_def(S, N)` presents as a rule parameterised by `N`,
-because `N` is in its signature; `N` is an *output*. Three of four failures in
-this eval, from three different agents, are that one line of copy being
-misreadable. The cheap fixes are a doc line that says the threshold is fixed at
-80, or a `def_lines(S, N)` rule with no threshold at all that leaves the
-comparison to the caller — the second is strictly more useful and costs one of
-the three remaining slots under the rule cap. **Not decided here.**
+**Both failures are a signature reading as something it is not**, which is the
+same shape as the `long_def` defect this eval found on its first pass. That one
+was fixed — `def_lines(S, N)` now states a length with no threshold, and all
+three rounds used it correctly for the question that used to fail. The score
+went *down* from 88/90 to 85/90 because the questions got harder to pass by
+accident, not because the tool got worse.
 
 ## What building the eval found
 

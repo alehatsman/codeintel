@@ -132,16 +132,19 @@ fresh agent each time.
 
 | Set | Score | Index |
 |---|---:|---|
-| 30 questions, real extracted facts | **88/90** | `tests/fixtures/rust/` with SCIP |
-| 15 held-out questions, a repo no fixture comes from | **43/45** | this repository, **no SCIP** |
+| 30 questions, real extracted facts | **85/90** | `tests/fixtures/rust/` with SCIP |
+| 15 held-out questions, a repo no fixture comes from | **45/45** | this repository pinned, **no SCIP** |
 
-The second row is also the no-SCIP number: 43/45 with tier A alone.
+The second row is also the no-SCIP number: 45/45 with tier A alone.
 
-Three of the four failures were the same mistake: `long_def(S, N)` read as a
-rule parameterised by `N`, when `N` was an output and the threshold was fixed at
-80. The fix was to the schema, not the agents — `def_lines(S, N)` now states a
-length with no threshold, so the query those agents wanted exists.
-[docs/agent-eval.md](docs/agent-eval.md) records every failure verbatim.
+Every failure so far has been a *signature reading as something it is not*, and
+each one is a fix to the schema rather than a complaint about the agent. The
+first pass found `long_def(S, N)` reading as parameterised by `N` when `N` was
+an output; `def_lines(S, N)` replaced it and every later round used it
+correctly. What is left is `def(S, F, "type", ...)` for a struct, and
+`local_def(F, Name)` read as `(file, symbol)`.
+[docs/agent-eval.md](docs/agent-eval.md) records every failure verbatim, and why
+the earlier 88/90 was withdrawn rather than kept.
 
 ## Languages
 

@@ -5,18 +5,18 @@
 15	?- import(A, "crate::db::conn", _).
 26	?- ambiguous(A).
 7	?- impact_of("rust-analyzer cargo fixture 0.1.0 db/conn/open().", A).
-18	?- long_def(A, B).
+18	?- def_lines(A, B), B > 8.
 29	?- def(A, _, _, N), contains(N, "conn").
 10	?- is_test(F), defines(F, A).
 21	?- innermost_at("src/store.rs", 23, S), impact_of(S, A).
 2	?- def(S, A, _, "warm").
-13	?- def(T, _, _, "Store"), parent(A, T), def(A, _, "field", _).
+13	?- def(T, _, "type", "Store"), parent(A, T), def(A, _, "field", _).
 24	?- def_sig("rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().", A).
 5	?- callers(A, "rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().").
 16	?- uses_package(A, B).
 27	?- entrypoint(A).
 8	?- impact_of_exact("rust-analyzer cargo fixture 0.1.0 db/conn/open().", A).
-19	?- A = count{C : calls(C, "rust-analyzer cargo fixture 0.1.0 db/conn/open().")}.
+19	?- A = count{S : calls(S, "rust-analyzer cargo fixture 0.1.0 db/conn/open().")}.
 30	?- def(A, F, _, _), file(F, "rust").
 11	?- undocumented_export(A).
 22	?- exported(A), resolved(A).
@@ -25,6 +25,6 @@
 25	?- about("rust-analyzer cargo fixture 0.1.0 store/impl#[Store]get().", A, _, _, _).
 6	?- reach_of("rust-analyzer cargo fixture 0.1.0 store/warm().", A).
 17	?- implements(A, "rust-analyzer cargo fixture 0.1.0 store/Store#", _).
-28	?- file(A, _), B = count{S : defines(A, S)}.
+28	?- file(A, _), B = count{S : local_def(A, S)}.
 9	?- is_test(A).
 20	?- def(A, F, _, _), prefix(F, "src/").
