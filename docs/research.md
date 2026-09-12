@@ -166,9 +166,11 @@ fail.
   references; `scip-typescript` shipped symbol-kind emission on 2026-09-11.
   Python ships in v1 for its tier-A story; do not promise `calls_exact` quality
   there.
-- **§6 omitted `blake3` and `regex`.** Both are used — segments are named by
-  blake3 hash, and `regex` is a non-optional transitive dependency of
-  `tree-sitter` itself, which also removes any reason to hand-roll a matcher.
+- **§6 omitted `blake3` and `regex`.** Fixed in M0, along with a full
+  reconciliation against `rust-quality/docs/STACK.md`. Both are used —
+  segments are named by a blake3 hash, and `regex` is a non-optional
+  transitive dependency of `tree-sitter` itself, which also removes any
+  reason to hand-roll a matcher.
   A budget `CLAUDE.md` calls "the entire budget" was wrong at spec time.
 - **§4 answered "which Datalog?" and never asked "why Datalog?"** SQL over the
   same facts was never evaluated — SQLite was rejected as *storage* in §5 and
@@ -359,54 +361,95 @@ one file's segment". Corruption recovery is `rm -rf .codeintel && codeintel inde
 
 ## 6. Dependency budget
 
+Reconciled against `rust-quality/docs/STACK.md` at v0.5.0 during M0.
+**STACK.md outranks this table on crate choice**; every deviation below names
+its trigger, because deviating is fine and deviating silently is not.
+
 The whole binary, as specified:
 
-| Crate | Why | Verified |
+| Crate | Why | Source |
 |---|---|---|
-| `tree-sitter` | parsing | 0.27.0, 2026-08-30 |
-| 9 grammar crates (below) | grammars | all current, all ship `tags.scm` |
-| `scip` | protobuf bindings for the SCIP tier | 0.10.0, 2026-09-03 |
+| `tree-sitter` | parsing | 0.27.0, 2026-08-30 — no STACK entry |
+| 4 grammar crates (below) | grammars | no STACK entry |
+| `scip` | protobuf bindings for the SCIP tier | 0.10.0, 2026-09-03 — no STACK entry |
 | `protobuf` | transitive, required by `scip` | 4.36.1 |
-| `memmap2` | segment loading | 0.9.11 |
-| `serde` + `serde_json` | JSON output, manifest | — |
-| `clap` | CLI | — |
-| `ignore` | gitignore-aware walking | — |
+| `memmap2` | segment loading | 0.9.11 — **deviation**, see below |
+| `blake3` | segments are named by a content hash (`04-storage.md`) | STACK default (`sha2`/`blake3`) |
+| `regex` | the `match`/`prefix`/`suffix`/`contains` builtins | STACK default; already transitive via `tree-sitter` |
+| `serde` + `serde_json` | JSON output, manifest | STACK default |
+| `clap` | CLI | STACK default, `features = ["derive", "env"]` |
+| `anyhow` | application top level | STACK default |
+| `thiserror` | one error enum per library boundary | STACK default |
+| `ignore` | gitignore-aware walking | no STACK entry |
+
+Dev-dependencies, all STACK defaults: `insta` (golden facts and rendered
+output), `assert_cmd` + `predicates` (CLI), `rstest`, `proptest` (engine
+invariants), `tempfile`. Benchmarks are a test-only `divan` harness at M6, never
+a CLI verb.
 
 The Datalog engine, the fact store, the interner, the extractors, and the MCP
 server are all first-party. No async runtime, no database, no HTTP client, no
 model backend.
 
+### Deviations from STACK.md, and their triggers
+
+- **`crates/datalog` takes no dependencies at all.** Trigger: it is the seam
+  that keeps code-intel concepts out of evaluation (`00-overview.md`
+  invariant 6, asserted by `crates/datalog/tests/seam.rs`), and it is the one
+  crate we might publish standalone. Consequence: `match/2` delegates to
+  `regex`, but as a **host builtin injected by `crates/codeintel`** — the engine
+  names an interface, not a crate. Hand-rolling a backtracker would buy no
+  dependency reduction and would lose linear-time matching.
+- **`memmap2` has no STACK entry.** Trigger: after interning, a fact is a
+  fixed-width row of `u32`, so the on-disk bytes *are* the in-memory
+  representation (§5). Loading is `mmap` plus concatenate; a serialization
+  library would be a parse step over data that needs none.
+- **`tree-sitter`, the grammar crates, `scip`, `protobuf` and `ignore` have no
+  STACK entry.** They are the domain, not a stack choice. Recorded here so the
+  next reader does not go looking for a ruling that does not exist.
+- **No `tracing` / `tracing-subscriber`, against STACK's focused-CLI default.**
+  Trigger: degradation is a `status` field on the response, never a log line
+  (invariant 6), and stdout is the tool's output. Revisit at M4, when
+  `codeintel mcp` becomes a long-running process with no stdout to spare — that
+  is the first time a log has somewhere to go.
+- **`blake3` and `regex` were missing from this budget at spec time** and are
+  now listed, per §1f. A budget `CLAUDE.md` calls "the entire budget" has to be
+  complete to mean anything.
+
 ### Language coverage
 
-Verified 2026-09-12: every grammar below is published, current, **and ships
-`queries/tags.scm` upstream** — so each costs one crate, two vendored `.scm`
-files, and one `lang.rs` row. No per-language Rust.
+**Four languages, not nine** ([plan.md](plan.md) M5). The nine-language table
+this section carried was built on "every grammar ships `queries/tags.scm`
+upstream, so each costs one crate, two vendored `.scm` files and one `lang.rs`
+row". §1f retracts that: existence is not sufficiency, the `.scm` files are
+**authored here**, and the same-author precedent — `~/projects/dex`, ~6,177 LOC
+of extraction for five languages — prices a language at ~1,000 LOC plus fixture
+work.
 
-| Language | Grammar crate | SCIP indexer | Tier |
+| Language | Grammar crate | SCIP indexer | Lands |
 |---|---|---|---|
-| Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | core |
-| Go | `tree-sitter-go` 0.25.0 | `scip-go` | core |
-| Python | `tree-sitter-python` 0.25.0 | `scip-python` | core |
-| JavaScript | `tree-sitter-javascript` 0.25.0 | `scip-typescript` | core |
-| TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | core |
-| C | `tree-sitter-c` 0.24.2 | `scip-clang` | extended |
-| C++ | `tree-sitter-cpp` 0.23.4 | `scip-clang` | extended |
-| Ruby | `tree-sitter-ruby` 0.23.1 | `scip-ruby` | extended |
-| Java | `tree-sitter-java` 0.23.5 | `scip-java` | extended |
+| Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | M2 / M3 |
+| Go | `tree-sitter-go` 0.25.0 | `scip-go` | M5a |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` | M5a |
+| TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | M5b |
 
-**core** = full fixture suite (golden facts, span exactness, anchor rate,
-tier-A precision, locality). **extended** = shipped and smoke-tested; the full
-suite follows as fixtures are written. Both are available out of the box — the
-tier says how much we have *proven*, not what is enabled.
+Python's tier B is on notice: `scip-python` has had no human commit on its
+default branch since 2025-09-05 and three open correctness bugs, one of which
+silently drops cross-package references. It ships for its tier-A story and its
+`imports.scm`; `calls_exact` quality is not promised there.
+
+**Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —
+`require` is an ordinary method call and idiomatic Rails autoloads without one —
+so it fails at tier A, at tier B, and at the conformance capability that is the
+headline. **C, C++ and Java are deferred**; C and C++ are import-complete and
+call-empty, which makes them the strongest candidates for the language after
+M5b, added for conformance with `calls` declared unsupported in `status` rather
+than silently empty.
 
 One risk to check at M5: the grammar crates span tree-sitter ABI versions
 (0.23.x through 0.25.x against a 0.27 runtime). tree-sitter maintains ABI
-compatibility across a range, but the four extended grammars are the oldest and
-should be smoke-loaded before anything is built on them.
-
-`scip-clang` needs `compile_commands.json` and `scip-ruby` needs a Sorbet setup,
-so the extended tier has a heavier tier-B bootstrap than the core five. Tier A
-works everywhere regardless.
+compatibility across a range, but a grammar should be smoke-loaded before
+anything is built on it.
 
 ---
 

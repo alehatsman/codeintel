@@ -1,0 +1,16 @@
+[package]
+name = "datalog"
+version = "0.1.0"
+description = "A Datalog engine over interned tuples. Knows nothing about code."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# No dependencies, ever. `tests/seam.rs` asserts it, and `match/2` arrives as an
+# injected host builtin rather than as a `regex` dependency here.
+[dependencies]
+
+[lints]
+workspace = true

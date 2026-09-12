@@ -1,0 +1,6 @@
+# Pinned exactly, not `stable`: "works on my machine" is a version skew.
+# rust-quality's lint block is validated end to end on this toolchain, and a
+# lint name an older clippy does not know is `error[E0602]`.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]

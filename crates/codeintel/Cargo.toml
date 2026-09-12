@@ -1,0 +1,14 @@
+[package]
+name = "codeintel"
+version = "0.1.0"
+description = "Query structural facts about a source tree with Datalog."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

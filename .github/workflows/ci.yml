@@ -1,0 +1,31 @@
+# One gate, not two. CI runs the same `provision apply tasks/ci.yml` a developer
+# runs locally, so the two cannot drift — every check, its order and its
+# thresholds live in rust-quality at the ref pinned in tasks/tools.yml.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the version and pulls clippy + rustfmt; this
+      # step exists only to get the cache keyed on it.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install provision
+        run: cargo install --locked --git https://github.com/alehatsman/provision.git
+
+      - name: tools — check out rust-quality, install the gate's tools
+        run: provision apply tasks/tools.yml
+
+      - name: gate
+        run: provision apply tasks/ci.yml
