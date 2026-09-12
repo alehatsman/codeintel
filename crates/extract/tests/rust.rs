@@ -170,3 +170,31 @@ fn an_inner_attribute_stays_out_of_the_first_definition_span() {
     assert_eq!(span.get(1).map(String::as_str), Some("2"), "{span:?}");
     assert_eq!(span.get(3).map(String::as_str), Some("21"), "{span:?}");
 }
+
+#[test]
+fn a_brace_list_is_one_import_row_with_no_alias() {
+    // `01-facts.md` § `import`: one row per statement, the specifier as
+    // written, `Alias` only for a top-level `as`. Splitting the list would
+    // make the extractor decide what a path means, and an inner `as` is not
+    // the statement's binding.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "use a::{b, c as d};\nuse e::f as g;\n",
+    )
+    .expect("writes");
+    let extracted = extract_tree(dir.path());
+
+    let imports: Vec<(String, String)> = extracted
+        .rows("import")
+        .into_iter()
+        .map(|r| (r[1].clone(), r[2].clone()))
+        .collect();
+    assert_eq!(
+        imports,
+        [
+            ("a::{b, c as d}".to_string(), String::new()),
+            ("e::f".to_string(), "g".to_string()),
+        ]
+    );
+}

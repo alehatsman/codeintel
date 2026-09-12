@@ -945,3 +945,22 @@ fn a_path_constant_is_diagnosed_against_the_indexed_files() {
     let (_, stderr) = query(dir.path(), r#"?- def(S, "src/store.rs", "enum", N)."#);
     assert!(!stderr.contains("no indexed file"), "{stderr}");
 }
+
+#[test]
+fn a_quoted_integer_in_a_derived_rule_is_named_in_the_hint() {
+    // `at/3` is a rule, so no schema column says its third argument is a line.
+    // "42" and 42 are different atoms and never match; the hint says so and
+    // names the unquoted form, since that is a fact about atoms, not a guess
+    // about the code.
+    let dir = tree();
+    index(dir.path());
+    let (rows, stderr) = query(dir.path(), r#"?- at(S, F, "42")."#);
+    assert!(rows.is_empty(), "{rows:?}");
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert!(stderr.contains("did you mean 42?"), "{stderr}");
+
+    // A line that exists, written as an integer, is not second-guessed.
+    let (rows, stderr) = query(dir.path(), r"?- at(S, F, 1).");
+    assert!(!stderr.contains("did you mean"), "{stderr}");
+    drop(rows);
+}

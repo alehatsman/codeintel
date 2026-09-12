@@ -91,7 +91,8 @@ two consumers.
 
 Builds or updates the store. `--scip` may repeat; defaults to `./index.scip` if
 present. `--rebuild` discards and rewrites, including the dictionary. `--lang`
-restricts grammars.
+restricts grammars: files of every other language are neither refreshed nor
+dropped, they are carried forward unchanged.
 
 `--run-indexers` shells out to the canonical SCIP indexer for each detected
 language before indexing ([02-extraction.md](02-extraction.md) § Acquisition).

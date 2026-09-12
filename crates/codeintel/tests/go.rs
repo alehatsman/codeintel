@@ -335,3 +335,72 @@ fn tier_b_owns_a_method_by_its_package_qualified_type() {
         ]
     );
 }
+
+#[test]
+fn a_lang_restricted_refresh_carries_the_other_language_forward() {
+    // `--lang go` does not walk the Rust files, so they are never seen. They
+    // are not vanished either: an unwalked language is carried forward
+    // unchanged, not dropped (`specs/05-surface.md` § `index`). The manifest
+    // is read directly because `query` refreshes with every language first.
+    let dir = tempfile::tempdir().expect("tempdir");
+    copy(&fixture(), &dir.path().join("svc"));
+    copy(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rust"),
+        &dir.path().join("cli"),
+    );
+    for stale in [
+        "svc/expected.facts",
+        "svc/index.scip",
+        "cli/expected.facts",
+        "cli/index.scip",
+    ] {
+        drop(std::fs::remove_file(dir.path().join(stale)));
+    }
+    let indexed = |root: &Path| -> Vec<String> {
+        let store = facts::Store::open(root, "").expect("opens");
+        store.manifest().files.keys().cloned().collect()
+    };
+    index(dir.path());
+    let before = indexed(dir.path());
+    assert!(
+        before.iter().any(|f| f == "cli/src/ui/panel.rs"),
+        "{before:?}"
+    );
+
+    let out = run(dir.path(), &["index", ".", "--lang", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let summary = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(summary.contains("0 removed"), "{summary}");
+    assert_eq!(
+        indexed(dir.path()),
+        before,
+        "the Rust files survived a Go-only refresh"
+    );
+
+    // The restriction still applies to what it names: a Go file that vanishes
+    // is dropped, a Rust file that vanishes is not noticed until it is walked.
+    std::fs::remove_file(dir.path().join("svc/ui/panel.go")).expect("removes");
+    std::fs::remove_file(dir.path().join("cli/src/ui/panel.rs")).expect("removes");
+    let out = run(dir.path(), &["index", ".", "--lang", "go"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let files = indexed(dir.path());
+    assert!(!files.iter().any(|f| f == "svc/ui/panel.go"), "{files:?}");
+    assert!(
+        files.iter().any(|f| f == "cli/src/ui/panel.rs"),
+        "{files:?}"
+    );
+    index(dir.path());
+    let files = indexed(dir.path());
+    assert!(
+        !files.iter().any(|f| f == "cli/src/ui/panel.rs"),
+        "{files:?}"
+    );
+}

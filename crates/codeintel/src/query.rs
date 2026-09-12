@@ -322,10 +322,33 @@ fn empty_hint(
         }
         return format!(
             "`{literal}` matched 0 rows; the index holds {held} `{name}` row(s). \
-             everything before it in the join matched"
+             everything before it in the join matched{}",
+            integer_hint(literal)
         );
     }
-    format!("`{literal}` matched 0 rows; everything before it in the join matched")
+    format!(
+        "`{literal}` matched 0 rows; everything before it in the join matched{}",
+        integer_hint(literal)
+    )
+}
+
+/// The int-vs-string trap, for a literal whose columns carry no type.
+///
+/// `at(S, F, "42")` is a derived rule, so `column_hint` has no schema to say
+/// its third column is a line number. A quoted constant that parses as an
+/// integer is a different atom from the integer and can never match it; that
+/// is the one case where naming the replacement is a statement about the atom
+/// space, not a guess about the code.
+fn integer_hint(literal: &str) -> String {
+    for arg in arguments(literal) {
+        let bare = arg.trim_matches('"');
+        if arg.starts_with('"') && bare.parse::<i64>().is_ok() {
+            return format!(
+                ". did you mean {bare}? {arg} is a string, and a string never matches an integer"
+            );
+        }
+    }
+    String::new()
 }
 
 /// Diagnose the first constant sitting in a typed column of `relation`.

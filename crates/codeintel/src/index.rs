@@ -314,13 +314,17 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     }
 
     // A refresh that only added would leave a deleted file's facts answering
-    // queries (specs/05-surface.md § `query`).
+    // queries (specs/05-surface.md § `query`). A language `--lang` left out
+    // was not walked, so its files were never `seen`; they are carried forward
+    // unchanged rather than mistaken for vanished (specs/05-surface.md
+    // § `index`).
+    let walked = |lang: &str| plan.langs.is_empty() || plan.langs.iter().any(|l| l == lang);
     let vanished: Vec<String> = store
         .manifest()
         .files
-        .keys()
-        .filter(|path| !seen.contains(*path))
-        .cloned()
+        .iter()
+        .filter(|(path, entry)| !seen.contains(*path) && walked(&entry.lang))
+        .map(|(path, _)| path.clone())
         .collect();
     for path in vanished {
         if store.forget(&path).context("dropping a vanished file")? {

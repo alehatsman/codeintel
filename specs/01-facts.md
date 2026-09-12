@@ -273,6 +273,11 @@ One row per import statement. `Module` is the module specifier **as written**
 (`"./util"`, `"github.com/x/y"`, `"std::collections"`), not resolved to a path —
 resolution is the SCIP tier's job and shows up in `ref`/`extern`. `Alias` is the
 local binding, or `""`.
+
+One row per import statement, not per name it binds: `Module` is the specifier
+text as written, and a brace list is not split, so `use a::{b, c as d}` is one
+row with `Module = "a::{b, c as d}"`. `Alias` is set only for a top-level `as`.
+Conformance rules over lists use `contains`, as the README example does.
 ```
 import("src/api.rs", "crate::store", "").
 import("web/app.ts", "./util/retry", "retry").
