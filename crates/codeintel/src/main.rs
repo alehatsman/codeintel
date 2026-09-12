@@ -60,6 +60,24 @@ enum Command {
         #[arg(long)]
         raw: bool,
     },
+    /// Print the relation catalog, the value vocabularies and the rules.
+    Schema {
+        /// The repository root, whose index supplies the counts.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+    /// Report what the index holds and how far it has drifted from the tree.
+    Status {
+        /// The repository root.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
 }
 
 /// How to print an answer.
@@ -97,7 +115,62 @@ fn run() -> Result<ExitCode> {
             no_refresh,
             raw,
         } => query_cmd(&program, &path, format, limit, no_refresh, raw),
+        Command::Schema { path, format } => schema_cmd(&path, format),
+        Command::Status { path, format } => status_cmd(&path, format),
     }
+}
+
+/// The catalog an agent reads to learn the system. Counts come from the index
+/// when there is one; with none, every count is zero and the output says so
+/// rather than printing a static list that looks like an inventory.
+fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
+    let census = census_of(path, false)?;
+    match format {
+        Format::Text => print!("{}", codeintel::schema::render(&census)),
+        Format::Json => println!(
+            "{}",
+            serde_json::json!({
+                "text": codeintel::schema::render(&census),
+                "rules": codeintel::schema::rules(codeintel::schema::STDLIB)
+                    .iter()
+                    .map(|r| serde_json::json!({ "head": r.head, "doc": r.doc }))
+                    .collect::<Vec<_>>(),
+            })
+        ),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Index freshness and per-language counts. `--format json` is the bug-report
+/// artifact for a tool with no telemetry.
+fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("{} does not exist", path.display()))?;
+    let store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
+    let census = codeintel::census::Census::of(&store)?.with_unsupported(&root);
+    match format {
+        Format::Text => print!("{}", codeintel::census::text(&census, store.manifest())),
+        Format::Json => println!("{}", codeintel::census::json(&census, store.manifest())),
+    }
+    // A missing index is a fact about this directory, not a failure of the
+    // command that reported it.
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Open the index under `path` and count it. A directory with no index yields
+/// a census with every count at zero and `indexed: false`.
+fn census_of(path: &std::path::Path, walk: bool) -> Result<codeintel::census::Census> {
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("{} does not exist", path.display()))?;
+    let store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
+    let census = codeintel::census::Census::of(&store)?;
+    Ok(if walk {
+        census.with_unsupported(&root)
+    } else {
+        census
+    })
 }
 
 fn index_cmd(
@@ -314,12 +387,12 @@ mod tests {
     #[test]
     fn the_verb_budget_holds() {
         // `specs/00-overview.md` § Surface budget: five verbs, and growing
-        // requires deleting one. Three are still unbuilt (M4).
+        // requires deleting one. `mcp` is the fifth and last.
         let verbs: Vec<String> = Cli::command()
             .get_subcommands()
             .map(|c| c.get_name().to_string())
             .collect();
         assert!(verbs.len() <= 5, "{verbs:?}");
-        assert_eq!(verbs, vec!["index", "query"]);
+        assert_eq!(verbs, vec!["index", "query", "schema", "status"]);
     }
 }

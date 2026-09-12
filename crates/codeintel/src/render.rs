@@ -155,3 +155,20 @@ pub fn render_row(engine: &Engine, row: &[Atom]) -> String {
         .collect::<Vec<_>>()
         .join("\t")
 }
+
+/// Append `text` and a newline to a report.
+///
+/// `write!` into a `String` cannot fail, but the lint block rejects both
+/// `let _ = write!(..)` and `push_str(&format!(..))`. This is the third
+/// option: the caller formats, this appends, and nothing pretends to handle an
+/// error that cannot happen.
+pub(crate) fn line(out: &mut String, text: &str) {
+    out.push_str(text);
+    out.push('\n');
+}
+
+/// Append `text` with no newline. The same reasoning as [`line`], for the
+/// places that build one line out of several pieces.
+pub(crate) fn push(out: &mut String, text: &str) {
+    out.push_str(text);
+}

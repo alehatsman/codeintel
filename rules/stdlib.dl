@@ -18,6 +18,7 @@
 % To tighten resolution, edit the two `name` rules. To disable tier-A
 % resolution entirely, delete them: `ref` degrades to `exact` only.
 
+%% ref(S, F, L, C, From, Role, Prov)  resolved occurrence. Prov says which tier.
 ref(S, F, L, C, From, Role, "exact") :- scip_ref(S, F, L, C, From, Role).
 
 % same file wins
@@ -29,10 +30,12 @@ ref(S, F, L, C, From, "read", "name") :-
     name_ref(N, F, L, C, From), !local_def(F, N),
     def(S, _, _, N), exported(S), !ambiguous(N).
 
+%% local_def(F, N)  S is defined in F. Helper.
 local_def(F, N) :- def(S, F, _, N).
 
 % Grouped, not a self-join: the self-join form emits k*k candidate pairs for a
 % name with k definitions before dedup, and the aggregate form is free.
+%% ambiguous(N)  N names >1 definition, so name matching cannot pick.
 ambiguous(N) :- def(_, _, _, N), C = count{ S : def(S, _, _, N) }, C > 1.
 
 % === the location bridge ===============================================
@@ -44,49 +47,61 @@ ambiguous(N) :- def(_, _, _, N), C = count{ S : def(S, _, _, N) }, C > 1.
 % bare comparisons instead, Line would be bound by nothing and the engine would
 % reject its own standard library.
 
+%% symbol_at(F, Line, S)  every def whose span covers Line. Prefer innermost_at.
 symbol_at(F, Line, S) :- def(S, F, _, _), def_span(S, L1, L2, _, _),
                          between(L1, L2, Line).
 
-% the tightest enclosing definition — usually what you want
+%% innermost_at(F, Line, S)  location -> tightest enclosing symbol. START HERE.
 innermost_at(F, Line, S) :- symbol_at(F, Line, S), !tighter_at(F, Line, S).
 
 % T is strictly tighter than S: compare widths, not endpoints, so two
 % definitions sharing an identical span do not cancel each other out and leave
 % `innermost_at` empty.
+%% tighter_at(F, Line, S)  helper for innermost_at.
 tighter_at(F, Line, S) :- symbol_at(F, Line, S), symbol_at(F, Line, T), T != S,
                           def_span(S, A, B, _, _), def_span(T, C, D, _, _),
                           V = B - A, W = D - C, W < V.
 
 % === callability =======================================================
+%% callable(Kind)  function | method | constructor | macro.
 callable("function").
 callable("method").
 callable("constructor").
 callable("macro").
 
 % === calls: a reference to a callable, attributed to its enclosing def ==
+%% calls_at(From, S, F, L, Prov)  one call site, with its line and provenance.
 calls_at(From, S, F, L, Prov) :-
     ref(S, F, L, _, From, Role, Prov), Role != "def",
     def(S, _, K, _), callable(K).
 
+%% calls(From, S)  From calls S, either provenance.
 calls(From, S) :- calls_at(From, S, _, _, _).
+%% calls_exact(From, S)  From calls S, SCIP-resolved only.
 calls_exact(From, S) :- calls_at(From, S, _, _, "exact").
 
+%% callers(C, S)  C calls S. calls/2, arguments the other way.
 callers(C, S) :- calls(C, S).
+%% callees(S, C)  S calls C.
 callees(S, C) :- calls(S, C).
 
-% name-taking variants, because a SymId is unwieldy to type by hand
+%% callers_by_name(C, N)  C calls something named N. No SymId needed.
 callers_by_name(C, N) :- calls(C, S), def(S, _, _, N).
+%% impact_by_name(C, N)  C transitively calls something named N.
 impact_by_name(C, N) :- def(S, _, _, N), impact_of(S, C).
 
 % === transitive closure, SEEDED ========================================
 % Always prefer these.
 
+%% impact_of(Seed, C)  transitive callers. SEED THE 1st ARG.
 impact_of(Seed, C) :- calls(C, Seed).                     % who calls Seed
 impact_of(Seed, C) :- impact_of(Seed, B), calls(C, B).    % ...transitively
 
+%% reach_of(Seed, C)  transitive callees. SEED THE 1st ARG.
 reach_of(Seed, C) :- calls(Seed, C).                      % what Seed calls
 reach_of(Seed, C) :- reach_of(Seed, B), calls(B, C).
 
+%% impact_of_exact(Seed, C)  impact_of, SCIP-resolved only. SEED THE 1st ARG.
 impact_of_exact(Seed, C) :- calls_exact(C, Seed).
 impact_of_exact(Seed, C) :- impact_of_exact(Seed, B), calls_exact(C, B).
 
@@ -94,25 +109,32 @@ impact_of_exact(Seed, C) :- impact_of_exact(Seed, B), calls_exact(C, B).
 % Whole-graph questions only. On a large repo these are O(n^2) and will hit
 % max_derived_tuples; that is the honest cost of asking about every pair.
 
+%% reaches(A, B)  UNSEEDED all-pairs. Expensive.
 reaches(A, B) :- calls(A, B).
 reaches(A, C) :- reaches(A, B), calls(B, C).
+%% recursive(S)  S is on a call cycle. UNSEEDED.
 recursive(S) :- reaches(S, S).
 
 % === location helpers ==================================================
+%% file_of(S, F)  the file S is defined in.
 file_of(S, F) :- def(S, F, _, _).
+%% defines(F, S)  file_of, arguments the other way.
 defines(F, S) :- def(S, F, _, _).
+%% at(S, F, L)  where S starts: file and first line.
 at(S, F, L) :- def(S, F, _, _), def_span(S, L, _, _, _).
 
 % === containment closure ===============================================
 % within(Child, Ancestor). The argument order is parent's, and an agent reading
 % only a signature has to be told which is which — one M1 eval sample reversed
 % it (docs/agent-eval.md).
+%% within(Child, Ancestor)  transitive containment. Child is FIRST.
 within(C, P) :- parent(C, P).
 within(C, A) :- parent(C, P), within(P, A).
 
 % === tests =============================================================
 % `file(F, _)` is not decoration: without it F is a head variable bound only by
 % a filter, which violates range restriction exactly as symbol_at would.
+%% is_test(F)  test file, by path or SCIP role.
 is_test(F) :- file(F, _), match(F, "(^|/)tests?/").
 is_test(F) :- file(F, _), match(F, "_test\\.(go|py|rs)$").
 is_test(F) :- file(F, _), match(F, "(^|/)test_[^/]*\\.py$").
@@ -123,6 +145,8 @@ is_test(F) :- scip_ref(_, F, _, _, _, "test").
 % Heterogeneous rows sharing a discriminator column. One query instead of six,
 % and the definition of "orientation" stays editable.
 
+%% about(S, Rel, A, B, L)  all of S in one trip. Rel = sig|doc|defined|parent|caller|
+%%   callee|implements|implementor|test|extern
 about(S, "sig",         Sig, "", 0) :- def_sig(S, Sig).
 about(S, "doc",         Doc, "", 0) :- def_doc(S, Doc).
 about(S, "defined",     F,   N,  L) :- def(S, F, _, N), at(S, F, L).
@@ -135,6 +159,7 @@ about(S, "test",        F,   N,  L) :- calls(C, S), def(C, F, _, N), is_test(F),
 about(S, "extern",      P,   V,  0) :- extern(S, _, P, V).
 
 % === file-level dependency =============================================
+%% depends(F, G)  F references something defined in G.
 depends(F, G) :- ref(S, F, _, _, _, _, _), def(S, G, _, _), F != G.
 
 % === the dex "34 methods", as rules ====================================
@@ -147,23 +172,34 @@ depends(F, G) :- ref(S, F, _, _, _, _, _), def(S, G, _, _), F != G.
 % only in a comparison, so the rule is not range-restricted and the engine
 % rejects its own standard library. F is always S's defining file at every call
 % site, so naming that is both the fix and the honest reading.
+%% dead_export(S)  exported, unreferenced elsewhere. OVER-reports on name.
 dead_export(S) :- exported(S), def(S, F, _, _), !ref_outside(S, F).
+%% ref_outside(S, F)  helper for dead_export.
 ref_outside(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
 
+%% entrypoint(S)  a callable nothing calls. INVERTS on name provenance.
 entrypoint(S) :- def(S, _, K, _), callable(K), !calls(_, S).
 
+%% long_def(S, N)  S spans N > 80 lines. A length, not a score.
 long_def(S, N) :- def_span(S, A, B, _, _), N = B - A, N > 80.
 
+%% undocumented_export(S)  exported with no doc comment.
 undocumented_export(S) :- exported(S), !def_doc(S, _).
 
+%% uses_package(F, P)  F references external package P.
 uses_package(F, P) :- ref(S, F, _, _, _, _, _), extern(S, _, P, _).
 
 % === the precise forms =================================================
+%% dead_export_exact(S)  dead_export, SCIP-resolved refs only.
 dead_export_exact(S) :- exported(S), resolved(S), def(S, F, _, _),
                         !ref_outside_exact(S, F).
+%% ref_outside_exact(S, F)  ref_outside, SCIP-resolved refs only.
 ref_outside_exact(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, "exact"), G != F.
 
+%% entrypoint_exact(S)  entrypoint, SCIP-resolved calls only.
 entrypoint_exact(S) :- def(S, _, K, _), callable(K), resolved(S),
                        !calls_exact(_, S).
+%% depends_exact(F, G)  depends, SCIP-resolved refs only.
 depends_exact(F, G) :- ref(S, F, _, _, _, _, "exact"), def(S, G, _, _), F != G.
+%% uses_package_exact(F, P)  uses_package, SCIP-resolved refs only.
 uses_package_exact(F, P) :- ref(S, F, _, _, _, _, "exact"), extern(S, _, P, _).

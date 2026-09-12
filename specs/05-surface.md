@@ -200,6 +200,29 @@ Prints the relation catalog, atom vocabularies, and stdlib rule signatures.
 **Must fit in ~1500 tokens** — this is the text an agent reads to learn the
 system, and it is the highest-leverage output in the project.
 
+**The rule list is generated from `rules/stdlib.dl`, not written here.** One
+`%%` line above a predicate's first clause carries its signature and its
+one-line doc:
+
+```
+%% within(Child, Ancestor)  transitive containment. Child is FIRST.
+within(C, P) :- parent(C, P).
+```
+
+The signature is written out rather than lifted from the clause because heads
+carry constants — `ref(..., "exact")`, `about(S, "sig", ...)` — and the
+*argument names* are what an agent needs. A test asserts both directions: every
+advertised head names a real predicate at its real arity, and every predicate in
+the file is advertised. A rule cannot ship unlisted, and a renamed one cannot
+leave a stale catalogue behind.
+
+**The 1500 is measured, with a stated proxy.** The test divides the rendered
+length by four characters per token rather than running a tokenizer, because
+pulling one in costs a dependency for a number that only has to be right to
+within a rule of thumb. Dense tabular text tokenizes worse than prose, so the
+proxy is the optimistic end and the assertion leaves headroom. Today: 5,526
+characters, ~1,381 tokens, with all 37 rules listed.
+
 ```
 START HERE — you have a location, you need a symbol
   ?- innermost_at("src/store.rs", 142, S).     from ripgrep / git diff /
@@ -262,6 +285,27 @@ EXAMPLES
 Index freshness, per-tier. Reports the counts a user needs to trust or distrust
 an answer: files indexed, files changed since index, SCIP tool/coverage/
 staleness, anchor rate, unsupported languages, fact counts per relation.
+
+`status: ok` when nothing has changed since the index was written, `stale` when
+something has, `no-index` when there is nothing here. A missing index **exits
+0**: "there is no index in this directory" is an answer, not a failure of the
+command that reported it.
+
+The unsupported-extension count costs a full walk, which is why it lives here
+and not on every query. It is printed biggest-first, because the number that
+matters is the one that turns out to be a whole unindexed subtree.
+
+`--format json` is the bug-report artifact for a tool with no telemetry. It
+carries the extractor fingerprint, the dictionary generation, the SCIP inputs,
+per-relation row counts for **every** relation including the zeros — an absent
+key would read as "not measured" rather than "empty" — and per-language
+`{files, defs, refs, imports}`. "python: 1,204 files, 11 defs" is visibly absurd
+to a human in one second; `status: ok` is not.
+
+Per-language attribution goes through the relations that carry a file column
+(`def`, `scip_ref`, `name_ref`, `import`) and the manifest's file→language
+table. `exported`, `resolved` and the rest have no file column and are reported
+as totals only, rather than joined through `def` to invent a language for them.
 
 ---
 

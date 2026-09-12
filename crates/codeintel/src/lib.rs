@@ -6,13 +6,16 @@
 //! This crate is also the *host*: it supplies the engine's regex builtin and
 //! its dictionary, which is what keeps `crates/datalog` at zero dependencies.
 //!
-//! `index` and `query` land here at M2. `schema`, `status` and `mcp` are M4.
+//! `index` and `query` land at M2; `schema` and `status` at M4. `mcp` is the
+//! fifth and last verb.
 
+pub mod census;
 pub mod index;
 pub mod load;
 pub mod query;
 pub mod regexes;
 pub mod render;
+pub mod schema;
 pub mod status;
 
 pub use index::{Plan, Report};
