@@ -18,7 +18,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::census::Census;
-use crate::query::{self, Options};
+use crate::query::{self, Options, Warm};
 use crate::schema::Schema;
 use crate::status::Status;
 
@@ -46,12 +46,15 @@ const INVALID_PARAMS: i64 = -32602;
 /// A write to `output` that fails. A malformed *message* is answered with a
 /// JSON-RPC error, not propagated — one bad request must not end the session.
 pub fn serve(root: &Path, input: impl BufRead, mut output: impl Write) -> Result<()> {
+    // One loaded index for the life of the session, rebuilt when a refresh
+    // moves the manifest (`specs/05-surface.md` § MCP).
+    let mut warm = Warm::default();
     for line in input.lines() {
         let line = line.context("reading a request")?;
         if line.trim().is_empty() {
             continue;
         }
-        let Some(response) = respond(root, &line) else {
+        let Some(response) = respond(root, &mut warm, &line) else {
             continue;
         };
         writeln!(output, "{response}").context("writing a response")?;
@@ -61,7 +64,7 @@ pub fn serve(root: &Path, input: impl BufRead, mut output: impl Write) -> Result
 }
 
 /// One message in, at most one message out.
-fn respond(root: &Path, line: &str) -> Option<serde_json::Value> {
+fn respond(root: &Path, warm: &mut Warm, line: &str) -> Option<serde_json::Value> {
     let request: serde_json::Value = match serde_json::from_str(line) {
         Ok(request) => request,
         // No id to answer with, so this cannot be a JSON-RPC response at all.
@@ -86,7 +89,7 @@ fn respond(root: &Path, line: &str) -> Option<serde_json::Value> {
     Some(match method {
         "initialize" => ok(&id, &initialize()),
         "tools/list" => ok(&id, &serde_json::json!({ "tools": [tool()] })),
-        "tools/call" => match call(root, &params) {
+        "tools/call" => match call(root, warm, &params) {
             Ok(result) => ok(&id, &result),
             Err(message) => error(&id, INVALID_PARAMS, &message),
         },
@@ -150,7 +153,11 @@ fn tool() -> serde_json::Value {
 /// `Err` is for a call that is malformed as a *call* — no arguments, both modes
 /// at once. Everything a query can do wrong is an `Answer` with a status and a
 /// hint, because that is what the taxonomy is for.
-fn call(root: &Path, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+fn call(
+    root: &Path,
+    warm: &mut Warm,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let arguments = params.get("arguments").unwrap_or(&serde_json::Value::Null);
     let program = arguments.get("query").and_then(serde_json::Value::as_str);
     let wants_schema = arguments
@@ -194,7 +201,7 @@ fn call(root: &Path, params: &serde_json::Value) -> Result<serde_json::Value, St
         // need. `codeintel query --rules` is where that lives.
         rules: Vec::new(),
     };
-    let answer = match query::run(root, program.unwrap_or_default(), &options) {
+    let answer = match warm.run(root, program.unwrap_or_default(), &options) {
         Ok(answer) => answer,
         // An I/O failure the status taxonomy cannot express. Still a tool
         // result rather than a protocol error: the caller wants the text.

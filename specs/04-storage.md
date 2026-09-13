@@ -213,6 +213,17 @@ SCIP input re-extracts rather than rewrites: there is nothing to rewrite.
 Single-file change: one parse, one segment write, one manifest write. Target
 < 1 s, dominated by the tree walk.
 
+**A refresh that changes nothing writes nothing.** No dictionary flush, no
+manifest write, no `fsync`. `query` refreshes before every answer, and
+committing an unchanged manifest cost 8 ms of a ~40 ms MCP call on a 799-file
+tree (#18), which is a durable write per read. "Changed" means the manifest
+after the run differs from the manifest before it. Every segment written, every
+file forgotten, every touched file's refreshed `mtime` and every dictionary
+extent lands in the manifest, so equality is the whole test and no separate
+dirty flag can disagree with it. The one exception: **a store with no index yet
+always commits**, so `codeintel index` on a tree with nothing to extract leaves
+an empty index rather than `no-index`.
+
 **SCIP is all-or-nothing.** A SCIP index carries cross-file references, so a
 changed `index.scip` invalidates the reference graph globally. Attempting
 per-document SCIP incrementality is a correctness trap: a reference that

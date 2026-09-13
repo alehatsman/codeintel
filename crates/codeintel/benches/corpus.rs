@@ -91,6 +91,21 @@ fn run() -> Result<bool> {
         queries.push(measured.to_json(id, goal));
     }
 
+    // One MCP session over the same set, warm after its first call.
+    let mcp = measure_mcp(&root, &query_set()?)?;
+    for (value, runs) in queries.iter_mut().zip(&mcp.per_query) {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("mcp_p50_ms".to_string(), json!(percentile(runs, 0.50)));
+        }
+    }
+    let mcp_pooled: Vec<f64> = mcp.per_query.iter().flatten().copied().collect();
+    println!(
+        "mcp             first {:.1}  p50 {:.1}  p95 {:.1}",
+        mcp.first,
+        percentile(&mcp_pooled, 0.50),
+        percentile(&mcp_pooled, 0.95)
+    );
+
     // Last: it edits the tree the queries above ran against.
     let reindex_one_ms = reindex_one(&root)?;
     println!("reindex_one_ms  {reindex_one_ms:>9.1}");
@@ -101,6 +116,9 @@ fn run() -> Result<bool> {
         // Needs root to drop (`purge`, /proc/sys/vm/drop_caches). Not measured,
         // and saying so rather than leaving the key out.
         "cold_page_cache": null,
+        // The session's first call loads the index. One sample, so reported
+        // and never compared.
+        "mcp_first_ms": mcp.first,
         "metrics": {
             "index_cold_ms": index_cold_ms,
             "load_warm_ms": load_warm_ms,
@@ -108,6 +126,8 @@ fn run() -> Result<bool> {
             "query_p50_ms": percentile(&pooled, 0.50),
             "query_p95_ms": percentile(&pooled, 0.95),
             "cli_p50_ms": percentile(&pooled_cli, 0.50),
+            "mcp_p50_ms": percentile(&mcp_pooled, 0.50),
+            "mcp_p95_ms": percentile(&mcp_pooled, 0.95),
         },
         "queries": queries,
     });
@@ -283,6 +303,82 @@ fn measure_query(root: &Path, id: &str, goal: &str) -> Result<Measured> {
     })
 }
 
+/// One `codeintel mcp` session's latencies.
+struct Mcp {
+    /// The first call, which loads the index.
+    first: f64,
+    /// Per query, the measured runs after warm-up.
+    per_query: Vec<Vec<f64>>,
+}
+
+/// One `codeintel mcp` session answering every query in turn, called the way an
+/// agent calls it: default limit, refresh on.
+///
+/// Latency is measured flush to flush. The server flushes after every
+/// response and its input is already in memory, so each gap is one call.
+fn measure_mcp(root: &Path, set: &[(&str, &str)]) -> Result<Mcp> {
+    let per = QUERY_WARMUPS + QUERY_RUNS;
+    let mut input = String::new();
+    let mut calls = 0_usize;
+    for (_, goal) in set {
+        for _ in 0..per {
+            calls += 1;
+            let request = json!({
+                "jsonrpc": "2.0", "id": calls, "method": "tools/call",
+                "params": { "name": codeintel::mcp::TOOL, "arguments": { "query": goal } },
+            });
+            writeln!(input, "{request}")?;
+        }
+    }
+
+    let mut stamps = Stamps::default();
+    let started = Instant::now();
+    codeintel::mcp::serve(root, input.as_bytes(), &mut stamps)?;
+    if stamps.at.len() != calls {
+        bail!("mcp: {} responses to {calls} calls", stamps.at.len());
+    }
+    let failed = String::from_utf8_lossy(&stamps.bytes)
+        .lines()
+        .filter(|line| line.contains("\"isError\":true"))
+        .count();
+    if failed > 0 {
+        bail!("mcp: {failed} of {calls} calls answered with an error; that measures nothing");
+    }
+
+    let mut gaps = Vec::with_capacity(calls);
+    let mut last = started;
+    for &at in &stamps.at {
+        gaps.push(gap(last, at));
+        last = at;
+    }
+    Ok(Mcp {
+        first: gaps.first().copied().unwrap_or(f64::NAN),
+        per_query: gaps
+            .chunks(per)
+            .map(|chunk| chunk.iter().skip(QUERY_WARMUPS).copied().collect())
+            .collect(),
+    })
+}
+
+/// A writer that keeps what the server wrote and when it flushed.
+#[derive(Default)]
+struct Stamps {
+    bytes: Vec<u8>,
+    at: Vec<Instant>,
+}
+
+impl std::io::Write for Stamps {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.at.push(Instant::now());
+        Ok(())
+    }
+}
+
 /// Report every difference and return whether the run passes.
 fn compare(base: &Value, current: &Value) -> bool {
     let (base_rev, rev) = (base.pointer("/corpus/rev"), current.pointer("/corpus/rev"));
@@ -405,7 +501,12 @@ fn percentile(values: &[f64], p: f64) -> f64 {
 /// Milliseconds, rounded to the microsecond. Finer digits are noise, and in a
 /// committed baseline they rewrite every line on every update.
 fn ms(started: Instant) -> f64 {
-    (started.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0
+    gap(started, Instant::now())
+}
+
+/// Milliseconds from `from` to `to`, rounded to the microsecond.
+fn gap(from: Instant, to: Instant) -> f64 {
+    (to.duration_since(from).as_secs_f64() * 1_000_000.0).round() / 1000.0
 }
 
 fn host() -> Value {

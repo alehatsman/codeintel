@@ -97,7 +97,7 @@ impl Report {
     }
 }
 
-/// Walk, extract what changed, drop what vanished, and commit.
+/// Walk, extract what changed, drop what vanished, and commit if anything did.
 ///
 /// # Errors
 /// I/O failure, or a file that will not extract. A file that is merely absent
@@ -106,6 +106,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     let started = Instant::now();
     let root = store.root().to_path_buf();
     let mut report = Report::default();
+    let before = store.manifest().clone();
 
     store.sweep().context("sweeping what a crashed run left")?;
     let (found, skips) = walk(&root);
@@ -396,7 +397,14 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         store.manifest_mut().extractor_fingerprint = fingerprint;
     }
     store.manifest_mut().scip = inputs;
-    store.commit().context("committing the index")?;
+    // A refresh that changed nothing writes nothing. `query` refreshes before
+    // every answer, and committing the same manifest again is an fsync per read.
+    // Every write this run made lands in the manifest, so equality is the whole
+    // test. A store with no index yet commits regardless, so indexing an empty
+    // tree still leaves an index (`specs/04-storage.md` § Incremental reindex).
+    if !store.has_index() || *store.manifest() != before {
+        store.commit().context("committing the index")?;
+    }
     report.elapsed_ms = started.elapsed().as_millis();
     Ok(report)
 }

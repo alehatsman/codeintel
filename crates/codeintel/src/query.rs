@@ -14,6 +14,7 @@ use datalog::{Engine, Limits, Relation};
 use facts::{Lock, Store};
 
 use crate::index::{self, Plan};
+use crate::overlay::{Literals, Overlay};
 use crate::render::{Row, Sites};
 use crate::status::Status;
 use crate::{Regexes, render, schema};
@@ -148,78 +149,177 @@ impl Answer {
 /// I/O failure that is not expressible as a status. A query that is wrong, an
 /// index that is missing, and a lock someone else holds are all answers.
 pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
-    let mut store = Store::open(root, &extract::fingerprint()).context("opening the index")?;
-    if !store.has_index() {
-        return Ok(Answer::of(
-            Status::NoIndex,
-            format!("run: codeintel index {}", root.display()),
-        ));
-    }
-    if store.manifest().is_stale_schema() {
-        return Ok(Answer::of(
-            Status::Stale,
-            format!(
-                "this index was written for schema_version {}, this build speaks {}. run: \
-                 codeintel index {} --rebuild",
-                store.manifest().schema_version,
-                facts::SCHEMA_VERSION,
-                root.display()
-            ),
-        ));
-    }
+    Warm::default().run(root, program, options)
+}
 
-    let (mut status, mut hint, refreshed) = refresh(&mut store, root, options)?;
-    let scip = ScipState::of(store.manifest());
-    let langs = indexers(store.manifest());
+/// Answers queries against one repository, keeping the loaded index between
+/// calls for as long as its manifest does not move.
+///
+/// `codeintel mcp` holds one for the life of the process. The CLI builds one
+/// per invocation through [`run`], so both answer through the same code
+/// (`specs/05-surface.md` § MCP).
+#[derive(Default)]
+pub struct Warm {
+    loaded: Option<Loaded>,
+}
 
-    let relations = match store.load() {
-        Ok(relations) => relations,
-        Err(e) => return Ok(Answer::of(Status::Corrupt, e.to_string())),
-    };
-    let sites = Sites::of(&relations);
-    let (interner, _manifest) = store.into_parts();
-    let mut engine = Engine::new(Box::new(interner)).with_regexes(Box::new(Regexes::new()));
-    // Declare every base relation, present or not. A relation with no rows is
-    // "this is not true of your code"; an undeclared one would be a query
-    // error, and the two are not the same answer.
-    for rel in facts::RELATIONS {
-        engine.insert_relation(
-            rel.name,
-            relations
-                .get(rel.name)
-                .cloned()
-                .unwrap_or_else(|| Relation::new(rel.arity)),
-        );
+impl std::fmt::Debug for Warm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Warm")
+            .field("loaded", &self.loaded.is_some())
+            .finish()
     }
-    engine
-        .load_rules(STDLIB)
-        .map_err(|d| anyhow::anyhow!("rules/stdlib.dl does not load: {}", d.message))?;
-    // A repository's own conformance rules. Additive: a predicate is the union
-    // of its clauses, so a file defining `is_test` widens it. Only a rule in
-    // the query program shadows a loaded one.
-    for path in &options.rules {
-        let src = match std::fs::read_to_string(path) {
-            Ok(src) => src,
-            Err(e) => {
-                return Ok(Answer::of(
-                    Status::InvalidQuery,
-                    format!("{}: {e}", path.display()),
-                ));
-            }
-        };
-        if let Err(diagnostic) = engine.load_rules(&src) {
+}
+
+impl Warm {
+    /// Refresh, then evaluate `program` — against the loaded index if the
+    /// manifest has not moved since it was loaded, against a fresh load if it
+    /// has.
+    ///
+    /// # Errors
+    /// As [`run`].
+    pub fn run(&mut self, root: &Path, program: &str, options: &Options) -> Result<Answer> {
+        let mut store = Store::open(root, &extract::fingerprint()).context("opening the index")?;
+        if !store.has_index() {
+            self.loaded = None;
             return Ok(Answer::of(
-                Status::of(diagnostic.status),
+                Status::NoIndex,
+                format!("run: codeintel index {}", root.display()),
+            ));
+        }
+        if store.manifest().is_stale_schema() {
+            self.loaded = None;
+            return Ok(Answer::of(
+                Status::Stale,
                 format!(
-                    "{}: {}{}",
-                    path.display(),
-                    diagnostic.message,
-                    host_hint(&diagnostic)
+                    "this index was written for schema_version {}, this build speaks {}. run: \
+                     codeintel index {} --rebuild",
+                    store.manifest().schema_version,
+                    facts::SCHEMA_VERSION,
+                    root.display()
                 ),
             ));
         }
-    }
 
+        // Every call refreshes. Warmth skips the load, never the refresh that
+        // keeps the answer current.
+        let (status, hint, refreshed) = refresh(&mut store, root, options)?;
+        let current = self
+            .loaded
+            .take()
+            .filter(|l| l.manifest == *store.manifest() && l.rules == options.rules);
+        let mut loaded = match current {
+            Some(loaded) => loaded,
+            None => match Loaded::of(store, &options.rules)? {
+                Ok(loaded) => loaded,
+                Err(answer) => return Ok(answer),
+            },
+        };
+        let answer = evaluate(&mut loaded, program, options, status, hint, refreshed);
+        // The literals this call interned go with it, so the next call is given
+        // the ids a freshly loaded engine would give it.
+        loaded.literals.discard();
+        self.loaded = Some(loaded);
+        Ok(answer)
+    }
+}
+
+/// An index loaded into an engine, and what answering needs beside it.
+struct Loaded {
+    /// The manifest this was built from. A refresh that moves it retires this.
+    manifest: facts::Manifest,
+    /// The rule files loaded after the standard library.
+    rules: Vec<PathBuf>,
+    engine: Engine,
+    literals: Literals,
+    relations: BTreeMap<&'static str, Relation>,
+    sites: Sites,
+    scip: ScipState,
+    langs: Vec<&'static str>,
+}
+
+impl Loaded {
+    /// Load `store` into a fresh engine with the standard library and `rules`.
+    ///
+    /// The inner `Err` is an answer — a corrupt segment, a rule file that does
+    /// not load — and keeps nothing warm.
+    fn of(store: Store, rules: &[PathBuf]) -> Result<Result<Self, Answer>> {
+        let scip = ScipState::of(store.manifest());
+        let langs = indexers(store.manifest());
+
+        let relations = match store.load() {
+            Ok(relations) => relations,
+            Err(e) => return Ok(Err(Answer::of(Status::Corrupt, e.to_string()))),
+        };
+        let sites = Sites::of(&relations);
+        let (interner, manifest) = store.into_parts();
+        let (overlay, literals) = Overlay::new(interner);
+        let mut engine = Engine::new(Box::new(overlay)).with_regexes(Box::new(Regexes::new()));
+        // Declare every base relation, present or not. A relation with no rows is
+        // "this is not true of your code"; an undeclared one would be a query
+        // error, and the two are not the same answer.
+        for rel in facts::RELATIONS {
+            engine.insert_relation(
+                rel.name,
+                relations
+                    .get(rel.name)
+                    .cloned()
+                    .unwrap_or_else(|| Relation::new(rel.arity)),
+            );
+        }
+        engine
+            .load_rules(STDLIB)
+            .map_err(|d| anyhow::anyhow!("rules/stdlib.dl does not load: {}", d.message))?;
+        // A repository's own conformance rules. Additive: a predicate is the
+        // union of its clauses, so a file defining `is_test` widens it. Only a
+        // rule in the query program shadows a loaded one.
+        for path in rules {
+            let src = match std::fs::read_to_string(path) {
+                Ok(src) => src,
+                Err(e) => {
+                    return Ok(Err(Answer::of(
+                        Status::InvalidQuery,
+                        format!("{}: {e}", path.display()),
+                    )));
+                }
+            };
+            if let Err(diagnostic) = engine.load_rules(&src) {
+                return Ok(Err(Answer::of(
+                    Status::of(diagnostic.status),
+                    format!(
+                        "{}: {}{}",
+                        path.display(),
+                        diagnostic.message,
+                        host_hint(&diagnostic)
+                    ),
+                )));
+            }
+        }
+        // The rules' constants belong to the engine, not to any one call.
+        literals.seal();
+
+        Ok(Ok(Self {
+            manifest,
+            rules: rules.to_vec(),
+            engine,
+            literals,
+            relations,
+            sites,
+            scip,
+            langs,
+        }))
+    }
+}
+
+/// Evaluate `program` against a loaded index and shape the answer.
+fn evaluate(
+    loaded: &mut Loaded,
+    program: &str,
+    options: &Options,
+    mut status: Status,
+    mut hint: Option<String>,
+    refreshed: usize,
+) -> Answer {
     let budget = Limits::default().max_result_bytes;
     let mut limits = Limits::default();
     limits.max_result_rows = options.limit;
@@ -231,19 +331,19 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
     // memory guard with headroom, and the printed budget is enforced where the
     // printed bytes exist (`specs/05-surface.md` § Symbol rendering).
     limits.max_result_bytes = budget.saturating_mul(RAW_BYTE_HEADROOM);
-    let result = match engine.query(program, &limits) {
+    let result = match loaded.engine.query(program, &limits) {
         Ok(result) => result,
         Err(diagnostic) => {
-            return Ok(Answer::of(
+            return Answer::of(
                 Status::of(diagnostic.status),
                 format!("{}{}", diagnostic.message, host_hint(&diagnostic)),
-            ));
+            );
         }
     };
 
     // One render, one order. Rendering each notation separately and sorting
     // both would give two arrays whose `i`th rows are different tuples.
-    let printed = render(&engine, &result, &sites, options.raw, budget);
+    let printed = render(&loaded.engine, &result, &loaded.sites, options.raw, budget);
     let truncated = result.truncated || printed.truncated;
     let cap = result
         .cap
@@ -271,7 +371,8 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
             None => "a cap fired; narrow the query".to_string(),
         });
     } else if status == Status::Ok
-        && let Some((scip_status, scip_hint)) = scip.verdict(&result.stats.depends, &langs)
+        && let Some((scip_status, scip_hint)) =
+            loaded.scip.verdict(&result.stats.depends, &loaded.langs)
     {
         status = scip_status;
         hint = Some(scip_hint);
@@ -282,9 +383,9 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
     // case the status taxonomy cannot separate on its own
     // (`specs/05-surface.md` § Response contract).
     if hint.is_none() && printed.rows.is_empty() {
-        hint = Some(empty_hint(&result, &relations, &engine));
+        hint = Some(empty_hint(&result, &loaded.relations, &loaded.engine));
     }
-    Ok(Answer {
+    Answer {
         status,
         columns: result.columns.clone(),
         rows: printed.rows,
@@ -298,7 +399,7 @@ pub fn run(root: &Path, program: &str, options: &Options) -> Result<Answer> {
         demand: result.stats.demand.clone(),
         depends: result.stats.depends.clone(),
         shadowed: result.stats.shadowed.clone(),
-    })
+    }
 }
 
 /// What this host adds to an engine diagnostic: the verb or the rule that
