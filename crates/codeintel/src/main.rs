@@ -375,7 +375,7 @@ fn report_scip(report: &index::Report) {
         "  tier B: {} refs, {} resolved, {} defs tier A missed",
         report.scip_counts.refs, report.scip_counts.resolved, report.scip_counts.only
     );
-    let collisions: u64 = report.scip.iter().map(|i| i.collisions).sum();
+    let collisions = report.scip_collisions;
     if collisions > 0 {
         eprintln!(
             "  scip collisions: {collisions} symbol(s) defined in more than one document were \

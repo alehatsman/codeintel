@@ -38,6 +38,12 @@ pub struct Manifest {
     /// SCIP inputs ingested, empty until M3.
     #[serde(default)]
     pub scip: Vec<ScipInput>,
+    /// Symbols defined in more than one document across the merge of every
+    /// SCIP input, which the anchor join refused. Not per input: a collision
+    /// can span two, so no input has a count of its own
+    /// (`specs/04-storage.md` § Manifest). Zero until the inputs are parsed.
+    #[serde(default)]
+    pub scip_collisions: u64,
     /// Indexed files, keyed by repo-relative path with `/` separators.
     pub files: BTreeMap<String, FileEntry>,
 }
@@ -58,10 +64,6 @@ pub struct ScipInput {
     pub size: u64,
     /// How many documents it carried. Zero until it is parsed.
     pub documents: u64,
-    /// Symbols it defines in more than one document, which the anchor join
-    /// refused. Zero until it is parsed.
-    #[serde(default)]
-    pub collisions: u64,
     /// Occurrences it placed nowhere: the document declares no position
     /// encoding and the line is not ASCII before the column, where UTF-8,
     /// UTF-16 and UTF-32 disagree (`specs/02-extraction.md` § Position
@@ -145,6 +147,7 @@ impl Manifest {
             dict_idx_len: 0,
             dict_generation: 0,
             scip: Vec::new(),
+            scip_collisions: 0,
             files: BTreeMap::new(),
         }
     }

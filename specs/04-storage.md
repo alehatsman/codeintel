@@ -132,8 +132,9 @@ deliberately deferred.
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
       "mtime": 1757000000, "size": 40218811, "documents": 812,
-      "collisions": 0, "ambiguous": 0 }
+      "ambiguous": 0 }
   ],
+  "scip_collisions": 0,
   "files": {
     "src/store.rs": {
       "seg": "a3f1...bin", "mtime": 1757000000, "size": 4021,
@@ -159,15 +160,23 @@ index written before the field existed has none and falls back to mtime until
 its next ingest.
 
 **A SCIP input carries `mtime` and `size` for the same reason, and `tool`,
-`documents`, `collisions` and `ambiguous` are *not* compared.** Those are only
+`documents` and `ambiguous` are *not* compared.** Those are only
 known after the index is parsed, and a refresh that changes nothing must not parse it — a large
 `index.scip` on the query path would put a protobuf decode in front of every
 answer. Comparing them would make every refresh look like a changed SCIP input
 and re-extract the whole tree. `ambiguous` counts the occurrences placed
 nowhere because the index declares no position encoding and the text before
 the column is not ASCII ([02-extraction.md](02-extraction.md) § Position
-normalization). It is kept per input, not merged: every input carrying the
-merged number would count it once per input.
+normalization). All three are that input's own, read from it alone, never the
+merge: every input carrying a merged number reports the total once per input,
+and a reader that sums counts it once per input.
+
+**`scip_collisions` is top-level because it has no per-input value.** It counts
+symbols defined in more than one document across the merge of every input
+([02-extraction.md](02-extraction.md) § The anchor join), and a collision can
+span two inputs. It is carried forward on a refresh that does not parse, like
+the per-input counts, and is `0` with no inputs. A manifest written before the
+field existed reads `0` until its next ingest.
 
 **`extractor_fingerprint` is blake3 over the binary version, every vendored and
 authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A

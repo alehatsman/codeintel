@@ -296,7 +296,7 @@ impl fmt::Display for Report<'_> {
                     census.rows("def")
                 )?;
             }
-            let collisions: u64 = manifest.scip.iter().map(|i| i.collisions).sum();
+            let collisions = manifest.scip_collisions;
             if collisions > 0 {
                 writeln!(
                     f,
@@ -383,11 +383,11 @@ impl Report<'_> {
             "path": input.path,
             "tool": input.tool,
             "documents": input.documents,
-            "collisions": input.collisions,
             "ambiguous": input.ambiguous,
             "mtime": input.mtime,
             "size": input.size,
         })).collect::<Vec<_>>(),
+        "scip_collisions": manifest.scip_collisions,
         "anchor_rate": census.anchor_rate(),
         })
     }

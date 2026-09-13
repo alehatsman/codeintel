@@ -62,6 +62,8 @@ pub struct Report {
     pub langs: BTreeSet<String>,
     /// SCIP inputs ingested.
     pub scip: Vec<ScipInput>,
+    /// Symbols defined in more than one document across the merged inputs.
+    pub scip_collisions: u64,
     /// SCIP documents dropped, with the reason.
     pub scip_skipped: Vec<(String, &'static str)>,
     /// Indexed files modified after the newest SCIP input was built. Their
@@ -137,10 +139,16 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         for (into, known) in inputs.iter_mut().zip(known_scip) {
             into.tool.clone_from(&known.tool);
             into.documents = known.documents;
-            into.collisions = known.collisions;
             into.ambiguous = known.ambiguous;
         }
     }
+    // A collision belongs to the merge, not to an input, so it is carried and
+    // recorded once (specs/04-storage.md § Manifest).
+    let mut scip_collisions = if scip_changed || inputs.is_empty() {
+        0
+    } else {
+        store.manifest().scip_collisions
+    };
     let invalidated = extractor_changed || scip_changed;
     let newest_scip = inputs.iter().map(|i| i.mtime).max();
 
@@ -155,21 +163,23 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             .is_some_and(|e| e.looks_unchanged(c.mtime, c.size))
     });
     let reingest = !inputs.is_empty() && (plan.rebuild || invalidated || stale_file);
-    let (ingest, ambiguous) = if reingest {
+    let (ingest, own) = if reingest {
         read_scip(&root, &plan.scip)?
     } else {
         (Ingest::default(), BTreeMap::new())
     };
     report.scip_skipped.clone_from(&ingest.skipped);
     if reingest {
+        scip_collisions = ingest.collisions.len() as u64;
         for input in &mut inputs {
-            input.tool.clone_from(&ingest.tool);
-            input.documents = ingest.docs.len() as u64;
-            input.collisions = ingest.collisions.len() as u64;
-            input.ambiguous = ambiguous.get(&input.path).copied().unwrap_or(0);
+            let own = own.get(&input.path).cloned().unwrap_or_default();
+            input.tool = own.tool;
+            input.documents = own.documents;
+            input.ambiguous = own.ambiguous;
         }
     }
     report.scip.clone_from(&inputs);
+    report.scip_collisions = scip_collisions;
 
     let mut extractors: HashMap<&'static str, Extractor> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -399,6 +409,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         store.manifest_mut().extractor_fingerprint = fingerprint;
     }
     store.manifest_mut().scip = inputs;
+    store.manifest_mut().scip_collisions = scip_collisions;
     // A refresh that changed nothing writes nothing. `query` refreshes before
     // every answer, and committing the same manifest again is an fsync per read.
     // Every write this run made lands in the manifest, so equality is the whole
@@ -481,9 +492,9 @@ pub fn ignore_the_store(root: &Path) -> Result<bool> {
 
 /// Stat every SCIP input. Cheap, and enough to decide whether to parse them.
 ///
-/// `tool` and `documents` are filled in by [`read_scip`]; a missing input is
-/// not an error, since `./index.scip` is a default and its absence just means
-/// tier A only.
+/// `tool`, `documents` and `ambiguous` are filled in by [`read_scip`]; a
+/// missing input is not an error, since `./index.scip` is a default and its
+/// absence just means tier A only.
 fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
     let mut inputs: Vec<ScipInput> = paths
         .iter()
@@ -495,7 +506,6 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
                 mtime: mtime_of(&meta),
                 size: meta.len(),
                 documents: 0,
-                collisions: 0,
                 ambiguous: 0,
             })
         })
@@ -511,21 +521,22 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
 /// unique by construction, so there is no merge logic beyond concatenation
 /// (`specs/02-extraction.md` § Acquisition).
 ///
-/// Sorted and deduplicated exactly as [`stat_scip`] sorts its inputs. `tool`
-/// and any symbol two indexes both describe are last-wins, so reading in CLI
-/// order made `--scip a --scip b` and `--scip b --scip a` write different
-/// manifests from the same files.
+/// Sorted and deduplicated exactly as [`stat_scip`] sorts its inputs. Any
+/// symbol two indexes both describe is last-wins, so reading in CLI order made
+/// `--scip a --scip b` and `--scip b --scip a` write different manifests from
+/// the same files.
 ///
-/// Beside the merge, each input's `ambiguous` count, keyed as [`stat_scip`]
-/// keys the input. A per-input number cannot be recovered from the merge, and
-/// storing the merged one on every input counts it once per input.
-fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, BTreeMap<String, u64>)> {
+/// Beside the merge, what each input said about itself, keyed as
+/// [`stat_scip`] keys the input. A per-input number cannot be recovered from
+/// the merge, and storing the merged one on every input counts it once per
+/// input (specs/04-storage.md § Manifest).
+fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, BTreeMap<String, Own>)> {
     let mut paths: Vec<&PathBuf> = paths.iter().collect();
     let key = |p: &PathBuf| p.display().to_string().replace('\\', "/");
     paths.sort_by_key(|p| key(p));
     paths.dedup_by_key(|p| key(p));
     let mut merged = Ingest::default();
-    let mut ambiguous = BTreeMap::new();
+    let mut own = BTreeMap::new();
     for path in paths {
         let absolute = absolute(root, path);
         if !absolute.exists() {
@@ -533,15 +544,30 @@ fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, BTreeMap<String,
         }
         let one = Ingest::read(&absolute, root)
             .with_context(|| format!("reading {}", absolute.display()))?;
-        merged.tool = one.tool;
+        own.insert(
+            key(path),
+            Own {
+                tool: one.tool,
+                documents: one.docs.len() as u64,
+                ambiguous: one.ambiguous as u64,
+            },
+        );
         merged.docs.extend(one.docs);
         merged.symbols.extend(one.symbols);
         merged.externs.extend(one.externs);
         merged.skipped.extend(one.skipped);
-        ambiguous.insert(key(path), one.ambiguous as u64);
     }
     merged.recount_collisions();
-    Ok((merged, ambiguous))
+    Ok((merged, own))
+}
+
+/// One SCIP input's own `tool`, `documents` and `ambiguous`, read from it
+/// alone.
+#[derive(Debug, Clone, Default)]
+struct Own {
+    tool: String,
+    documents: u64,
+    ambiguous: u64,
 }
 
 fn absolute(root: &Path, path: &Path) -> PathBuf {
