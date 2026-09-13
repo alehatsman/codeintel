@@ -473,13 +473,24 @@ work.
 |---|---|---|---|
 | Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | M2 / M3 |
 | Go | `tree-sitter-go` 0.25.0 | `scip-go` | M5a — **landed** |
-| Python | `tree-sitter-python` 0.25.0 | `scip-python` | M5a |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` | M5a — **landed** |
 | TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | M5b |
 
 Python's tier B is on notice: `scip-python` has had no human commit on its
 default branch since 2025-09-05 and three open correctness bugs, one of which
 silently drops cross-package references. It ships for its tier-A story and its
 `imports.scm`; `calls_exact` quality is not promised there.
+
+What `scip-python` 0.6.6 actually emitted on the fixture, 2026-09-13: 100%
+anchor rate and every `calls` edge exact, so the on-notice status is about
+maintenance, not about what it produces today. Two shapes are its own and are
+recorded, not corrected. It writes no `display_name` and no `kind` for a
+parameter, an attribute bound in `__init__`, or a module, so those `def` rows
+are named from the symbol's own descriptor (02-extraction.md § Ingest) and
+their kind is `unknown`. And it records the binding `from db.conn import open`
+makes as a plain read of `open` at module scope, with no `Import` role bit, so
+`calls` carries an edge whose caller is the file. The row is what the indexer
+stated. rust-analyzer, for comparison, sets no role bits at all.
 
 **Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —
 `require` is an ordinary method call and idiomatic Rails autoloads without one —
@@ -492,9 +503,10 @@ than silently empty.
 One risk to check at M5: the grammar crates span tree-sitter ABI versions
 (0.23.x through 0.25.x against a 0.27 runtime). tree-sitter maintains ABI
 compatibility across a range, but a grammar should be smoke-loaded before
-anything is built on it. Checked for Go: `tree-sitter-go` 0.25.0 loads and its
-queries compile against the 0.27 runtime, both asserted by tests over every
-registered language rather than over Rust alone.
+anything is built on it. Checked for Go and Python: `tree-sitter-go` 0.25.0 and
+`tree-sitter-python` 0.25.0 load and their queries compile against the 0.27
+runtime, both asserted by tests over every registered language rather than over
+Rust alone.
 
 `scip-go` has **moved out of the Sourcegraph org**. It installs from
 `github.com/scip-code/scip-go/cmd/scip-go`; the old `sourcegraph` path fails

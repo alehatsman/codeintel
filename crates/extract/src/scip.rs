@@ -412,6 +412,24 @@ pub fn kind_of(info: &SymbolInformation) -> &'static str {
         .unwrap_or("unknown")
 }
 
+/// `display_name`, else the name of the symbol's final descriptor.
+///
+/// `scip-python` 0.6.6 writes no `display_name` and no `kind` for a
+/// parameter, an attribute, or a module, so a `def` row for `Store#entries.`
+/// arrived with `Name = ""`. The descriptor grammar is mandatory and the name
+/// is written in it — `entries` — so reading it is extraction, not a guess.
+/// The kind stays `unknown`: a `.` descriptor is a field, a variable or a
+/// constant, and the suffix does not say which.
+fn name_of(info: &SymbolInformation) -> String {
+    if !info.display_name.is_empty() {
+        return info.display_name.clone();
+    }
+    scip::symbol::parse_symbol(&info.symbol)
+        .ok()
+        .and_then(|parsed| parsed.descriptors.last().map(|d| d.name.clone()))
+        .unwrap_or_default()
+}
+
 fn info_of(info: &SymbolInformation, path: &str) -> Info {
     let doc = info
         .documentation
@@ -422,7 +440,7 @@ fn info_of(info: &SymbolInformation, path: &str) -> Info {
     let enclosing = rewrite_local(&info.enclosing_symbol, path);
     Info {
         kind: kind_of(info),
-        name: info.display_name.clone(),
+        name: name_of(info),
         doc: (!doc.trim().is_empty()).then(|| doc.trim().to_string()),
         sig: info
             .signature_documentation

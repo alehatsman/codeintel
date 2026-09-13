@@ -125,6 +125,10 @@ struct Tag<'a> {
     text: String,
     /// The `@owner` capture's source text, if the pattern had one.
     owner: Option<&'a str>,
+    /// The `@doc` capture's source text: documentation the language keeps
+    /// inside the definition (a Python docstring), where the preamble walk
+    /// cannot see it.
+    doc: Option<&'a str>,
     /// The `@trait` capture's source text: the trait a `@scope.impl` implements.
     trait_name: Option<&'a str>,
     /// The capture was `@scope.impl` rather than `@scope.type`.
@@ -398,6 +402,7 @@ impl Extractor {
             let mut subject = None;
             let mut name = None;
             let mut owner = None;
+            let mut doc = None;
             let mut trait_name = None;
             let mut target = None;
             for capture in m.captures() {
@@ -407,6 +412,7 @@ impl Extractor {
                 match *label {
                     "name" => name = Some(capture.node),
                     "owner" => owner = capture.node.utf8_text(src.as_bytes()).ok(),
+                    "doc" => doc = capture.node.utf8_text(src.as_bytes()).ok(),
                     "trait" => trait_name = capture.node.utf8_text(src.as_bytes()).ok(),
                     "target" => target = capture.node.utf8_text(src.as_bytes()).ok(),
                     label => subject = Some((label, capture.node)),
@@ -455,6 +461,7 @@ impl Extractor {
                     is_def,
                     text,
                     owner,
+                    doc,
                     trait_name,
                     is_impl: !is_def && suffix == "impl",
                     qualifier,
@@ -485,7 +492,17 @@ impl Extractor {
             trait_name: tag.trait_name.map(str::to_string),
             qualifier: tag.qualifier,
             sig: signature(src, sig_start, tag.node.end_byte(), self.lang.sig_stops),
-            doc,
+            // A `@doc` capture is the documentation where the language keeps
+            // it inside the definition; the preamble is where it keeps it in
+            // front. A language states one or the other in its query and its
+            // `doc_markers`, so the two do not compete. The same per-line
+            // strip a comment gets, with no marker: a docstring's lines are
+            // indented to the body.
+            doc: tag
+                .doc
+                .map(|d| strip_markers(d, &[]))
+                .filter(|d| !d.is_empty())
+                .or(doc),
         }
     }
 
@@ -577,10 +594,10 @@ impl Extractor {
                 .chars()
                 .next()
                 .is_some_and(char::is_uppercase),
-            Export::NotUnderscored => !name
-                .utf8_text(src.as_bytes())
-                .unwrap_or_default()
-                .starts_with('_'),
+            Export::NotUnderscored => {
+                let text = name.utf8_text(src.as_bytes()).unwrap_or_default();
+                !text.starts_with('_') || (text.starts_with("__") && text.ends_with("__"))
+            }
         };
         if public { Vis::Public } else { Vis::Restricted }
     }

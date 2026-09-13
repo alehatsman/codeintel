@@ -197,37 +197,51 @@ fn a_method_is_reachable_through_its_type() {
 }
 
 #[test]
-fn two_languages_in_one_tree_are_one_index() {
-    // The polyglot half of `docs/plan.md` M5's done-when, as far as two
-    // languages can take it. Adding Python and TypeScript extends this fixture;
-    // it does not need a different assertion.
+fn every_language_in_one_tree_is_one_index() {
+    // The polyglot half of `docs/plan.md` M5's done-when, as far as three
+    // languages can take it. Adding TypeScript extends this fixture; it does
+    // not need a different assertion.
     let dir = tempfile::tempdir().expect("tempdir");
     copy(&fixture(), &dir.path().join("svc"));
     copy(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rust"),
         &dir.path().join("cli"),
     );
-    for stale in ["svc/expected.facts", "svc/index.scip", "cli/expected.facts"] {
+    copy(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/python"),
+        &dir.path().join("py"),
+    );
+    for stale in [
+        "svc/expected.facts",
+        "svc/index.scip",
+        "cli/expected.facts",
+        "py/expected.facts",
+        "py/index.scip",
+    ] {
         drop(std::fs::remove_file(dir.path().join(stale)));
     }
     // `cli/` carries a `rust-analyzer` index built at the repository root, and
     // its documents name `src/…`, not `cli/src/…`. Tier A alone is the subject
-    // here: that one walk, one dictionary and one store hold two grammars.
+    // here: that one walk, one dictionary and one store hold three grammars.
     drop(std::fs::remove_file(dir.path().join("cli/index.scip")));
 
     let summary = index(dir.path());
-    // Both indexer commands, because both languages are present and neither
-    // gap should need looking for (`specs/02-extraction.md` § Acquisition).
+    // Every indexer command, because every language is present and no gap
+    // should need looking for (`specs/02-extraction.md` § Acquisition).
     assert!(summary.contains("scip-go"), "{summary}");
     assert!(summary.contains("rust-analyzer scip ."), "{summary}");
+    assert!(summary.contains("scip-python"), "{summary}");
 
     let (rows, stderr) = query(dir.path(), "?- file(F, Lang).");
     assert!(stderr.contains("status=ok"), "{stderr}");
     let langs: std::collections::BTreeSet<&str> =
         rows.iter().filter_map(|r| r.split('\t').nth(1)).collect();
-    assert_eq!(langs.into_iter().collect::<Vec<_>>(), ["go", "rust"]);
+    assert_eq!(
+        langs.into_iter().collect::<Vec<_>>(),
+        ["go", "python", "rust"]
+    );
 
-    // A question asked once, answered across both grammars: every definition
+    // A question asked once, answered across every grammar: each definition
     // named `Open`/`open`, whatever language declared it.
     let (opens, stderr) = query(dir.path(), r#"?- def(S, F, _, N), match(N, "^[Oo]pen$")."#);
     assert!(stderr.contains("status=ok"), "{stderr}");
@@ -238,6 +252,8 @@ fn two_languages_in_one_tree_are_one_index() {
         [
             "cli/src/db/conn.rs",
             "cli/src/net/conn.rs",
+            "py/db/conn.py",
+            "py/net/conn.py",
             "svc/db/conn.go",
             "svc/net/conn.go",
         ]

@@ -292,6 +292,13 @@ One row per import statement, not per name it binds: `Module` is the specifier
 text as written, and a brace list is not split, so `use a::{b, c as d}` is one
 row with `Module = "a::{b, c as d}"`. `Alias` is set only for a top-level `as`.
 Conformance rules over lists use `contains`, as the README example does.
+
+Python has two statement shapes and they land differently. `import a, b as c`
+is two rows — each name is its own specifier and carries its own `as`, so one
+row could not hold both aliases. `from m import a, b as c` is **one** row with
+`Module = "m"` and no alias: the names it binds are members of `m`, not local
+names for `m`. The dots of a relative import are part of the specifier as
+written, so `from ..db import conn` has `Module = "..db"`.
 ```
 import("src/api.rs", "crate::store", "").
 import("web/app.ts", "./util/retry", "retry").

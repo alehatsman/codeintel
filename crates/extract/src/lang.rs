@@ -81,7 +81,11 @@ pub enum Export {
     },
     /// The name starts with an upper-case letter. Go.
     Capitalized,
-    /// The name does not start with `_`. Python convention.
+    /// The name does not start with `_`, or starts **and** ends with `__`.
+    ///
+    /// Python. PEP 8: a single leading underscore is a "weak internal use
+    /// indicator", and a dunder (`__init__`) is a magic name, not a private
+    /// one. Both are statements the name itself makes; neither is a walk.
     NotUnderscored,
 }
 
@@ -221,6 +225,35 @@ pub const LANGS: &[Lang] = &[
         indexer: "scip-go",
     },
     Lang {
+        name: "python",
+        extensions: &["py"],
+        language: || tree_sitter_python::LANGUAGE.into(),
+        tags: include_str!("../../../queries/python/tags.scm"),
+        imports: include_str!("../../../queries/python/imports.scm"),
+        // Every capture suffix in `python/tags.scm` is already a Kind. A
+        // method is a `function` the extractor promotes under its class.
+        kind_remap: &[],
+        export: Export::NotUnderscored,
+        // Every Python definition has a name to read, so nothing inherits.
+        vis_inherits_under: &[],
+        // Python documents with docstrings, not comments. They sit INSIDE the
+        // definition, where the preamble walk cannot see them, so `tags.scm`
+        // names them with `@doc` and no comment marker counts as one.
+        doc_markers: &[],
+        comment_kinds: &["comment"],
+        // A decorator precedes the `function_definition` inside the
+        // `decorated_definition` that wraps both; it is part of the
+        // definition and not part of how you would say its name.
+        attribute_kinds: &["decorator"],
+        // A Python definition node already contains its own head.
+        keyword_kinds: &[],
+        // `def f(x: int) -> T:` and `class C(B):` end at the colon; `x = 1`
+        // at the `=`. A colon or `=` inside the parameter list is nested and
+        // does not count.
+        sig_stops: &[':', '='],
+        indexer: "scip-python index . --project-name <name>",
+    },
+    Lang {
         name: "rust",
         extensions: &["rs"],
         language: || tree_sitter_rust::LANGUAGE.into(),
@@ -290,7 +323,7 @@ mod tests {
         assert_eq!(for_path("src/store.rs").map(|l| l.name), Some("rust"));
         assert_eq!(for_path("src/store.RS").map(|l| l.name), None);
         assert_eq!(for_path("Makefile").map(|l| l.name), None);
-        assert_eq!(for_path("app/main.py").map(|l| l.name), None);
+        assert_eq!(for_path("app/main.py").map(|l| l.name), Some("python"));
     }
 
     #[test]

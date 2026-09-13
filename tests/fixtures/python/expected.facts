@@ -1,0 +1,216 @@
+def("local app/app.py start().", "app/app.py", "function", "start").
+def("local db/conn.py open().", "db/conn.py", "function", "open").
+def("local kinds.py BANNER.", "kinds.py", "variable", "BANNER").
+def("local kinds.py Config#", "kinds.py", "class", "Config").
+def("local kinds.py Config#__init__().", "kinds.py", "method", "__init__").
+def("local kinds.py Config#_describe().", "kinds.py", "method", "_describe").
+def("local kinds.py Config#_quiet.", "kinds.py", "field", "_quiet").
+def("local kinds.py Config#handle().", "kinds.py", "method", "handle").
+def("local kinds.py Config#limit.", "kinds.py", "field", "limit").
+def("local kinds.py Config#quiet().", "kinds.py", "method", "quiet").
+def("local kinds.py Handler#", "kinds.py", "class", "Handler").
+def("local kinds.py Handler#handle().", "kinds.py", "method", "handle").
+def("local kinds.py _retries.", "kinds.py", "variable", "_retries").
+def("local kinds.py describe().", "kinds.py", "function", "describe").
+def("local kinds.py outer().", "kinds.py", "function", "outer").
+def("local kinds.py outer().inner().", "kinds.py", "function", "inner").
+def("local net/conn.py open().", "net/conn.py", "function", "open").
+def("local store/store.py Entry#", "store/store.py", "class", "Entry").
+def("local store/store.py Entry#__init__().", "store/store.py", "method", "__init__").
+def("local store/store.py Entry#describe().", "store/store.py", "method", "describe").
+def("local store/store.py Store#", "store/store.py", "class", "Store").
+def("local store/store.py Store#__init__().", "store/store.py", "method", "__init__").
+def("local store/store.py Store#_evict().", "store/store.py", "method", "_evict").
+def("local store/store.py Store#get().", "store/store.py", "method", "get").
+def("local store/store.py Store#put().", "store/store.py", "method", "put").
+def("local store/store.py warm().", "store/store.py", "function", "warm").
+def("local store/test_store.py test_warm().", "store/test_store.py", "function", "test_warm").
+def("local ui/panel.py draw().", "ui/panel.py", "function", "draw").
+def_doc("local app/app.py start().", "Start up.").
+def_doc("local db/conn.py open().", "Open a connection.").
+def_doc("local kinds.py Config#", "A class, with a documented field and a documented method.").
+def_doc("local kinds.py Config#__init__().", "A dunder is magic, not private: PEP 8 says so.").
+def_doc("local kinds.py Config#handle().", "Handle one key.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local kinds.py Config#quiet().", "A decorated method: the decorator is in the span.").
+def_doc("local kinds.py Handler#", "A subclass. The superclass list is not an owner and is not captured.").
+def_doc("local kinds.py describe().", "A decorated function.").
+def_doc("local kinds.py outer().", "A nested function: `inner` is owned by `outer`, not by the file.").
+def_doc("local net/conn.py open().", "Open a socket.").
+def_doc("local store/store.py Entry#", "One entry in the store.").
+def_doc("local store/store.py Entry#describe().", "Render an entry.").
+def_doc("local store/store.py Store#", "A tiny key-value store.").
+def_doc("local store/store.py Store#get().", "Read one entry.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local store/store.py Store#put().", "Write one entry.").
+def_doc("local store/store.py warm().", "A free function that calls a method, so `calls` has an edge to find.").
+def_doc("local ui/panel.py draw().", "Draw the panel.").
+def_name("local app/app.py start().", 9, 4).
+def_name("local db/conn.py open().", 4, 4).
+def_name("local kinds.py BANNER.", 11, 0).
+def_name("local kinds.py Config#", 15, 6).
+def_name("local kinds.py Config#__init__().", 21, 8).
+def_name("local kinds.py Config#_describe().", 32, 8).
+def_name("local kinds.py Config#_quiet.", 19, 4).
+def_name("local kinds.py Config#handle().", 25, 8).
+def_name("local kinds.py Config#limit.", 18, 4).
+def_name("local kinds.py Config#quiet().", 36, 8).
+def_name("local kinds.py Handler#", 41, 6).
+def_name("local kinds.py Handler#handle().", 44, 8).
+def_name("local kinds.py _retries.", 12, 0).
+def_name("local kinds.py describe().", 49, 4).
+def_name("local kinds.py outer().", 54, 4).
+def_name("local kinds.py outer().inner().", 57, 8).
+def_name("local net/conn.py open().", 8, 4).
+def_name("local store/store.py Entry#", 9, 6).
+def_name("local store/store.py Entry#__init__().", 12, 8).
+def_name("local store/store.py Entry#describe().", 15, 8).
+def_name("local store/store.py Store#", 20, 6).
+def_name("local store/store.py Store#__init__().", 23, 8).
+def_name("local store/store.py Store#_evict().", 37, 8).
+def_name("local store/store.py Store#get().", 26, 8).
+def_name("local store/store.py Store#put().", 33, 8).
+def_name("local store/store.py warm().", 41, 4).
+def_name("local store/test_store.py test_warm().", 6, 4).
+def_name("local ui/panel.py draw().", 10, 4).
+def_sig("local app/app.py start().", "def start() -> bool").
+def_sig("local db/conn.py open().", "def open(url: str) -> bool").
+def_sig("local kinds.py BANNER.", "BANNER").
+def_sig("local kinds.py Config#", "class Config").
+def_sig("local kinds.py Config#__init__().", "def __init__(self, limit: int = 64) -> None").
+def_sig("local kinds.py Config#_describe().", "def _describe(self) -> str").
+def_sig("local kinds.py Config#_quiet.", "_quiet").
+def_sig("local kinds.py Config#handle().", "def handle(self, key: str) -> bool").
+def_sig("local kinds.py Config#limit.", "limit").
+def_sig("local kinds.py Config#quiet().", "def quiet(self) -> bool").
+def_sig("local kinds.py Handler#", "class Handler(Config)").
+def_sig("local kinds.py Handler#handle().", "def handle(self, key: str) -> bool").
+def_sig("local kinds.py _retries.", "_retries").
+def_sig("local kinds.py describe().", "def describe(config: Config) -> str").
+def_sig("local kinds.py outer().", "def outer() -> int").
+def_sig("local kinds.py outer().inner().", "def inner() -> int").
+def_sig("local net/conn.py open().", "def open(url: str) -> bool").
+def_sig("local store/store.py Entry#", "class Entry").
+def_sig("local store/store.py Entry#__init__().", "def __init__(self, value: str) -> None").
+def_sig("local store/store.py Entry#describe().", "def describe(self) -> str").
+def_sig("local store/store.py Store#", "class Store").
+def_sig("local store/store.py Store#__init__().", "def __init__(self) -> None").
+def_sig("local store/store.py Store#_evict().", "def _evict(self) -> None").
+def_sig("local store/store.py Store#get().", "def get(self, key: str) -> Entry | None").
+def_sig("local store/store.py Store#put().", "def put(self, key: str, value: str) -> None").
+def_sig("local store/store.py warm().", "def warm(store: Store) -> Entry | None").
+def_sig("local store/test_store.py test_warm().", "def test_warm() -> None").
+def_sig("local ui/panel.py draw().", "def draw() -> bool").
+def_span("local app/app.py start().", 9, 11, 203, 278).
+def_span("local db/conn.py open().", 4, 6, 62, 139).
+def_span("local kinds.py BANNER.", 11, 11, 344, 364).
+def_span("local kinds.py Config#", 15, 38, 385, 1025).
+def_span("local kinds.py Config#__init__().", 21, 23, 512, 644).
+def_span("local kinds.py Config#_describe().", 32, 33, 841, 890).
+def_span("local kinds.py Config#_quiet.", 19, 19, 492, 506).
+def_span("local kinds.py Config#handle().", 25, 30, 650, 835).
+def_span("local kinds.py Config#limit.", 18, 18, 472, 487).
+def_span("local kinds.py Config#quiet().", 35, 38, 896, 1025).
+def_span("local kinds.py Handler#", 41, 45, 1028, 1209).
+def_span("local kinds.py Handler#handle().", 44, 45, 1135, 1209).
+def_span("local kinds.py _retries.", 12, 12, 365, 382).
+def_span("local kinds.py describe().", 48, 51, 1212, 1335).
+def_span("local kinds.py outer().", 54, 60, 1338, 1501).
+def_span("local kinds.py outer().inner().", 57, 58, 1438, 1481).
+def_span("local net/conn.py open().", 8, 10, 247, 335).
+def_span("local store/store.py Entry#", 9, 17, 202, 439).
+def_span("local store/store.py Entry#__init__().", 12, 13, 254, 320).
+def_span("local store/store.py Entry#describe().", 15, 17, 326, 439).
+def_span("local store/store.py Store#", 20, 38, 442, 933).
+def_span("local store/store.py Store#__init__().", 23, 24, 494, 565).
+def_span("local store/store.py Store#_evict().", 37, 38, 879, 933).
+def_span("local store/store.py Store#get().", 26, 31, 571, 751).
+def_span("local store/store.py Store#put().", 33, 35, 757, 873).
+def_span("local store/store.py warm().", 41, 43, 936, 1083).
+def_span("local store/test_store.py test_warm().", 6, 7, 107, 164).
+def_span("local ui/panel.py draw().", 10, 12, 260, 345).
+file("app/app.py", "python").
+file("db/conn.py", "python").
+file("kinds.py", "python").
+file("net/conn.py", "python").
+file("store/store.py", "python").
+file("store/test_store.py", "python").
+file("ui/panel.py", "python").
+import("app/app.py", "db.conn", "").
+import("kinds.py", "functools", "").
+import("store/store.py", "re", "_re").
+import("store/store.py", "typing", "").
+import("store/test_store.py", "store.store", "").
+import("ui/panel.py", "db", "").
+import("ui/panel.py", "net.conn", "_net").
+name_ref("Entry", "store/store.py", 35, 28, "local store/store.py Store#put().").
+name_ref("Store", "store/test_store.py", 7, 16, "local store/test_store.py test_warm().").
+name_ref("_describe", "kinds.py", 51, 18, "local kinds.py describe().").
+name_ref("clear", "store/store.py", 38, 21, "local store/store.py Store#_evict().").
+name_ref("get", "store/store.py", 31, 28, "local store/store.py Store#get().").
+name_ref("get", "store/store.py", 43, 17, "local store/store.py warm().").
+name_ref("handle", "kinds.py", 45, 27, "local kinds.py Handler#handle().").
+name_ref("inner", "kinds.py", 60, 11, "local kinds.py outer().").
+name_ref("len", "kinds.py", 30, 34, "local kinds.py Config#handle().").
+name_ref("lru_cache", "kinds.py", 48, 1, "kinds.py").
+name_ref("open", "app/app.py", 11, 11, "local app/app.py start().").
+name_ref("open", "ui/panel.py", 12, 16, "local ui/panel.py draw().").
+name_ref("startswith", "net/conn.py", 10, 15, "local net/conn.py open().").
+name_ref("sub", "store/store.py", 17, 19, "local store/store.py Entry#describe().").
+name_ref("super", "kinds.py", 45, 19, "local kinds.py Handler#handle().").
+name_ref("upper", "store/store.py", 17, 47, "local store/store.py Entry#describe().").
+name_ref("warm", "store/test_store.py", 7, 11, "local store/test_store.py test_warm().").
+parent("local app/app.py start().", "app/app.py").
+parent("local db/conn.py open().", "db/conn.py").
+parent("local kinds.py BANNER.", "kinds.py").
+parent("local kinds.py Config#", "kinds.py").
+parent("local kinds.py Config#__init__().", "local kinds.py Config#").
+parent("local kinds.py Config#_describe().", "local kinds.py Config#").
+parent("local kinds.py Config#_quiet.", "local kinds.py Config#").
+parent("local kinds.py Config#handle().", "local kinds.py Config#").
+parent("local kinds.py Config#limit.", "local kinds.py Config#").
+parent("local kinds.py Config#quiet().", "local kinds.py Config#").
+parent("local kinds.py Handler#", "kinds.py").
+parent("local kinds.py Handler#handle().", "local kinds.py Handler#").
+parent("local kinds.py _retries.", "kinds.py").
+parent("local kinds.py describe().", "kinds.py").
+parent("local kinds.py outer().", "kinds.py").
+parent("local kinds.py outer().inner().", "local kinds.py outer().").
+parent("local net/conn.py open().", "net/conn.py").
+parent("local store/store.py Entry#", "store/store.py").
+parent("local store/store.py Entry#__init__().", "local store/store.py Entry#").
+parent("local store/store.py Entry#describe().", "local store/store.py Entry#").
+parent("local store/store.py Store#", "store/store.py").
+parent("local store/store.py Store#__init__().", "local store/store.py Store#").
+parent("local store/store.py Store#_evict().", "local store/store.py Store#").
+parent("local store/store.py Store#get().", "local store/store.py Store#").
+parent("local store/store.py Store#put().", "local store/store.py Store#").
+parent("local store/store.py warm().", "store/store.py").
+parent("local store/test_store.py test_warm().", "store/test_store.py").
+parent("local ui/panel.py draw().", "ui/panel.py").
+visibility("local app/app.py start().", "public").
+visibility("local db/conn.py open().", "public").
+visibility("local kinds.py BANNER.", "public").
+visibility("local kinds.py Config#", "public").
+visibility("local kinds.py Config#__init__().", "public").
+visibility("local kinds.py Config#_describe().", "restricted").
+visibility("local kinds.py Config#_quiet.", "restricted").
+visibility("local kinds.py Config#handle().", "public").
+visibility("local kinds.py Config#limit.", "public").
+visibility("local kinds.py Config#quiet().", "public").
+visibility("local kinds.py Handler#", "public").
+visibility("local kinds.py Handler#handle().", "public").
+visibility("local kinds.py _retries.", "restricted").
+visibility("local kinds.py describe().", "public").
+visibility("local kinds.py outer().", "public").
+visibility("local kinds.py outer().inner().", "public").
+visibility("local net/conn.py open().", "public").
+visibility("local store/store.py Entry#", "public").
+visibility("local store/store.py Entry#__init__().", "public").
+visibility("local store/store.py Entry#describe().", "public").
+visibility("local store/store.py Store#", "public").
+visibility("local store/store.py Store#__init__().", "public").
+visibility("local store/store.py Store#_evict().", "restricted").
+visibility("local store/store.py Store#get().", "public").
+visibility("local store/store.py Store#put().", "public").
+visibility("local store/store.py warm().", "public").
+visibility("local store/test_store.py test_warm().", "public").
+visibility("local ui/panel.py draw().", "public").
