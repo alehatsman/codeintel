@@ -1,4 +1,5 @@
-//! The warm engine, and the refresh that writes nothing (#18).
+//! The warm engine, the refresh that writes nothing (#18), and what
+//! `stats.refreshed` reports (#19).
 //!
 //! `specs/05-surface.md` § MCP and `specs/04-storage.md` § Incremental reindex.
 //! A long-lived `codeintel mcp` keeps its loaded index between calls; these pin
@@ -39,6 +40,51 @@ fn a_query_against_an_unchanged_tree_writes_nothing() {
         snapshot(&manifest).0 != before.0,
         "an auto-refresh that re-extracted a file did not commit it"
     );
+}
+
+/// `stats.refreshed` is a count of the files re-extracted before the answer,
+/// never a list (`specs/05-surface.md` § `query`, #19).
+#[test]
+fn stats_refreshed_counts_the_files_a_refresh_re_extracted() {
+    let dir = indexed();
+    assert_eq!(
+        refreshed(dir.path()),
+        0,
+        "an unchanged tree re-extracted something"
+    );
+
+    append(
+        &dir.path().join("src/store.rs"),
+        "\npub fn added_by_the_test() {}\n",
+    );
+    assert_eq!(
+        refreshed(dir.path()),
+        1,
+        "one edited file is one re-extracted file"
+    );
+    assert_eq!(
+        refreshed(dir.path()),
+        0,
+        "the edit was re-extracted again, so the first refresh never committed it"
+    );
+}
+
+/// `stats.refreshed` from `codeintel query --format json`, with auto-refresh on.
+fn refreshed(root: &Path) -> u64 {
+    let out = Command::new(binary())
+        .args(["query", "?- file(F, _).", "--format", "json"])
+        .current_dir(root)
+        .output()
+        .expect("the binary runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON on stdout");
+    json.pointer("/stats/refreshed")
+        .and_then(serde_json::Value::as_u64)
+        .expect("stats.refreshed is an integer")
 }
 
 #[test]
