@@ -853,7 +853,9 @@ two edges whose caller is a file; recorded in
 ### What TypeScript cost, and what it changed
 
 **Shipped.** 11 kinds, a 98.4% anchor rate against `scip-typescript` 0.4.0
-(60 of 61, and the one miss is #21's), 17 exact `calls` edges, 4
+(60 of 61, and the one miss is #21's), 17 exact `calls` edges (18 since
+#22 added `export default outer` to the fixture: one more module-scope
+reference), 4
 `implements` rows, 14 extractor tests and 10 end-to-end. The queries are 78
 lines that are not comments, plus 6 for JSX and 8 for imports. There are two
 `lang.rs` rows, TSX being TypeScript's row with its own grammar and JSX
@@ -892,7 +894,9 @@ in order.
 
 Not done, and said so:
 
-- `export { x }` and `export default x` do not make `x` exported (#22).
+- ~~`export { x }` and `export default x` do not make `x` exported (#22).~~
+  Fixed after M5b: `name_export/2`, base relation 16 of 16, schema 3
+  ([01-facts.md](../specs/01-facts.md) § `name_export`).
 - JavaScript is not registered. Dynamic `import()` and `require()` are not
   `import` rows. Destructured bindings and computed member names are not
   definitions.

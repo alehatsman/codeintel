@@ -17,7 +17,7 @@
 //! token. That is invariant 3, and it is the same move `ref` made in v1.
 
 /// Bumped whenever a relation is added, removed, or changes arity.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// One base relation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +110,11 @@ pub const RELATIONS: &[Rel] = &[
         name: "extern",
         arity: 4,
     },
+    Rel {
+        id: 15,
+        name: "name_export",
+        arity: 2,
+    },
 ];
 
 /// The relation with this id.
@@ -150,9 +155,10 @@ mod tests {
 
     #[test]
     fn the_base_relation_budget_holds() {
-        // `specs/00-overview.md` § Surface budget: <= 16, currently 15. This is
-        // one of the four numbers CI asserts; growing it is a spec change.
+        // `specs/00-overview.md` § Surface budget: <= 16, currently 16. This is
+        // one of the four numbers CI asserts; the budget is spent (#22), so the
+        // next relation deletes one, and that is a spec change.
         assert!(RELATIONS.len() <= 16, "base relations: {}", RELATIONS.len());
-        assert_eq!(RELATIONS.len(), 15);
+        assert_eq!(RELATIONS.len(), 16);
     }
 }

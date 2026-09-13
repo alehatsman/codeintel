@@ -215,11 +215,12 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
     // `!ambiguous(N)` guard refuses the edge. The type checker gives each
     // caller its one target, JSX tags included.
     //
-    // Five rows have a FILE as the caller. `scip-typescript` 0.4.0 records
+    // Six rows have a FILE as the caller. `scip-typescript` 0.4.0 records
     // the binding an import makes as an ordinary reference at module scope,
-    // with an empty role bitset, as `scip-python` does; and a decorator is
-    // referenced at module scope, which is also where it runs. The rows are
-    // what the indexer stated (docs/research.md § Language coverage).
+    // with an empty role bitset, as `scip-python` does; a decorator is
+    // referenced at module scope, which is also where it runs; and so is the
+    // name in `export default outer`. The rows are what the indexer stated
+    // (docs/research.md § Language coverage).
     let dir = tree();
     index(dir.path());
     let (rows, stderr) = query(dir.path(), "?- calls(A, B).");
@@ -235,6 +236,7 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
             "describe kinds.ts:12\tdescribe kinds.ts:55",
             "handle store/store.ts:33\tget store/store.ts:20",
             "hidden kinds.ts:96\touter kinds.ts:86",
+            "kinds.ts\touter kinds.ts:86",
             "kinds.ts\tsealed kinds.ts:15",
             "outer kinds.ts:86\tinner kinds.ts:88",
             "put store/store.ts:29\tconstructor store/store.ts:7",
@@ -352,4 +354,26 @@ fn an_undeclared_column_after_a_non_ascii_character_is_skipped_not_misplaced() {
         r#"?- def(S, "kinds.ts", _, N), resolved(S), match(N, "WIDE")."#,
     );
     assert_eq!(column(&resolved, 1), ["WIDE"]);
+}
+
+#[test]
+fn an_export_clause_exports_a_declaration_that_stays_restricted() {
+    // `export { retries, sealed as seal }` and `export default outer` in
+    // kinds.ts (#22). `visibility` is what the declaration states, so all
+    // three stay `restricted`; `exported` reaches them through `name_export`
+    // (`specs/01-facts.md` § `name_export`).
+    let dir = tier_a_tree();
+    index(dir.path());
+    let (rows, stderr) = query(
+        dir.path(),
+        r#"?- def(S, "kinds.ts", _, N), visibility(S, "restricted"), exported(S)."#,
+    );
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert_eq!(column(&rows, 1), ["outer", "retries", "sealed"]);
+    // A restricted declaration no clause names is still not exported.
+    let (rows, _) = query(
+        dir.path(),
+        r#"?- def(S, "kinds.ts", _, "hidden"), exported(S)."#,
+    );
+    assert!(rows.is_empty(), "{rows:?}");
 }

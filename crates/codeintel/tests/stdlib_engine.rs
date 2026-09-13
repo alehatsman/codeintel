@@ -54,7 +54,7 @@ fn both_in(make: impl Fn() -> Engine, query: &str) -> (Vec<String>, QueryResult)
 // ── the standard library ────────────────────────────────────────────────────
 
 /// The 15 base relations of `specs/01-facts.md`, empty.
-const BASE: [(&str, usize); 15] = [
+const BASE: [(&str, usize); 16] = [
     ("file", 2),
     ("def", 4),
     ("def_span", 5),
@@ -70,6 +70,7 @@ const BASE: [(&str, usize); 15] = [
     ("scip_impl", 2),
     ("name_impl", 4),
     ("extern", 4),
+    ("name_export", 2),
 ];
 
 fn stdlib_engine() -> Engine {

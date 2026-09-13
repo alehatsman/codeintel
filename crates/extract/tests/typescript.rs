@@ -285,3 +285,58 @@ fn an_import_is_the_specifier_without_its_quotes() {
     }
     assert_eq!(imports.len(), 6, "one row per statement: {imports:?}");
 }
+
+/// `specs/01-facts.md` § `name_export`: an `export { }` clause or an `export
+/// default` is a fact about the file, by local name, and it never flips
+/// `visibility`. Regression for #22.
+#[test]
+fn an_export_clause_is_a_name_export_and_leaves_visibility_alone() {
+    let ex = extracted();
+    let exports = ex.rows("name_export");
+    let expected: Vec<Vec<String>> = [
+        ["kinds.ts", "outer"],
+        ["kinds.ts", "retries"],
+        ["kinds.ts", "sealed"],
+    ]
+    .iter()
+    .map(|r| r.iter().map(|s| (*s).to_string()).collect())
+    .collect();
+    // The local name, never the alias: `sealed as seal` records `sealed`, and
+    // `export { x } from "m"` elsewhere in the fixture is an import, not this.
+    assert_eq!(exports, expected);
+    let vis = ex.pairs("visibility");
+    for sym in [
+        "local kinds.ts retries.",
+        "local kinds.ts sealed().",
+        "local kinds.ts outer().",
+    ] {
+        assert_eq!(
+            vis.get(sym).map(String::as_str),
+            Some("restricted"),
+            "{sym}"
+        );
+    }
+}
+
+/// The two shapes the fixture cannot hold: `export = f` is a module-level
+/// error next to other exports, and a re-export tree needs no definitions.
+#[test]
+fn an_export_assignment_is_a_name_export_and_a_reexport_is_not() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("cjs.ts"),
+        "function main(): void {}\nexport = main;\n",
+    )
+    .expect("writes");
+    std::fs::write(
+        dir.path().join("re.ts"),
+        "export { open } from \"./db\";\nexport * from \"./net\";\n",
+    )
+    .expect("writes");
+    let ex = extract_tree(dir.path());
+    assert_eq!(
+        ex.rows("name_export"),
+        [vec!["cjs.ts".to_string(), "main".to_string()]]
+    );
+    assert_eq!(ex.rows("import").len(), 2, "{:?}", ex.rows("import"));
+}
