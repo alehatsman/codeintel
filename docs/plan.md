@@ -609,6 +609,12 @@ extracted facts, 45/45 on fifteen held-out questions against this repository
 pinned at `8471824` with no SCIP index — which is also the no-SCIP run the
 done-when asks for.
 
+**Set A's 85/90 was withdrawn on 2026-09-13**
+([agent-eval.md](agent-eval.md) § Rescored). Schema 2 removed `callers` and
+`defines`, and four recorded answers call them. By that page's own rule the runs
+are invalid, and a fresh run is owed. Set B stands. So this done-when is
+**unmet for set A** until the re-run.
+
 **The first numbers were withdrawn, not amended.** An earlier pass scored 88/90
 and 43/45; then the eval's own finding — `long_def`'s copy — was fixed, which
 changed that rule's signature, and scoring old transcripts against a new
@@ -878,7 +884,93 @@ are stated against — the 1M-symbol table in [01-facts.md](../specs/01-facts.md
   state the two numbers separately rather than implying one.
 - Cold-page-cache numbers recorded alongside warm ones. The agent's first query
   after a checkout is the one that matters and it is 10-50x the warm cost.
-- Baselines committed as JSON; CI fails on a > 20% regression.
+- Wall-clock baselines committed as JSON and compared locally, where a > 20%
+  regression fails `tasks/bench.yml`. **CI fails on any change in a counter**
+  (`tests/counters.rs`), not on wall-clock — see below.
+
+### Pulled forward, 2026-09-13 (#17)
+
+Items 1 and 2, and the regression gate, landed **ahead of M5**. Item 3 did not.
+The reason is that performance work was already landing without them: #3 and
+`0574a1b` justified themselves with tables measured by hand, on trees nobody
+pinned, and the next one would have too. A harness is cheaper than a habit.
+
+The corpus is **one entry**, tokio at `53542467` (~183k LOC of Rust, 799 files) —
+the tree #3 already measured. The ~10k and ~1M entries are still owed.
+
+**Two harnesses, split by what each machine can be trusted to measure.**
+
+**1. Counters, in CI.** `crates/codeintel/tests/counters.rs` runs a fixed query
+set, `tests/fixtures/counters/queries.tsv` (`id`, `fixture`, `query`), against
+`tests/fixtures/rust` and `tests/fixtures/go`, each indexed with its committed
+`index.scip`. For every query it records `status`, row count, `truncated`,
+`derived`, `demand` and `transformed`, and diffs the lot as text against
+`tests/fixtures/counters/expected.tsv`. `UPDATE_GOLDEN=1` rewrites it, the same
+knob as `expected.facts`.
+
+- **Why counters and not milliseconds.** `derived` is exact, and it is the
+  number that actually moved every time cost regressed here: #3 was 167,547 →
+  12,320 derived, and M2's "demand transformation silently stopped applying" is
+  `demand` changing its reason and `derived` jumping. A GitHub runner's wall
+  clock swings by more than 20% on its own, so a wall-clock gate there fails at
+  random, gets retried, and stops being read.
+- **Reading a diff.** `derived` moved with the row count unchanged: a cost
+  change. Rows moved: a correctness change. Both fail. The diff tells you which,
+  and the commit message owes the reason.
+- **Each query runs twice**, and the two records must agree before either is
+  compared. A counter that varies between runs is not a golden, and the test
+  says so rather than flaking.
+- `elapsed_ms` is not recorded. It is the one field that is not exact.
+
+**2. Wall clock, locally.** `crates/codeintel/benches/corpus.rs`, a
+`harness = false` bench target. `cargo bench -p codeintel --bench corpus --
+<corpus-dir>`, or `provision apply --stream tasks/bench.yml`, which checks the corpus out
+at its pin into `~/.cache/codeintel/corpus/` first. It works on a copy of the
+corpus in a temp directory and never writes into the checkout.
+
+| metric | how |
+|---|---|
+| `index_cold_ms` | tier A, `Plan::default()`, fresh store. Median of 3 |
+| `load_warm_ms` | `Store::open` + `load`. p50 of 20 |
+| `reindex_one_ms` | append a line to one fixed file, `index::refresh`. p50 of 10 |
+| `query_ms` | each query in `benches/queries.tsv` through `query::run`, `no_refresh`, 3 warm-ups then 30 runs; p50/p95 per query and pooled |
+| `cli_ms` | the same queries through the release binary. p50 of 10 |
+| counters | `derived`, `demand`, row count per query, as in (1) |
+
+`query_ms` **includes opening and loading the store**, because `query::run`
+does both on every call — and so does `codeintel mcp` today
+(`crates/codeintel/src/mcp.rs` → `query::run`). There is no warm MCP process
+yet for the done-when above to be measured in. The bench reports what exists
+under a name that says what it includes, rather than a number labelled as the
+thing the spec asked for.
+
+Output goes to `target/bench/corpus.json`. It is compared against
+`crates/codeintel/benches/baseline.json`:
+
+- A wall-clock metric more than 20% over its baseline fails the run, and every
+  one of them is named. Faster than baseline is reported and does not fail.
+- **Counters compare exactly, on any host.** They do not depend on the machine.
+- The baseline records its host (`os`, `arch`, `cpus`) and the corpus's commit.
+  If the host differs, wall-clock comparison is **skipped and reported as
+  skipped**. If the commit differs, the whole comparison is refused — a baseline
+  against a different tree measures nothing.
+- `UPDATE_BASELINE=1` rewrites it.
+
+**Cold page cache is not measured.** Dropping it needs root (`purge`,
+`/proc/sys/vm/drop_caches`), which a bench should not ask for. The JSON carries
+`"cold_page_cache": null`, and the done-when bullet above stays open.
+
+**3. The eval, re-derived in CI.** `crates/codeintel/tests/eval_rot.rs`
+recomputes every set-A reference answer from `eval-m4/setA.tsv` against the rust
+fixture, compares them with `expectedA.tsv`, and rescores the recorded runs
+`A1`–`A3`, asserting the failures by question id. It uses `score.py`'s rule: the
+set of values in the answer variables. `score.py` stays, because it scores live
+agent runs. [agent-eval.md](agent-eval.md) found three reference-answer defects,
+none by assertion — "a reference answer nobody recomputes is an assertion nobody
+checks" — and this is that recomputation. **A moved reference answer is a
+finding.** Regenerate it with `score.py expected A` only once the diff is
+understood. Set B is not in CI, because its tree is this repository at
+`8471824` and a shallow checkout does not have that commit.
 
 ---
 

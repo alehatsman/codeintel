@@ -107,6 +107,15 @@ Non-negotiable, per milestone in [docs/plan.md](docs/plan.md):
 - **Idempotence:** index twice → identical segments. Shuffle file order →
   identical facts.
 - **Surface budget:** asserted in CI.
+- **Cost:** `tests/counters.rs` pins `derived`, `demand` and `transformed` for a
+  fixed query set. If it fails, read the diff: rows unchanged means a cost
+  change, rows moved means a correctness change. `UPDATE_GOLDEN=1` only once you
+  can say which, and why.
+- **Performance claims** cite `provision apply tasks/bench.yml`
+  (`target/bench/corpus.json`) against the pinned corpus. A hand-run table on an
+  unpinned tree is not evidence.
+- **Eval:** `tests/eval_rot.rs` recomputes the agent eval's set A. A moved
+  reference answer is a finding, not a golden to refresh.
 
 ## Friction
 

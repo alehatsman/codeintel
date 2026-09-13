@@ -1,0 +1,15 @@
+# The fixed query set behind `benches/corpus.rs`, against tokio at the pin in
+# tasks/bench.yml. id<TAB>query. Lines starting with `#` are comments.
+#
+# Seeded traversals, whole-graph aggregates and a conformance check, because p95
+# over only the cheap shape would say nothing about the expensive one. Changing
+# this set invalidates the baseline: UPDATE_BASELINE=1.
+1	?- def(S, F, "function", N).
+2	?- ambiguous(N).
+3	?- def(S, "tokio/src/sync/mpsc/bounded.rs", _, "send"), impact_of(S, C).
+4	?- def(S, "tokio/src/sync/mpsc/bounded.rs", _, "send"), reach_of(S, C).
+5	?- innermost_at("tokio/src/sync/mpsc/bounded.rs", 200, S), about(S, Rel, A, B, L).
+6	?- import(F, M, _), prefix(F, "tokio/src/sync/"), contains(M, "runtime").
+7	?- dead_export(S), def(S, F, _, _), prefix(F, "tokio/src/io/").
+8	?- def(S, _, "function", _), C = count{ X : calls(X, S) }.
+9	?- depends(F, G).

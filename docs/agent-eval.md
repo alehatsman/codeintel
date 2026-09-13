@@ -121,6 +121,9 @@ only show that nothing regressed.
 
 ## Result
 
+**Set A's total is withdrawn. See § Rescored, 2026-09-13.** The table below
+is kept as it was measured.
+
 | Set | Round 1 | Round 2 | Round 3 | Total | Gate |
 |---|---:|---:|---:|---:|---|
 | **A** — the M1 30, retargeted to real facts | 29/30 | 28/30 | 28/30 | **85/90** | >= 24/30 ✅ |
@@ -138,7 +141,54 @@ scoring old transcripts against the new standard library measures nothing about
 the agents. Everything below was produced by fresh agents reading the shipped
 schema.
 
-## Method
+## Rescored, 2026-09-13 — set A withdrawn
+
+`crates/codeintel/tests/eval_rot.rs` (#17) now recomputes set A's reference
+answers and rescores the recorded runs on every commit. On its first run, at
+`0574a1b`, the table above did not reproduce.
+
+| Set | Round 1 | Round 2 | Round 3 | Total |
+|---|---:|---:|---:|---:|
+| **A**, recorded runs against current references | 28/30 | 27/30 | 26/30 | 81/90 |
+| **B**, recorded runs against `8471824`, rescored with `score.py` | 15/15 | 15/15 | 15/15 | **45/45** |
+
+**Set A's 85/90 is withdrawn, and 81/90 does not replace it.** Four of the new
+failures are not agents answering wrongly. Q5 in all three rounds calls
+`callers/2`, and round 3's Q10 calls `defines/2`, and schema 2 (`9e5dd5e`)
+removed both. This page's rule is that a signature change invalidates a run,
+because the agent could not have written the query that now exists. Schema 2 was
+that change, and nobody applied the rule when it landed. So 81/90 is what old
+transcripts earn against a new vocabulary, not a score. **A fresh set-A run is
+owed.** The other failures are the recorded ones: Q13 in every round and Q28 in
+rounds 2 and 3.
+
+**Set B stands.** Its tree is pinned. Its one moved reference answer, Q8 at 16
+→ 23 rows, moved together with the recorded queries, and all three rounds still
+match it.
+
+**Fourteen set-A reference answers moved.** The reason is the facts, not the
+questions:
+
+- **Q5, Q21, Q25 — checked by hand.** `Store::get` no longer calls itself. Its
+  body calls `HashMap::get`, and tier A's name matching resolved that to
+  `Store::get` until `ad49523` deferred to the compiler. The old reference
+  answer recorded a false edge.
+- **Q23.** `src/app.rs` no longer "depends on" `tests/store_test.rs`. That is
+  the crate-root-module artifact M4 documented and `cookbook.md` § 4 warned
+  about.
+- **Q10, Q20, Q30.** `crate/` is gone, and three `local src/kinds.rs N`
+  definitions appear. This fits `5ca3f68` refusing a symbol that SCIP defines in
+  two documents.
+- **Q11, Q12, Q22.** Enum variants and trait items are now exported (#13).
+- **Q16, Q26, Q27, Q28.** A trait-impl method is qualified by its trait
+  (`5ca3f68`), so `fmt` and `f` become distinct definitions and the per-file
+  counts move.
+
+Only the first bullet was traced end to end. The others are attributed to the
+commit whose stated behaviour matches the diff. The regenerated `expectedA.tsv`
+is `score.py expected A`'s output, and `eval_rot.rs` reproduces it independently
+through the library. The two agree.
+
 
 Fresh agent per group, three questions each, questions re-partitioned between
 rounds so no context saw the same grouping twice. Each agent read one file — the

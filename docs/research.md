@@ -385,8 +385,19 @@ The whole binary, as specified:
 
 Dev-dependencies, all STACK defaults: `insta` (golden facts and rendered
 output), `assert_cmd` + `predicates` (CLI), `rstest`, `proptest` (engine
-invariants), `tempfile`. Benchmarks are a test-only `divan` harness at M6, never
-a CLI verb.
+invariants), `tempfile`. Benchmarks are a test-only harness, never a CLI verb.
+
+**No `divan` and no `criterion`, against STACK's benchmark row.** Decided when
+the harness was built ([plan.md](plan.md) M6 § Pulled forward). Both answer "how
+long does this function take" with statistics over repeated calls. M6's
+question is different: p50/p95 over a whole pipeline — index, load, query, the
+CLI — on a pinned corpus, compared against a baseline **committed as JSON**.
+Neither crate emits that format, and both would bring a dependency tree to
+produce numbers that `std::time::Instant` plus the `serde_json` already in the
+tree produce directly. The regression gate CI actually runs is not a timer at
+all: it is exact counters in a nextest test. Trigger: the first
+*microbenchmark* of an engine internal — `Relation::select`, the interner's
+lookup — is where `divan` earns its place.
 
 The Datalog engine, the fact store, the interner, the extractors, and the MCP
 server are all first-party. No async runtime, no database, no HTTP client, no

@@ -1,0 +1,31 @@
+# The fixed query set behind `crates/codeintel/tests/counters.rs`.
+# id<TAB>fixture<TAB>query. Lines starting with `#` are comments.
+#
+# Chosen to cover each cost shape once: base scans, seeded traversals in
+# both directions and both provenances, unseeded closures, aggregates,
+# negation, `about`, and conformance over `import`. A query added here costs a
+# golden row, not a test function.
+1	rust	?- def(S, F, "function", N).
+2	rust	?- innermost_at("src/store.rs", 23, S).
+3	rust	?- innermost_at("src/store.rs", 23, S), about(S, Rel, A, B, L).
+4	rust	?- def(S, _, _, "get"), impact_of(S, C).
+5	rust	?- def(S, _, _, "get"), impact_of_exact(S, C).
+6	rust	?- def(S, _, _, "warm"), reach_of(S, C).
+7	rust	?- innermost_at("src/store.rs", 23, S), impact_of(S, C), def(C, G, _, _), !is_test(G).
+8	rust	?- calls(A, B).
+9	rust	?- calls_exact(A, B).
+10	rust	?- reaches(A, B).
+11	rust	?- ambiguous(N).
+12	rust	?- dead_export(S).
+13	rust	?- dead_export_exact(S).
+14	rust	?- entrypoint(S).
+15	rust	?- depends(F, G).
+16	rust	?- within(C, P).
+17	rust	?- uses_package_exact(F, P).
+18	rust	?- def(S, _, "function", N), C = count{ X : calls(X, S) }.
+19	rust	?- import(F, M, _), prefix(F, "src/ui/"), contains(M, "db").
+20	go	?- def(S, F, K, N).
+21	go	?- def(S, _, "method", _), parent(S, P).
+22	go	?- calls(A, B).
+23	go	?- dead_export(S).
+24	go	?- import(F, M, _), prefix(F, "ui/"), contains(M, "db").
