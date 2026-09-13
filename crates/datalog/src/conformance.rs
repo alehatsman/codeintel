@@ -502,6 +502,73 @@ fn the_plan_marks_a_lookup_served_by_a_column_index() {
     );
 }
 
+/// An engine whose relations are installed as base relations, not written as
+/// facts — so a constant in the goal seeds nothing and the plan is the
+/// planner's alone.
+fn base(relations: &[(&str, &[[&str; 2]])]) -> Engine {
+    let mut e = Engine::new(Box::new(Strings::new()));
+    for (name, rows) in relations {
+        let mut rel = crate::relation::Relation::new(2);
+        for [a, b] in *rows {
+            let tuple = [e.intern(a).expect("interns"), e.intern(b).expect("interns")];
+            assert!(rel.push(&tuple));
+        }
+        e.insert_relation(*name, rel);
+    }
+    e
+}
+
+const VIS: &[[&str; 2]] = &[
+    ["a", "public"],
+    ["b", "inherited"],
+    ["c", "inherited"],
+    ["d", "public"],
+];
+const PAR: &[[&str; 2]] = &[["b", "a"], ["c", "d"], ["x", "y"], ["z", "w"]];
+
+/// Once anything is bound, a literal sharing none of it is a cross product,
+/// and it waits for one that joins. `k` counts a constant as it counts a join
+/// variable, so `vis(S, "inherited")` and `par(S, P)` tie below, and written
+/// order used to break the tie toward the product: `exported/1`'s body, 868 ms
+/// on tokio against 1 ms joined (#24). Both orders derive the same tuples, so
+/// `stats.derived` cannot pin this. The plan can.
+#[test]
+fn a_literal_sharing_no_bound_variable_waits_for_one_that_does() {
+    let query = r#"?- vis(P, "public"), vis(S, "inherited"), par(S, P)."#;
+    let (rows, result) = both_in(|| base(&[("vis", VIS), ("par", PAR)]), query);
+    assert_eq!(rows, vec!["\"a\" \"b\"", "\"d\" \"c\""]);
+    // Not `0#1, 1#1, 2`: `par(S, P)` joins on `P` through its second column's
+    // index, and `vis(S, "inherited")` becomes a prefix lookup on `S`.
+    assert_eq!(
+        result.stats.plan.last().map(String::as_str),
+        Some("?-: 0#1, 2#1, 1")
+    );
+}
+
+/// The adornment walk mirrors the planner, so it waits too. Walked
+/// constant-first, `kind` was adorned `kind@fb` — its constant alone bound —
+/// though `par(S, P)` could bind `S` first and seed both columns.
+#[test]
+fn the_adornment_walk_also_waits_for_a_literal_that_joins() {
+    let program = r#"
+vis("a", "public"). vis("d", "public").
+kind("b", "inherited"). kind("c", "inherited").
+par("b", "a"). par("c", "d").
+"#;
+    let query = r#"?- vis(P, "public"), kind(S, "inherited"), par(S, P)."#;
+    let (rows, result) = both_in(|| engine(program), query);
+    assert_eq!(rows, vec!["\"a\" \"b\"", "\"d\" \"c\""]);
+    let transformed = &result.stats.transformed;
+    assert!(
+        transformed.iter().any(|n| n == "kind@bb"),
+        "{transformed:?}"
+    );
+    assert!(
+        !transformed.iter().any(|n| n == "kind@fb"),
+        "{transformed:?}"
+    );
+}
+
 // ── runtime type errors the safety rules cannot catch ───────────────────────
 
 #[test]

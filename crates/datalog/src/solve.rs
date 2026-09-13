@@ -119,7 +119,7 @@ impl Solver<'_> {
         }
 
         while order.len() < body.len() {
-            let mut best: Option<(u64, usize)> = None;
+            let mut best: Option<((bool, u64), usize)> = None;
             for (i, lit) in body.iter().enumerate() {
                 let waiting = needs.get(i).is_some_and(|n| !n.is_subset(&bound));
                 if taken.get(i).copied().unwrap_or(true) || waiting || !runnable(lit, &bound) {
@@ -173,8 +173,17 @@ impl Solver<'_> {
 
     /// `|R| / 2^k` for a relation literal, zero for a filter — filters are free
     /// and run as soon as their inputs exist.
-    fn cost(&self, lit: &Literal, bound: &BTreeSet<u16>) -> u64 {
-        let Literal::Pos(pred) = lit else { return 0 };
+    ///
+    /// Ranked first by whether the literal is a cross product. `k` counts a
+    /// constant exactly as it counts a join variable, so it cannot tell a
+    /// lookup from a product: in `exported`'s recursive body on tokio,
+    /// `visibility(S, "inherited")` tied `parent(S, P)` at `11380 >> 1`, the
+    /// written one won, and 1,788 seeds were paired with 2,126 candidates for
+    /// `parent` to filter — 868 ms, against 1 ms connected (#24).
+    fn cost(&self, lit: &Literal, bound: &BTreeSet<u16>) -> (bool, u64) {
+        let Literal::Pos(pred) = lit else {
+            return (false, 0);
+        };
         let rows = self.db.get(&pred.name).map_or(0, Relation::len) as u64;
         let k = pred
             .args
@@ -186,7 +195,7 @@ impl Solver<'_> {
             })
             .count()
             .min(31);
-        rows >> k
+        (disconnected(&pred.args, bound), rows >> k)
     }
 
     fn budget(&self) -> Result<()> {
@@ -730,6 +739,15 @@ fn filter_vars(lit: &Literal, out: &mut BTreeSet<u16>) {
         },
         Literal::Pos(_) => {}
     }
+}
+
+/// True when something is bound and a relation literal shares none of it:
+/// joining it now multiplies every row that follows by its own extent.
+pub(crate) fn disconnected(args: &[Term], bound: &BTreeSet<u16>) -> bool {
+    !bound.is_empty()
+        && !args
+            .iter()
+            .any(|t| matches!(t, Term::Var(v) if bound.contains(v)))
 }
 
 /// True when every input a literal needs is already bound.

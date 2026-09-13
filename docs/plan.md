@@ -1084,6 +1084,49 @@ sweep on an unchanged tree for another ~6 ms, was measured and not taken.
 `query_ms` and `cli_ms` did not move. Both run with `--no-refresh` and a fresh
 `Warm` per call, so they measure a cold load, by design.
 
+### #24: a constant is not a join (2026-09-13)
+
+The second fix under item 3, taken from the residue #18 named. The three
+~930 ms queries turned out to be one cost: `exported/1`, which every query
+reaching `ref`'s name fallback pays. `?- exported(S).` alone took 868 ms for
+4,866 rows. On tokio its recursion is one level deep, and the time went to a
+cross product. `|R| >> k` counts a constant exactly as it counts a join
+variable, so in the seeded body `visibility(S, "inherited")` tied
+`parent(S, P)` at `11380 >> 1`. Written order broke the tie toward the
+product, and 1,788 seeds were paired with 2,126 candidates.
+
+The fix is **connected first** ([03-datalog.md](../specs/03-datalog.md)
+§ Evaluation). Once anything is bound, a literal that shares no bound variable
+ranks after every literal that does. The planner and the adornment walk both
+apply it.
+
+Same corpus and host, from `benches/baseline.json` before and after:
+
+| | before | after |
+|---|---:|---:|
+| `?- exported(S).`, scratch probe, not in the set | 868 ms | 2 ms |
+| query 7, `dead_export`, p50 | 929.6 ms | **44.7 ms** |
+| query 8, `count{calls}`, p50 | 932.3 ms | **47.0 ms** |
+| query 9, `depends`, p50 | 960.8 ms | **43.0 ms** |
+| query 4, seeded `reach_of`, p50 | 79.7 ms | 35.9 ms |
+| query p95, pooled | 965.2 ms | 47.2 ms |
+| MCP p50 / p95, pooled | 27.4 / 952 ms | 19.7 / 33.5 ms |
+
+**Rows and `derived` are identical for every query, and `tests/counters.rs`
+did not move.** That is the finding to keep. `derived` counts derivations,
+not rows visited, and reordering a body changes only the latter, so the CI
+cost gate cannot see a cross product. Two plan-string tests in
+`conformance.rs` pin it instead. Both were mutation-checked: disabling the
+rule fails both.
+
+**The MCP done-when reads as met on this run, and is not counted as met.**
+The p50 is 19.7 ms against 20, measured at load average ~4 with other
+sessions on the host, and a run of the same code an hour earlier read
+21.9 ms. The p95 is a third of its budget and stands. `index_cold_ms` was
+recorded at 10.4 s against 9.2 s. The index path runs no Datalog, so that is
+host load, and it loosens that metric's gate by ~13% until the baseline is
+refreshed on a quiet host. Cold page cache is still unmeasured.
+
 ---
 
 ## Explicitly deferred
