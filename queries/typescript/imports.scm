@@ -21,3 +21,15 @@
 ; source exactly as an import does, and a layering rule that missed one would
 ; pass a violation.
 (export_statement source: (string (string_fragment) @module)) @import
+
+; An export clause that is not the declaration: `export { x, f as g }`,
+; `export default f`, `export = f`. Each local name is a `name_export` row
+; (01-facts.md § `name_export`); the join to its definition is `exported`'s
+; third clause. `@export` is the specifier's `name`, never its `alias`: the
+; question is which declaration is reachable, and `f` is what the clause says.
+; `!source` keeps `export { x } from "m"` out, which is the `@import` above.
+(export_statement
+  !source
+  (export_clause (export_specifier name: (identifier) @export)))
+(export_statement value: (identifier) @export)
+(export_statement "=" (identifier) @export)

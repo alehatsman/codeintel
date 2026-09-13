@@ -182,7 +182,15 @@ lower-case tag is an intrinsic element and not a name in scope. That is the
 rule the TypeScript compiler applies to JSX, read from the name exactly as Go's
 export rule is. `<ui.Row />` is recorded by its final name, as `ui.row()` is.
 
-Three things the TypeScript query decides, all from the node it matches:
+Four things the TypeScript query decides, all from the node it matches:
+
+- **An `export { x }` clause is a `name_export`, not a `visibility`.** The
+  declaration of `x` is not under the `export_statement`, so `Export::Statement`
+  correctly says `restricted`; the clause is a second statement in the file,
+  captured in `imports.scm` as `@export` by its `export_specifier`'s `name`
+  field (never `alias`), and for `export default f` and `export = f` by the
+  bare identifier. `!source` keeps `export { x } from "m"` out: that one is
+  an `@import`. The join to the declaration is `exported`'s third clause.
 
 - **A binding whose value node is a function is a `function`.** In
   `const make = (n) => n`, the grammar states the value is an `arrow_function`,
@@ -261,7 +269,12 @@ Per file, one parse, then:
    be inferring, which is invariant 1. `@scope.*` items define nothing and get
    no row.
 6. Run `imports.scm` → `import` rows. The module specifier is captured **as
-   written**; no resolution.
+   written**; no resolution. The same query's `@export` captures →
+   `name_export(F, Name)` rows, one per local name an `export { }`,
+   `export default` or `export =` clause names
+   ([01-facts.md](01-facts.md) § `name_export`). The two live in one query
+   because both are statements about what a file says at its edge, and an
+   `export ... from` is already there as an `@import`.
 7. `@reference.call` captures → `name_ref(Name, F, Line, Col, From)` rows, with
    `From` from the same span sweep. **Tier A does not resolve names to symbols.**
 8. `@impl` captures → `name_impl(F, TypeName, TraitName, Line)` rows, both names

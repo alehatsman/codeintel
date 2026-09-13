@@ -1,7 +1,7 @@
 ---
 id: facts
 status: proposed
-schema_version: 2
+schema_version: 3
 binding: yes
 ---
 # 01 — Fact schema
@@ -133,10 +133,11 @@ signature together with SCIP's global identity. See
 
 ## Base relations
 
-15 relations. Ceiling is 16 ([00-overview.md](00-overview.md) § Surface budget).
-The deferred `has_type` below carries a heading but is not one of the 15; it is
-documented so that re-adding it is a decision with a written record rather than
-a rediscovery. Count the headings and you get 16 — that is why.
+16 relations. Ceiling is 16 ([00-overview.md](00-overview.md) § Surface budget),
+so the budget is spent: the next base relation deletes one. The deferred
+`has_type` below carries a heading but is not one of the 16; it is documented
+so that re-adding it is a decision with a written record rather than a
+rediscovery. Count the headings and you get 17 — that is why.
 
 ### `file(F, Lang)`
 One row per indexed source file. `F` is the repo-relative path.
@@ -305,7 +306,10 @@ a bare one is `restricted`. A class member is public unless it says otherwise.
 That is the language's default, not a guess, so a bare member is `public`.
 Both are read from the declaration node alone. `const x = 1; export { x };`
 exports `x` from a separate clause, which `visibility` does not read: `x` is
-`restricted` and `exported` misses it (#22).
+`restricted`, and stays so. The clause is its own fact, `name_export`
+(§ `name_export`), and `exported` joins the two. So in TypeScript, and only
+there, `visibility(S, "restricted"), exported(S)` has rows, and each one is a
+declaration that an `export { }` or `export default` names.
 
 ### `resolved(S)`
 Present iff `S` has SCIP-grade identity. The gate for precision-critical
@@ -435,6 +439,48 @@ extern("scip-go gomod github.com/gin-gonic/gin v1.9.1 gin/Context#JSON().",
        "gomod", "github.com/gin-gonic/gin", "v1.9.1").
 ```
 
+### `name_export(F, Name)`
+File `F` exports its local `Name` from a clause that is not the declaration:
+TypeScript's `export { x }`, `export { f as g }`, `export default f` and
+`export = f`. One row per exported local name. It names no symbol.
+
+```
+name_export("src/kinds.ts", "retries").
+name_export("src/kinds.ts", "sealed").
+```
+
+`Name` is the **local** name, the `export_specifier`'s `name` field, never its
+`alias`: `exported` asks whether the declaration named `f` is reachable from
+outside, and `f` is what the clause says. The outside name `g` answers a
+different question, cross-file resolution of `g`, which tier A does not do
+(§ `name_ref`), so it is not recorded.
+
+Like `name_ref` and `name_impl` this is a *local* fact — a byte range in one
+file — and the join to a definition is a rule (§ Derived relations):
+
+```prolog
+exported(S) :- name_export(F, N), def(S, F, _, N).
+```
+
+`visibility` is untouched by it. A declaration the clause exports still states
+nothing about itself, so it stays `restricted` and is `exported` through this
+row, exactly as an `inherited` variant is exported through its enum. Reading
+the clause inside the extractor to flip `visibility` would put a same-file join
+in Rust and make `visibility` mean "exported somehow" instead of what the
+declaration states.
+
+A re-export, `export { x } from "m"`, has a `source` and defines nothing here.
+It is an `import` row (§ `import`) and not a `name_export` row. A name the
+clause exports that the file does not define — an imported binding re-exported
+by a bare `export { x }` — is a row that joins nothing, which is true. A clause
+inside `namespace X { }` joins at file granularity, so a same-named file-level
+definition would also match; documented, not handled, and not seen in a corpus.
+
+Measured before spending the slot (deno, 2026-09-14): 3,068 inline `export`
+declarations against 82 clause specifiers and 51 `export default <name>`, in
+83 of 3,133 files, clustered in Node-compat shims and vendored `.d.ts`. Small,
+but every one of them is a `dead_export` false positive with no way to tell.
+
 ---
 
 ## Derived relations (`rules/stdlib.dl`)
@@ -454,11 +500,16 @@ exported(S) :- visibility(S, "public").
 % visible as the thing that owns it. Recursive, so a variant of a public enum
 % in a public module needs no special case, and depth is not capped.
 exported(S) :- visibility(S, "inherited"), parent(S, P), exported(P).
+% A TypeScript `export { x }` or `export default x` is a clause the declaration
+% does not see. It is its own fact, joined by local name in the same file.
+exported(S) :- name_export(F, N), def(S, F, _, N).
 ```
 
 `restricted` appears in no rule. That is the point: `pub(crate)` and a bare
 `fn` are both "not visible outside the crate", and `exported` is exactly the
-question `dead_export` asks, so neither yields a row.
+question `dead_export` asks, so neither yields a row. The third clause does
+not read `restricted` either: it reads a clause that exports the name, which
+is a second fact about the same file (§ `name_export`).
 
 A trait-impl method reaches the right answer through `parent` rather than
 through a rule of its own. `parent` for a method in `impl Handler for Config`
@@ -794,3 +845,4 @@ that `name_ref` exists to prevent.
 |---|---|
 | 1 | Initial. 14 relations. `ref` is derived from `scip_ref` + `name_ref`; tier A does not resolve names. |
 | 2 | 15 relations. `exported` and `implements` become derived, each over a narrower base fact — the same move `ref` made in v1. `exported/1` → `visibility/2`; `implements/3` → `scip_impl/2` + `name_impl/4`. Both derived relations keep their v1 name and arity, so no query or rule that *consumed* them changes. |
+| 3 | 16 relations, the ceiling. `name_export/2`: a TypeScript `export { x }` / `export default x` clause, by local name. `exported` gains a third clause over it (#22). Nothing else moves. |

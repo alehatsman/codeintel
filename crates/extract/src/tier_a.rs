@@ -709,6 +709,14 @@ impl Extractor {
                     Some(&"alias") => {
                         alias = capture.node.utf8_text(src.as_bytes()).unwrap_or_default();
                     }
+                    // An `export { x }` clause names a local; the declaration
+                    // it exports is joined in `stdlib.dl`, not here
+                    // (`specs/01-facts.md` § `name_export`). Not an import,
+                    // so not in `count`.
+                    Some(&"export") => {
+                        let name = capture.node.utf8_text(src.as_bytes()).unwrap_or_default();
+                        push(seg, "name_export", &[file, atom(interner, name)?]);
+                    }
                     _ => {}
                 }
             }
