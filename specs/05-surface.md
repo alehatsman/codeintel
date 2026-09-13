@@ -142,8 +142,10 @@ the worst failure this tool has, because it looks like a right one.
   it is abandoned, the query runs against the index as it stands, and the
   response carries `status: "stale"` naming the files it could not refresh.
   Never a silent slow path and never a silent stale answer.
-- `stats.refreshed` lists what was re-extracted. Zero is the common case and
-  costs one `stat` per indexed file.
+- `stats.refreshed` lists what was re-extracted. Zero is the common case. It
+  costs a gitignore-aware walk of the tree, one `stat` per file (which is how
+  new files are found), and **no write**
+  ([04-storage.md](04-storage.md) § Incremental reindex). ~5 ms for 799 files.
 - `--no-refresh` skips it, for benchmarking or for querying a deliberately
   pinned index.
 - New files are picked up; **deleted files are pruned.** A refresh that only
@@ -437,6 +439,27 @@ digit-only arguments would be the extractor guessing, which invariant 1 forbids,
 and would make a symbol genuinely named `142` unaddressable. An agent writing
 `?- innermost_at("src/store.rs", 142, S).` gets the integer right because it is
 writing Datalog rather than filling positional slots.
+
+**The server stays warm between calls.** `codeintel mcp` is one long-lived
+process. Reloading the index on every call cost ~18 ms of a ~40 ms answer on a
+799-file tree (#18). The server keeps the loaded engine (relations, the standard
+library, symbol sites) and reuses it for as long as the manifest *after refresh*
+equals the manifest the engine was built from. A refresh that commits anything,
+or another process's `codeintel index`, moves the manifest, and the next call
+rebuilds. **Every call still refreshes first.** Warmth skips the load, never the
+refresh that keeps an answer current. A call that ends in `corrupt`, `no-index`
+or a schema mismatch keeps nothing warm.
+
+**Query literals do not outlive their call.** A query interns constants the
+corpus does not contain. A long-lived engine would keep them, so atom ids would
+depend on what was asked earlier — and so would which rows a truncated answer's
+stable prefix holds ([03-datalog.md](03-datalog.md) § Determinism). The host
+therefore gives the engine an **overlay dictionary**: a corpus string resolves to
+its stored atom, any other string gets a scratch atom above the dictionary, and
+the scratch range is emptied after every call. The CLI builds the same engine
+through the same code, once. A warm server and the CLI give byte-identical
+answers to the same query on the same index. `crates/datalog` is unchanged: the
+overlay is a `Symbols` implementation in this crate.
 
 **Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout, hand-written.**
 A message with no `id` is a notification and gets no reply. There is no MCP SDK

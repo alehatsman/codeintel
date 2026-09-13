@@ -972,6 +972,62 @@ finding.** Regenerate it with `score.py expected A` only once the diff is
 understood. Set B is not in CI, because its tree is this repository at
 `8471824` and a shallow checkout does not have that commit.
 
+### #18: the MCP process stays warm, and a read writes nothing (2026-09-13)
+
+This is the first fix under item 3, chosen from a measured breakdown rather than
+from the issue title. On tokio, a no-change MCP call paid ~40 ms before it
+evaluated anything:
+
+| step | ms |
+|---|---:|
+| `Store::open` | 5.4 |
+| walk | ~4 |
+| `fsync`'d commit of an unchanged manifest | 8 |
+| full load | 17 |
+
+The issue was filed as "the store reloads". The commit was a cost of the same
+order that nobody had filed.
+
+Two changes, specified in [04-storage.md](../specs/04-storage.md) § Incremental
+reindex and [05-surface.md](../specs/05-surface.md) § MCP:
+
+- **Refresh commits only when the manifest moved**, or when no index exists
+  yet. Every query with refresh on drops ~8 ms and a durable write.
+- **`codeintel mcp` holds a `query::Warm`.** The loaded engine is reused while
+  the manifest after refresh is unchanged. Query literals go through a host
+  overlay dictionary and are discarded after each call, so a warm answer is
+  byte-identical to a cold one.
+
+`tests/warm.rs` pins three things:
+
+- an edit made between calls is seen;
+- a capped answer's surviving row is the same warm and cold;
+- a no-change refresh writes nothing.
+
+The last two were mutation-checked. Removing the discard fails the capped-row
+test, and restoring the unconditional commit fails the no-write test.
+
+Same corpus and host, from `benches/baseline.json`. "Before" is `query::run`
+with refresh on, which is what every MCP call did (scratch probe):
+
+| | before | after |
+|---|---:|---:|
+| MCP call, near-free query (set id 6) | 41.6 ms | **12.4 ms** |
+| MCP call, seeded `impact_of` (id 3) | — | 18.8 ms |
+| MCP first call, which loads | — | 33.8 ms |
+| MCP p50 / p95, pooled over the 9-query set | not measurable | 27.4 / 952 ms |
+
+**The done-when is still unmet, and the reason has moved.** A warm call's
+overhead is now ~12 ms, which is under the 20 ms p50 on its own. What holds the
+pooled p50 at 27 ms and the p95 at 952 ms is evaluation: three whole-graph
+queries in the fixed set (`dead_export`, `count{calls}` and `depends`, ~930 ms
+each) and a seeded `reach_of` at ~67 ms. The next M6 fix is in the engine or in
+those rules, not in loading. #18's option C, which skips `Store::open` and the
+sweep on an unchanged tree for another ~6 ms, was measured and not taken.
+
+`query_ms` and `cli_ms` did not move. Both run with `--no-refresh` and a fresh
+`Warm` per call, so they measure a cold load, by design.
+
 ---
 
 ## Explicitly deferred
