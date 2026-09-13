@@ -345,9 +345,14 @@ fn evaluate(
     // both would give two arrays whose `i`th rows are different tuples.
     let printed = render(&loaded.engine, &result, &loaded.sites, options.raw, budget);
     let truncated = result.truncated || printed.truncated;
-    let cap = result
-        .cap
-        .or(printed.truncated.then_some("max_result_bytes"));
+    // When both caps fire, the printed budget decided which rows are missing,
+    // so it is the one reported. Naming the engine's row cap there advised
+    // `--limit`, which returns the same rows every time (#27).
+    let cap = if printed.truncated {
+        Some("max_result_bytes")
+    } else {
+        result.cap
+    };
 
     if truncated {
         status = Status::Truncated;

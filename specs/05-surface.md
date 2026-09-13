@@ -282,6 +282,15 @@ the structured format.
 `max_result_rows` and nothing else, so it is offered only when that is the cap
 that fired; a byte cap says "narrow the query".
 
+**When both caps fire, `cap` names the one that shaped the output.** The
+engine can stop at `max_result_rows` and the printed budget can then cut
+further: on deno, `--limit 5000` kept 5,000 rows and the byte budget printed
+2,757 (#27). The rows missing from the answer were dropped by the byte cap,
+so that is the cap reported, with its advice. Naming the row cap there told
+the consumer to raise `--limit`, which returns the same 2,757 rows every time.
+A consumer that follows the hint loops, and invariant 7 is not satisfied by a
+cap that fired but did not decide the answer.
+
 ### `schema`
 
 Prints the relation catalog, atom vocabularies, and stdlib rule signatures.
