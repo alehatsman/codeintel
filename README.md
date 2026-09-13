@@ -96,14 +96,10 @@ Rust, Python, TypeScript, and Java that is the *dominant* call form. Tier A
 alone gives you a good symbol map and a thin, unrepresentative call graph.
 
 So `codeintel index` always prints the exact indexer command for the languages
-it found, and `--run-indexers` runs them for you:
-
-```sh
-codeintel index . --run-indexers     # rust-analyzer scip . | scip-typescript index | ...
-```
-
-Never implicit — an indexer runs your build. If it is missing or fails, you get
-the command, its stderr, and a tier-A index; it is never fatal.
+it found, e.g. `rust-analyzer scip .` or `scip-typescript index --infer-tsconfig`.
+You run it: an indexer runs your build, and `codeintel` never does
+([docs/plan.md](docs/plan.md) M3). Then `codeintel index .` again picks up
+`./index.scip`.
 
 ## Docs
 
@@ -132,7 +128,7 @@ fresh agent each time.
 
 | Set | Score | Index |
 |---|---:|---|
-| 30 questions, real extracted facts | **withdrawn** — was 85/90; re-run owed | `tests/fixtures/rust/` with SCIP |
+| 30 questions, real extracted facts | **89/90** | `tests/fixtures/rust/` with SCIP |
 | 15 held-out questions, a repo no fixture comes from | **45/45** | this repository pinned, **no SCIP** |
 
 The second row is also the no-SCIP number: 45/45 with tier A alone. The first
