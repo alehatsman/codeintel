@@ -178,9 +178,15 @@ span two inputs. It is carried forward on a refresh that does not parse, like
 the per-input counts, and is `0` with no inputs. A manifest written before the
 field existed reads `0` until its next ingest.
 
-**`extractor_fingerprint` is blake3 over the binary version, every vendored and
-authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A
-mismatch forces a full re-extract.** Without it, incremental indexing means an
+**`extractor_fingerprint` is blake3 over the binary version, the source of
+`crates/extract/src`, the locked versions of the grammar and SCIP crates, every
+vendored and authored `.scm` byte, every field of every `lang.rs` row, and the
+kind-mapping table. A mismatch forces a full re-extract.** The binary version
+alone is not enough: it has been `0.1.0` through every extractor fix, and a
+`cargo update` moves a caret-pinned grammar without touching it. Hashing the
+source over-invalidates on a comment edit, and that is the cheap direction. The
+field list is destructured, so a new `Lang` field does not compile until it is
+hashed. Without it, incremental indexing means an
 extractor fix reaches only the files a user happens to edit afterwards: half the
 index is built by the old query and half by the new one, `status` says `ok`, and
 nothing will ever reconcile them. For the same reason the fingerprint is
