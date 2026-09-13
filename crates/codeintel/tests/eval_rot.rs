@@ -63,20 +63,15 @@ fn set_a_reference_answers_still_hold() {
     );
 }
 
-/// The recorded runs score as `docs/agent-eval.md` § Rescored says, question
-/// by question. Q5 in every round and Q10 in round 3 call rules schema 2
-/// deleted (`callers`, `defines`); Q13 and Q28 are the agents' own failures.
+/// The recorded runs score as `docs/agent-eval.md` § Set A, re-run says,
+/// question by question: round 3's Q26 is the one failure in ninety.
 #[test]
 fn recorded_set_a_runs_fail_exactly_the_recorded_questions() {
     let root = indexed();
     let expected = expected_values();
     let questions = questions();
 
-    for (run, want) in [
-        ("A1", vec!["5", "13"]),
-        ("A2", vec!["5", "13", "28"]),
-        ("A3", vec!["5", "10", "13", "28"]),
-    ] {
+    for (run, want) in [("A1", vec![]), ("A2", vec![]), ("A3", vec!["26"])] {
         let answers =
             std::fs::read_to_string(eval().join("runs").join(format!("{run}.tsv"))).expect("run");
         let answers: BTreeMap<&str, &str> = answers

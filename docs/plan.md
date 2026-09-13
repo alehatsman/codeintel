@@ -612,8 +612,14 @@ done-when asks for.
 **Set A's 85/90 was withdrawn on 2026-09-13**
 ([agent-eval.md](agent-eval.md) § Rescored). Schema 2 removed `callers` and
 `defines`, and four recorded answers call them. By that page's own rule the runs
-are invalid, and a fresh run is owed. Set B stands. So this done-when is
-**unmet for set A** until the re-run.
+are invalid, and a fresh run was owed. Set B stands.
+
+**Set A was re-run the same day, at `f3366a9`, and scored 89/90**
+([agent-eval.md](agent-eval.md) § Set A, re-run; #25). Thirty fresh agents
+scored 30, 30 and 29 across the three rounds. The one failure is Q26, which
+read "used by" as "referenced from". **This done-when is met for both sets.**
+The run is not paired with the withdrawn one: schema 2 and a corrected doc line
+landed in between. `eval_rot.rs` pins the new runs question by question.
 
 **The first numbers were withdrawn, not amended.** An earlier pass scored 88/90
 and 43/45; then the eval's own finding — `long_def`'s copy — was fixed, which
