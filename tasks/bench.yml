@@ -1,0 +1,32 @@
+---
+description: wall-clock bench over the pinned corpus — docs/plan.md M6
+
+# Local only. CI's regression gate is `tests/counters.rs`, which is exact; a
+# shared runner's clock is not.
+#
+# `provision apply --stream tasks/bench.yml` to watch the numbers; without it a
+# passing step prints only its verdict. The result is `target/bench/corpus.json`
+# either way, and that file is what to read.
+#
+# The corpus pin lives here, and a second copy lives in
+# `crates/codeintel/benches/baseline.json` as `corpus.rev`. The bench refuses to
+# compare when the two disagree. Bump the pin here, then run once with
+# `UPDATE_BASELINE=1` to rewrite the baseline.
+steps:
+  - vars:
+      corpus_rev: 53542467a3b0fdfbcdcaff236e31f7ab2e9503f0
+      corpus_dir: "{{ home }}/.cache/codeintel/corpus/tokio"
+
+  # A sha converges offline once it is on disk.
+  - name: "tokio at {{ corpus_rev }}"
+    git:
+      repo: https://github.com/tokio-rs/tokio.git
+      dest: "{{ corpus_dir }}"
+      ref: "{{ corpus_rev }}"
+
+  # Several minutes: three cold indexes, and ~40 evaluations of queries
+  # measured at a second each.
+  - name: bench
+    shell: cargo bench --locked -p codeintel --bench corpus -- "{{ corpus_dir }}"
+    changed_when: "false"
+    timeout: 30m

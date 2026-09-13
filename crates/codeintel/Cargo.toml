@@ -20,5 +20,11 @@ serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+# Wall clock over a pinned corpus, `docs/plan.md` M6. Not a CLI verb, and not in
+# the gate: `tasks/bench.yml` runs it.
+[[bench]]
+name = "corpus"
+harness = false
+
 [lints]
 workspace = true

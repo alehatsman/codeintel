@@ -132,10 +132,13 @@ fresh agent each time.
 
 | Set | Score | Index |
 |---|---:|---|
-| 30 questions, real extracted facts | **85/90** | `tests/fixtures/rust/` with SCIP |
+| 30 questions, real extracted facts | **withdrawn** — was 85/90; re-run owed | `tests/fixtures/rust/` with SCIP |
 | 15 held-out questions, a repo no fixture comes from | **45/45** | this repository pinned, **no SCIP** |
 
-The second row is also the no-SCIP number: 45/45 with tier A alone.
+The second row is also the no-SCIP number: 45/45 with tier A alone. The first
+was withdrawn on 2026-09-13. Schema 2 deleted two rules that recorded answers
+call, and `tests/eval_rot.rs`, which now recomputes set A on every commit,
+caught it.
 
 Every failure so far has been a *signature reading as something it is not*, and
 each one is a fix to the schema rather than a complaint about the agent. The
