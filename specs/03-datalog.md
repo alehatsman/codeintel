@@ -387,6 +387,25 @@ with the name of the cap that fired** when it bites (invariant 7).
 | `max_strata` | 64 | reject at planning |
 | `max_body_literals` | 32 | reject at planning |
 
+`max_body_literals` counts the literals inside a body's `count{}` goals too, at
+every depth: the solver recurses once per literal whether or not it sits in an
+aggregate, so a bound that skipped them bounded nothing. It is checked
+**before** the safety rules, on the parsed program; the safety check and the
+planner cost more than linear time in body length, and a limit enforced after
+them let an 8,000-literal query spend seconds past `max_time_ms` just to be
+told it was too long. `max_strata` needs stratification to measure and is
+checked after it.
+
+**Aggregate nesting is capped at 32 by the parser, and that cap is not a
+`Limits` field.** Parsing, the safety check and demand transformation each
+recurse once per `count{}` level, and a query nested ten thousand deep (~150 KB
+of text) overflowed the stack — an abort, not a diagnostic, which takes the MCP
+process with it. The bound guards the thread's stack, which is a property of the
+host rather than of the query, and parsing happens before any `Limits` is in
+hand (`load_rules` has none at all). 32 matches `max_body_literals`' default:
+each level needs a literal, so a deeper query could not pass planning anyway.
+Past it the parser returns `invalid-query` naming the cap.
+
 Both planning limits are checked on the program as written and again on the
 demand-rewritten one, which has a guard literal more per body and more strata.
 A rewrite over the limit is dropped and the program as written runs: the

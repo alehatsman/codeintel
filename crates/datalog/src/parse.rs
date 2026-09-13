@@ -3,6 +3,8 @@
 //! String literals are interned as they are parsed, so the AST carries atoms
 //! and evaluation never touches text except through the string builtins.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::ast::{Arith, Cmp, Expr, Literal, Pred, Program, Query, Rule, StrTest};
 use crate::atom::{Term, int_atom};
 use crate::diag::{Diagnostic, Result, Status};
@@ -12,10 +14,18 @@ use crate::symbols::Symbols;
 /// Builtin names a rule may not define.
 pub const RESERVED: [&str; 6] = ["between", "match", "prefix", "suffix", "contains", "count"];
 
+/// How deeply `count{}` may nest.
+///
+/// Not a [`crate::Limits`] field: parsing, checking and the demand rewrite each
+/// recurse once per level, so this guards the thread's stack, which belongs to
+/// the host rather than the query (`specs/03-datalog.md` § Limits).
+pub const MAX_NESTING: usize = 32;
+
 /// Parse `src`, interning its string literals into `syms`.
 ///
 /// # Errors
-/// Returns `invalid-query` with a span for any lexical or syntactic defect.
+/// Returns `invalid-query` with a span for any lexical or syntactic defect, or
+/// for `count{}` nested deeper than [`MAX_NESTING`].
 pub fn parse(src: &str, syms: &mut dyn Symbols) -> Result<Program> {
     let toks = lex(src)?;
     Parser {
@@ -23,6 +33,8 @@ pub fn parse(src: &str, syms: &mut dyn Symbols) -> Result<Program> {
         at: 0,
         syms,
         vars: Vec::new(),
+        index: BTreeMap::new(),
+        depth: 0,
     }
     .program()
 }
@@ -31,7 +43,12 @@ struct Parser<'a> {
     toks: Vec<Token>,
     at: usize,
     syms: &'a mut dyn Symbols,
+    /// Variable names of the current rule, by index.
     vars: Vec<String>,
+    /// `vars` inverted, so a body naming thousands of variables stays linear.
+    index: BTreeMap<String, u16>,
+    /// `count{}` levels open at the current token.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -77,14 +94,21 @@ impl Parser<'_> {
     }
 
     fn var_index(&mut self, name: &str) -> Result<u16> {
-        if let Some(i) = self.vars.iter().position(|v| v == name) {
-            return u16::try_from(i).map_or_else(|_| self.err(TOO_MANY_VARS), Ok);
+        if let Some(i) = self.index.get(name) {
+            return Ok(*i);
         }
         let Ok(next) = u16::try_from(self.vars.len()) else {
             return self.err(TOO_MANY_VARS);
         };
         self.vars.push(name.to_string());
+        self.index.insert(name.to_string(), next);
         Ok(next)
+    }
+
+    /// Start a new rule or query: variable numbering is per clause.
+    fn clear_vars(&mut self) {
+        self.vars.clear();
+        self.index.clear();
     }
 
     // ── program ─────────────────────────────────────────────────────────────
@@ -108,7 +132,7 @@ impl Parser<'_> {
 
     fn query(&mut self) -> Result<Query> {
         let from = self.span().0;
-        self.vars.clear();
+        self.clear_vars();
         self.expect(&Kind::Ask, "to start a query")?;
         let body = self.body()?;
         let to = self.span().1;
@@ -124,7 +148,7 @@ impl Parser<'_> {
 
     fn rule(&mut self) -> Result<Rule> {
         let from = self.span().0;
-        self.vars.clear();
+        self.clear_vars();
         let head = self.pred()?;
         if RESERVED.contains(&head.name.as_str()) {
             return Err(Diagnostic::at(
@@ -292,11 +316,19 @@ impl Parser<'_> {
     }
 
     fn count(&mut self) -> Result<Expr> {
+        if self.depth >= MAX_NESTING {
+            return self.err(format!(
+                "`count{{}}` nests more than {MAX_NESTING} deep; split the inner aggregates into \
+                 rules of their own"
+            ));
+        }
         self.at += 1; // `count`
         self.expect(&Kind::LBrace, "after `count`")?;
         let over = self.term()?;
         self.expect(&Kind::Colon, "between `count`'s term and its goal")?;
+        self.depth += 1;
         let goal = self.body()?;
+        self.depth -= 1;
         self.expect(&Kind::RBrace, "to close `count`")?;
         Ok(Expr::Count { over, goal })
     }
@@ -375,9 +407,10 @@ fn int_term(n: i64, span: (usize, usize)) -> Result<Term> {
 /// counting only what the goal's own literals mention.
 fn output_columns(body: &[Literal]) -> Vec<u16> {
     let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
     let mut push = |t: &Term| {
         if let Term::Var(i) = t
-            && !out.contains(i)
+            && seen.insert(*i)
         {
             out.push(*i);
         }
@@ -577,6 +610,23 @@ mod tests {
     fn a_term_followed_by_nothing_useful_explains_the_literal_syntax() {
         let msg = message("r(X) :- X.");
         assert!(msg.contains("name(Arg"), "{msg}");
+    }
+
+    /// `?- N = count{ X : N = count{ X : ... e(X) } }.`, `depth` levels.
+    fn nested(depth: usize) -> String {
+        format!(
+            "?- {}e(X){}.",
+            "N = count{ X : ".repeat(depth),
+            " }".repeat(depth)
+        )
+    }
+
+    #[test]
+    fn count_nests_up_to_the_cap_and_no_further() {
+        let program = ok(&nested(MAX_NESTING));
+        assert!(program.query.is_some());
+        let msg = message(&nested(MAX_NESTING + 1));
+        assert!(msg.contains("nests more than 32"), "{msg}");
     }
 
     #[test]
