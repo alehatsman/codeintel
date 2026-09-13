@@ -217,9 +217,13 @@ impl Engine {
             rules,
             query: Some(goal.clone()),
         };
+        // Body length first: the safety check and the planner are not linear
+        // in it, and a limit enforced after them bounds nothing
+        // (`specs/03-datalog.md` § Limits).
+        check_body_literals(&plain, limits)?;
         let schema = check(&plain, self.base_arities())?;
         let strata = stratify(&plain)?;
-        check_planning_limits(&plain, &strata, limits)?;
+        check_strata(&strata, limits)?;
 
         // Taken from the *plain* program: the demand rewrite adorns predicate
         // names (`p@bf`), and a caller asking "does this answer depend on
@@ -651,6 +655,11 @@ fn collect_patterns(body: &[Literal], out: &mut Vec<(String, (usize, usize))>) {
 }
 
 fn check_planning_limits(program: &Program, strata: &Strata, limits: &Limits) -> Result<()> {
+    check_body_literals(program, limits)?;
+    check_strata(strata, limits)
+}
+
+fn check_strata(strata: &Strata, limits: &Limits) -> Result<()> {
     if strata.len() > limits.max_strata {
         return Err(Diagnostic::whole(
             Status::InvalidQuery,
@@ -661,32 +670,50 @@ fn check_planning_limits(program: &Program, strata: &Strata, limits: &Limits) ->
             ),
         ));
     }
-    let mut bodies: Vec<(String, usize, (usize, usize))> = program
-        .rules
+    Ok(())
+}
+
+/// `max_body_literals`, over every rule and the query. Needs only the parse, so
+/// it runs before anything whose cost grows faster than the body does.
+fn check_body_literals(program: &Program, limits: &Limits) -> Result<()> {
+    let rules = program.rules.iter().map(|r| {
+        (
+            format!("{}/{}", r.head.name, r.head.args.len()),
+            &r.body,
+            r.span,
+        )
+    });
+    let query = program
+        .query
         .iter()
-        .map(|r| {
-            (
-                format!("{}/{}", r.head.name, r.head.args.len()),
-                r.body.len(),
-                r.span,
-            )
-        })
-        .collect();
-    if let Some(query) = &program.query {
-        bodies.push(("?-".to_string(), query.body.len(), query.span));
-    }
-    for (name, len, span) in bodies {
+        .map(|q| ("?-".to_string(), &q.body, q.span));
+    for (name, body, span) in rules.chain(query) {
+        let len = literal_count(body);
         if len > limits.max_body_literals {
             return Err(Diagnostic::at(
                 Status::InvalidQuery,
                 span,
                 format!(
-                    "`{name}` has {len} body literals and the limit is {} (max_body_literals); \
-                     split it into two rules",
+                    "`{name}` has {len} body literals, counting those inside `count{{}}`, and the \
+                     limit is {} (max_body_literals); split it into two rules",
                     limits.max_body_literals
                 ),
             ));
         }
     }
     Ok(())
+}
+
+/// Literals in a body, including those in its aggregates' goals at any depth:
+/// the solver recurses once per literal wherever it sits.
+fn literal_count(body: &[Literal]) -> usize {
+    body.iter()
+        .map(|lit| match lit {
+            Literal::Assign {
+                expr: crate::ast::Expr::Count { goal, .. },
+                ..
+            } => 1 + literal_count(goal),
+            _ => 1,
+        })
+        .sum()
 }

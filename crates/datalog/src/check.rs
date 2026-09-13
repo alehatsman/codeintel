@@ -157,7 +157,7 @@ fn check_rule(rule: &Rule, schema: &mut Schema) -> Result<()> {
         vars: &rule.vars,
         head: term_vars(&rule.head.args),
     };
-    let bound = check_body(&rule.body, schema, &ctx, &BTreeSet::new())?;
+    let bound = check_body(&rule.body, schema, &ctx, &BTreeSet::new(), &ctx.head)?;
 
     for arg in &rule.head.args {
         let v = match arg {
@@ -200,7 +200,7 @@ fn check_query(query: &Query, schema: &mut Schema) -> Result<()> {
         vars: &query.vars,
         head: BTreeSet::new(),
     };
-    check_body(&query.body, schema, &ctx, &BTreeSet::new())?;
+    check_body(&query.body, schema, &ctx, &BTreeSet::new(), &ctx.head)?;
     Ok(())
 }
 
@@ -208,7 +208,7 @@ fn check_query(query: &Query, schema: &mut Schema) -> Result<()> {
 struct Ctx<'a> {
     rule: &'a str,
     vars: &'a [String],
-    /// Variables the head mentions — they count as "used outside" an aggregate.
+    /// Variables the head mentions — they count as "used outside" the body.
     head: BTreeSet<u16>,
 }
 
@@ -244,34 +244,29 @@ pub(crate) fn literal_vars(lit: &Literal) -> BTreeSet<u16> {
 ///
 /// `outer` holds variables already bound by an enclosing body — the aggregate
 /// case. It is empty for a rule or query body.
+///
+/// `outside` holds the variables used anywhere outside this body: the head,
+/// and for an aggregate's goal every enclosing body, at every depth. Safety
+/// rule 4 asks whether a variable the goal binds is used there.
 fn check_body(
     body: &[Literal],
     schema: &mut Schema,
     ctx: &Ctx<'_>,
     outer: &BTreeSet<u16>,
+    outside: &BTreeSet<u16>,
 ) -> Result<BTreeSet<u16>> {
+    // Once per body, not once per literal. `literal_vars` of an aggregate is
+    // its target alone, so this set is "used outside" for every aggregate the
+    // body holds.
+    let mut elsewhere = outside.clone();
+    for lit in body {
+        elsewhere.extend(literal_vars(lit));
+    }
     let mut bound = outer.clone();
-    for (i, lit) in body.iter().enumerate() {
-        let elsewhere = used_elsewhere(ctx, body, i);
+    for lit in body {
         step(lit, schema, ctx, &elsewhere, &mut bound)?;
     }
     Ok(bound)
-}
-
-/// Variables used outside body literal `i`: the head, plus every other literal.
-fn used_elsewhere(ctx: &Ctx<'_>, body: &[Literal], i: usize) -> BTreeSet<u16> {
-    let mut out = ctx.head.clone();
-    for (j, lit) in body.iter().enumerate() {
-        if j != i {
-            out.extend(literal_vars(lit));
-        }
-    }
-    out.extend(literal_vars(body.get(i).unwrap_or(&Literal::Pos(Pred {
-        name: String::new(),
-        args: Vec::new(),
-        span: (0, 0),
-    }))));
-    out
 }
 
 fn step(
@@ -409,7 +404,7 @@ fn check_count(
     bound: &BTreeSet<u16>,
     span: (usize, usize),
 ) -> Result<()> {
-    let inner = check_body(goal, schema, ctx, bound)?;
+    let inner = check_body(goal, schema, ctx, bound, elsewhere)?;
     require_bound(
         over,
         &inner,

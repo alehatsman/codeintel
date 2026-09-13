@@ -461,6 +461,39 @@ fn max_body_literals_is_rejected_at_planning() {
 }
 
 #[test]
+fn max_body_literals_counts_the_literals_inside_count() {
+    let limits = Limits {
+        max_body_literals: 2,
+        ..Limits::default()
+    };
+    let mut e = engine(GRAPH);
+    // One literal at the top, two in the goal: three.
+    let diagnostic = e
+        .query("?- N = count{ B : edge(A, B), edge(B, C) }.", &limits)
+        .expect_err("rejected");
+    assert_eq!(diagnostic.status, crate::diag::Status::InvalidQuery);
+    assert!(
+        diagnostic.message.contains("has 3 body literals"),
+        "{diagnostic}"
+    );
+}
+
+/// The limit is checked before the safety rules, which cost more than linear
+/// time in body length. The body below is unsafe from its first literal, so a
+/// limit that ran afterwards would report rule 2 instead.
+#[test]
+fn max_body_literals_is_checked_before_the_safety_rules() {
+    let mut e = engine(GRAPH);
+    let body = "edge(A, B), ".repeat(8_000);
+    let src = format!("?- !edge(Z, Z), {body}edge(A, B).");
+    let diagnostic = e.query(&src, &Limits::default()).expect_err("rejected");
+    assert!(
+        diagnostic.message.contains("max_body_literals"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
 fn max_strata_is_rejected_at_planning() {
     let limits = Limits {
         max_strata: 1,

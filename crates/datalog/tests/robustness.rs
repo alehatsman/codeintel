@@ -6,6 +6,7 @@
 //! libfuzzer target for the longer campaign.
 
 use datalog::diag::Status;
+use datalog::parse::MAX_NESTING;
 use datalog::{Strings, parse};
 
 /// xorshift64*, so the corpus is identical on every machine and every run.
@@ -109,11 +110,29 @@ fn mutations_of_valid_programs_never_panic() {
 
 #[test]
 fn deeply_nested_input_does_not_overflow_the_stack() {
+    // Actually nested, ten thousand `count{}`s deep (~200 KB). The earlier
+    // version of this test put them side by side, the parser rejected the
+    // first, and the recursion it was named for was never entered. Unbounded,
+    // this aborted the process on an 8 MB stack; test threads get 2 MB.
+    let depth = 10_000;
     let deep = format!(
+        "?- {}e(X){}.",
+        "N = count{ X : ".repeat(depth),
+        " }".repeat(depth)
+    );
+    let diagnostic = parse(&deep, &mut Strings::new()).expect_err("nested past the cap");
+    assert_eq!(diagnostic.status, Status::InvalidQuery);
+    assert!(
+        diagnostic
+            .message
+            .contains(&format!("nests more than {MAX_NESTING}")),
+        "{diagnostic}"
+    );
+
+    survives(&format!(
         "r(X) :- {}.",
         "count{ Y : e(Y) }, ".repeat(200).trim_end_matches(", ")
-    );
-    survives(&deep);
+    ));
     survives(&"(".repeat(10_000));
     survives(&format!("r({}).", "X, ".repeat(5_000)));
 }
