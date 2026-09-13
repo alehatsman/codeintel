@@ -1,0 +1,135 @@
+{
+  "cold_page_cache": null,
+  "corpus": {
+    "defs": 638,
+    "files": 24,
+    "name": "fd",
+    "rev": "b422e5d8c9cffaa1ae43ba68e7b97a60fb3e8ae5"
+  },
+  "host": {
+    "arch": "aarch64",
+    "cpus": 12,
+    "os": "macos"
+  },
+  "mcp_first_ms": 2.979,
+  "metrics": {
+    "cli_p50_ms": 4.896,
+    "index_cold_ms": 372.909,
+    "load_warm_ms": 1.543,
+    "mcp_p50_ms": 2.467,
+    "mcp_p95_ms": 3.08,
+    "query_p50_ms": 2.839,
+    "query_p95_ms": 3.483,
+    "reindex_one_ms": 31.868
+  },
+  "queries": [
+    {
+      "cli_p50_ms": 5.8,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 235,
+      "id": "1",
+      "mcp_p50_ms": 1.64,
+      "p50_ms": 1.821,
+      "p95_ms": 2.221,
+      "query": "?- def(S, F, \"function\", N).",
+      "rows": 231,
+      "status": "ok"
+    },
+    {
+      "cli_p50_ms": 3.788,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 1364,
+      "id": "2",
+      "mcp_p50_ms": 1.603,
+      "p50_ms": 1.972,
+      "p95_ms": 2.127,
+      "query": "?- ambiguous(N).",
+      "rows": 51,
+      "status": "ok"
+    },
+    {
+      "cli_p50_ms": 4.385,
+      "demand": "applied",
+      "derived": 1986,
+      "id": "3",
+      "mcp_p50_ms": 2.282,
+      "p50_ms": 2.633,
+      "p95_ms": 2.708,
+      "query": "?- def(S, \"src/walk.rs\", _, \"poll\"), impact_of(S, C).",
+      "rows": 4,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 5.262,
+      "demand": "applied",
+      "derived": 2314,
+      "id": "4",
+      "mcp_p50_ms": 3.059,
+      "p50_ms": 3.481,
+      "p95_ms": 3.535,
+      "query": "?- def(S, \"src/walk.rs\", _, \"poll\"), reach_of(S, C).",
+      "rows": 24,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 4.915,
+      "demand": "applied",
+      "derived": 2056,
+      "id": "5",
+      "mcp_p50_ms": 2.678,
+      "p50_ms": 3.086,
+      "p95_ms": 3.196,
+      "query": "?- innermost_at(\"src/walk.rs\", 220, S), about(S, Rel, A, B, L).",
+      "rows": 12,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 3.387,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 5,
+      "id": "6",
+      "mcp_p50_ms": 1.224,
+      "p50_ms": 1.588,
+      "p95_ms": 1.661,
+      "query": "?- import(F, M, _), prefix(F, \"src/exec/\"), contains(M, \"walk\").",
+      "rows": 1,
+      "status": "ok"
+    },
+    {
+      "cli_p50_ms": 5.027,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 3832,
+      "id": "7",
+      "mcp_p50_ms": 2.788,
+      "p50_ms": 3.049,
+      "p95_ms": 3.179,
+      "query": "?- dead_export(S), def(S, F, _, _), prefix(F, \"src/\").",
+      "rows": 176,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 5.166,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 4989,
+      "id": "8",
+      "mcp_p50_ms": 2.956,
+      "p50_ms": 3.181,
+      "p95_ms": 3.366,
+      "query": "?- def(S, _, \"function\", _), C = count{ X : calls(X, S) }.",
+      "rows": 231,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 4.631,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 3521,
+      "id": "9",
+      "mcp_p50_ms": 2.464,
+      "p50_ms": 2.839,
+      "p95_ms": 2.977,
+      "query": "?- depends(F, G).",
+      "rows": 44,
+      "status": "no-scip"
+    }
+  ]
+}

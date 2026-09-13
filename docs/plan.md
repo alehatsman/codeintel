@@ -957,8 +957,24 @@ The reason is that performance work was already landing without them: #3 and
 `0574a1b` justified themselves with tables measured by hand, on trees nobody
 pinned, and the next one would have too. A harness is cheaper than a habit.
 
-The corpus is **one entry**, tokio at `53542467` (~183k LOC of Rust, 799 files) —
-the tree #3 already measured. The ~10k and ~1M entries are still owed.
+The corpus was **one entry** when this landed: tokio at `53542467`, ~183k LOC of
+Rust in 799 files, the tree #3 had already measured. #26 added the other two
+decades, and there are now three entries:
+
+| decade | corpus | pin | why |
+|---|---|---|---|
+| ~10k | `sharkdp/fd` | `b422e5d8` | ~7k LOC of Rust. Small, stable and idiomatic |
+| ~100k | `tokio-rs/tokio` | `53542467` | unchanged, so #18's and #24's baselines carry on |
+| ~1M | `denoland/deno` | `336da420` | ~831k LOC in the four registered languages: 586k Rust, 245k TypeScript |
+
+**The done-whens above are measured on tokio**, as before. fd and deno report
+numbers but gate nothing beyond their own baselines.
+
+**The ~100k entry is not polyglot, and the success criteria ask for one.**
+[00-overview.md](../specs/00-overview.md) § Success criteria states them on a
+100k-LOC *polyglot* repository, and tokio is Rust-only. It stays because its
+baseline history is the evidence for #18 and #24. deno, the only polyglot
+entry, is ~8x that size. The gap is open, not closed by deno.
 
 **Two harnesses, split by what each machine can be trusted to measure.**
 
@@ -985,17 +1001,36 @@ knob as `expected.facts`.
 - `elapsed_ms` is not recorded. It is the one field that is not exact.
 
 **2. Wall clock, locally.** `crates/codeintel/benches/corpus.rs`, a
-`harness = false` bench target. `cargo bench -p codeintel --bench corpus --
-<corpus-dir>`, or `provision apply --stream tasks/bench.yml`, which checks the corpus out
-at its pin into `~/.cache/codeintel/corpus/` first. It works on a copy of the
-corpus in a temp directory and never writes into the checkout.
+`harness = false` bench target. Run it one corpus at a time with
+`cargo bench -p codeintel --bench corpus -- <name> <corpus-dir>`. Or run
+`provision apply --stream tasks/bench.yml`, which checks every corpus out at its
+pin into `~/.cache/codeintel/corpus/<name>` and benches them in size order: fd,
+tokio, deno. The bench works on a copy of the corpus in a temp directory and
+never writes into the checkout.
+
+Each corpus is one directory, `crates/codeintel/benches/corpora/<name>/`:
+
+| file | holds |
+|---|---|
+| `corpus.json` | `{"reindex_file": "<path>"}`: the file `reindex_one_ms` edits |
+| `queries.tsv` | `id<TAB>query`. The same nine shapes under the same ids in every corpus, seeded with that tree's own paths and names |
+| `baseline.json` | the committed baseline for that corpus |
+
+A corpus with no directory, or one missing a file, is an error that names the
+file. It is never an empty run. **The pins live in `tasks/bench.yml` and
+nowhere else.** Each baseline also records the `corpus.rev` it measured, and the
+bench refuses to compare against a different tree, as before.
+
+A seeded query must return rows on its own tree. `impact_of` from a symbol
+nothing calls measures the cost of finding nothing, and is the "ok with zero
+rows" invariant 5 warns about, turned on the bench.
 
 | metric | how |
 |---|---|
 | `index_cold_ms` | tier A, `Plan::default()`, fresh store. Median of 3 |
 | `load_warm_ms` | `Store::open` + `load`. p50 of 20 |
 | `reindex_one_ms` | append a line to one fixed file, `index::refresh`. p50 of 10 |
-| `query_ms` | each query in `benches/queries.tsv` through `query::run`, `no_refresh`, 3 warm-ups then 30 runs; p50/p95 per query and pooled |
+| `query_ms` | each query in the corpus's `queries.tsv` through `query::run`, `no_refresh`, 3 warm-ups then 30 runs; p50/p95 per query and pooled |
 | `cli_ms` | the same queries through the release binary. p50 of 10 |
 | counters | `derived`, `demand`, row count per query, as in (1) |
 
@@ -1006,8 +1041,8 @@ yet for the done-when above to be measured in. The bench reports what exists
 under a name that says what it includes, rather than a number labelled as the
 thing the spec asked for.
 
-Output goes to `target/bench/corpus.json`. It is compared against
-`crates/codeintel/benches/baseline.json`:
+Output goes to `target/bench/<name>.json`. It is compared against that corpus's
+`baseline.json`:
 
 - A wall-clock metric more than 20% over its baseline fails the run, and every
   one of them is named. Faster than baseline is reported and does not fail.
@@ -1129,9 +1164,44 @@ rule fails both.
 The p50 is 19.7 ms against 20, measured at load average ~4 with other
 sessions on the host, and a run of the same code an hour earlier read
 21.9 ms. The p95 is a third of its budget and stands. `index_cold_ms` was
-recorded at 10.4 s against 9.2 s. The index path runs no Datalog, so that is
-host load, and it loosens that metric's gate by ~13% until the baseline is
-refreshed on a quiet host. Cold page cache is still unmeasured.
+recorded at 10.4 s against 9.2 s. The index path runs no Datalog, and this
+note first called the difference host load. **That was not shown, and it did
+not hold up.** #26 re-measured tokio on a quiet host and got 10.8 s, so the move
+is real and predates #24. Its cause is not established. TypeScript
+(`8001010`) landed between the 9.2 s baseline and this one, which makes it the
+first suspect, but that is not a finding. Cold page cache is still unmeasured.
+
+### #26: three corpora, measured on a quiet host (2026-09-13)
+
+fd and deno joined tokio (§ Pulled forward). All three baselines were
+re-measured with the machine otherwise idle, at load average 1.3–1.6 from this
+session and the OS. Then `tasks/bench.yml` ran end to end against them: 6 steps
+ok, every counter equal, and every compared metric within 6% of its baseline.
+
+| from `benches/corpora/<name>/baseline.json` | fd ~10k | tokio ~100k | deno ~1M |
+|---|---:|---:|---:|
+| files / defs | 24 / 638 | 799 / 11,516 | 4,711 / 88,514 |
+| `index_cold_ms` | 373 | 10,818 | 58,243 |
+| `load_warm_ms` | 1.5 | 21.7 | 137.6 |
+| `reindex_one_ms` | 31.9 | 47.9 | 179.1 |
+| query p50 / p95, pooled | 2.8 / 3.5 ms | 32.6 / 44.5 ms | 218.5 / 325.5 ms |
+| MCP p50 / p95, pooled | 2.5 / 3.1 ms | 18.7 / 31.7 ms | 202.5 / 322.7 ms |
+
+- **The MCP query done-when is met on tokio.** p50 was 18.7 and 18.8 ms in
+  the baseline run and the end-to-end run, and p95 was 31.7 and 31.6 ms. The
+  margin on p50 is 1.2 ms, which is thin. #24's 19.7 ms was the loaded
+  reading.
+- **At ~1M LOC, the MCP process is warm and still costs ~200 ms a call.** A
+  warm call reuses the loaded engine (#18), so something in each call scales
+  with the tree. On tokio, #18 measured `Store::open` plus the refresh walk at
+  ~9 ms. At deno's size that is the first place to look. **Not profiled
+  here**, and it is the next item-3 measurement.
+- deno's warm load, 137.6 ms, is under the 200 ms that would trigger the
+  merged-array cache ([04-storage.md](../specs/04-storage.md) § Loading). The
+  done-whens are stated on tokio, so this triggers nothing, but at ~1M LOC it
+  is the closest of the thresholds.
+- deno's cold index, 58 s, is twice the < 30 s criterion. That criterion is a
+  100k-LOC number, and tokio meets it.
 
 ---
 

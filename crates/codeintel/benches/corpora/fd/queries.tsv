@@ -1,0 +1,16 @@
+# fd's query set for `benches/corpus.rs`, at its pin in tasks/bench.yml.
+# id<TAB>query. Lines starting with `#` are comments. Every corpus runs the
+# same nine shapes under the same ids, seeded with its own tree's names.
+#
+# The seed is `poll` in src/walk.rs: under tier A it has a caller (`process`)
+# and callees in and outside the file, so 3 and 4 return rows. Line 220 is
+# inside it. Changing this set invalidates the baseline: UPDATE_BASELINE=1.
+1	?- def(S, F, "function", N).
+2	?- ambiguous(N).
+3	?- def(S, "src/walk.rs", _, "poll"), impact_of(S, C).
+4	?- def(S, "src/walk.rs", _, "poll"), reach_of(S, C).
+5	?- innermost_at("src/walk.rs", 220, S), about(S, Rel, A, B, L).
+6	?- import(F, M, _), prefix(F, "src/exec/"), contains(M, "walk").
+7	?- dead_export(S), def(S, F, _, _), prefix(F, "src/").
+8	?- def(S, _, "function", _), C = count{ X : calls(X, S) }.
+9	?- depends(F, G).
