@@ -50,7 +50,7 @@ impl Dict {
     /// offset table, an offset past the end of the data, or a span that is not
     /// UTF-8. Each is reported rather than read through.
     pub fn open(dir: &Path) -> Result<Option<Self>> {
-        Self::open_to(dir, u64::MAX, u64::MAX)
+        Self::open_within(dir, None)
     }
 
     /// Open the dictionary trusting only the first `bin_len` bytes of the data
@@ -64,16 +64,40 @@ impl Dict {
     /// worth reading, whatever is on disk.
     ///
     /// # Errors
-    /// As [`Self::open`]. A file *shorter* than its extent is corrupt.
+    /// As [`Self::open`]. A file *shorter* than its extent, or missing while the
+    /// extents are not zero, is corrupt: reading either as no dictionary would
+    /// start the id space over and hand every segment's atoms to new strings.
     pub fn open_to(dir: &Path, bin_len: u64, idx_len: u64) -> Result<Option<Self>> {
-        let (bin_path, idx_path) = (dir.join(BIN), dir.join(IDX));
-        if !bin_path.exists() || !idx_path.exists() || idx_len == 0 {
+        if idx_len == 0 {
             return Ok(None);
+        }
+        Self::open_within(dir, Some((bin_len, idx_len)))
+    }
+
+    /// Open against the recorded `(bin, idx)` extents, or against whatever is
+    /// on disk when there are none.
+    fn open_within(dir: &Path, extents: Option<(u64, u64)>) -> Result<Option<Self>> {
+        let (bin_path, idx_path) = (dir.join(BIN), dir.join(IDX));
+        for (path, name) in [(&bin_path, BIN), (&idx_path, IDX)] {
+            if !path.exists() {
+                return match extents {
+                    None => Ok(None),
+                    Some((bin_len, idx_len)) => Err(corrupt(format!(
+                        "{name} is missing, but the manifest records {bin_len} bytes of {BIN} \
+                         and {idx_len} of {IDX}"
+                    ))),
+                };
+            }
         }
         let bin = map(&bin_path)?;
         let idx = map(&idx_path)?;
-        let bin_len = usize::try_from(bin_len).map_or(bin.len(), |n| n.min(bin.len()));
-        let idx_len = usize::try_from(idx_len).map_or(idx.len(), |n| n.min(idx.len()));
+        let (bin_len, idx_len) = match extents {
+            None => (bin.len(), idx.len()),
+            Some((bin_len, idx_len)) => (
+                recorded(bin_len, bin.len(), BIN)?,
+                recorded(idx_len, idx.len(), IDX)?,
+            ),
+        };
         if idx_len % 8 != 0 {
             return Err(corrupt(format!(
                 "{IDX} is {idx_len} bytes, which is not a whole number of u64 offsets"
@@ -139,6 +163,13 @@ impl Dict {
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.bin_len
+    }
+
+    /// The `(dict.bin, dict.idx)` byte extents this view reads: what a
+    /// manifest records so that the next reader trusts exactly this much.
+    #[must_use]
+    pub fn extents(&self) -> (u64, u64) {
+        (self.bin_len as u64, self.starts.len() as u64 * 8)
     }
 
     /// The string behind a string atom.
@@ -241,6 +272,19 @@ impl Interner {
         self.added.len()
     }
 
+    /// The dictionary extents this interner vouches for: the recorded ones it
+    /// was opened against, or what its last flush wrote — never the size of a
+    /// file a crashed run left longer. `(0, 0)` while nothing is on disk.
+    ///
+    /// This, not a `stat`, is what [`crate::Store::commit`] records: a commit
+    /// that interned nothing leaves a torn tail where it is, and its bytes are
+    /// not trusted just because a later manifest was written
+    /// (`specs/04-storage.md` § Manifest).
+    #[must_use]
+    pub fn extents(&self) -> (u64, u64) {
+        self.dict.as_ref().map_or((0, 0), Dict::extents)
+    }
+
     /// The atom for `s`, appending it if the dictionary does not have it.
     ///
     /// Returns `None` only when the atom space is exhausted — 3.8 billion
@@ -285,31 +329,49 @@ impl Interner {
         if self.added.is_empty() && self.dict.is_some() {
             return Ok(());
         }
+        // The old view is held until the append succeeds, so a flush that
+        // fails leaves this interner answering exactly as before: `len()`
+        // still counts the strings on disk, and the new ones are still
+        // pending. Dropping it first made every id after a failure collide
+        // with one on disk. The cut in `append` never goes below what the view
+        // reads, and Windows, where a mapped file cannot be cut, is out of
+        // scope (`specs/04-storage.md` § Concurrency).
+        let previous = self.dict.take();
+        if let Err(e) = self.append() {
+            self.dict = previous;
+            return Err(e);
+        }
+        self.added.clear();
+        self.trusted = None;
+        self.dict = Dict::open(&self.dir)?;
+        Ok(())
+    }
+
+    /// Cut both files back to the trusted extents, then append every pending
+    /// string and `fsync`.
+    fn append(&mut self) -> Result<()> {
         std::fs::create_dir_all(&self.dir)?;
-        let bin_path = self.dir.join(BIN);
-        let idx_path = self.dir.join(IDX);
-
-        // Dropping the map first: on Windows a mapped file cannot be extended,
-        // and a remap is needed after the append regardless.
-        self.dict = None;
-
         let mut bin = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&bin_path)?;
+            .open(self.dir.join(BIN))?;
         let mut idx = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&idx_path)?;
+            .open(self.dir.join(IDX))?;
         // A torn append from a crashed run is cut off here, so the new
         // strings start exactly where the manifest says the old ones end
         // (`specs/04-storage.md` § Manifest).
-        if let Some((bin_len, idx_len)) = self.trusted.take() {
+        if let Some((bin_len, idx_len)) = self.trusted {
             bin.set_len(bin_len)?;
             idx.set_len(idx_len)?;
         }
-        let fresh = idx.metadata()?.len() == 0;
         let mut offset = bin.metadata()?.len();
+        let fresh = idx.metadata()?.len() == 0;
+        // Where a retry cuts back to if anything below fails, whether or not a
+        // manifest ever recorded it: appending after this append's torn bytes
+        // would put every later offset out of step.
+        self.trusted = Some((offset, idx.metadata()?.len()));
         if fresh {
             // Entry `i` spans `starts[i]..starts[i + 1]`, so a dictionary of `n`
             // strings has `n + 1` offsets and the first one opens the file.
@@ -329,8 +391,6 @@ impl Interner {
         idx.flush()?;
         bin.sync_all()?;
         idx.sync_all()?;
-        self.added.clear();
-        self.dict = Dict::open(&self.dir)?;
         Ok(())
     }
 
@@ -368,6 +428,20 @@ fn map(path: &Path) -> Result<Mmap> {
     // database, and `rm -rf .codeintel` is the supported repair.
     let mapped = unsafe { Mmap::map(&file) }?;
     Ok(mapped)
+}
+
+/// A recorded extent as a length into a file of `len` bytes. A file longer
+/// than its extent holds a torn append, which the view leaves out; a shorter
+/// one has lost bytes the manifest vouched for.
+fn recorded(extent: u64, len: usize, name: &str) -> Result<usize> {
+    usize::try_from(extent)
+        .ok()
+        .filter(|n| *n <= len)
+        .ok_or_else(|| {
+            corrupt(format!(
+                "the manifest records {extent} bytes of {name}, which holds {len}"
+            ))
+        })
 }
 
 fn corrupt(message: impl AsRef<str>) -> Error {

@@ -195,8 +195,11 @@ impl Store {
     /// I/O failure appending the dictionary or writing the manifest.
     pub fn commit(&mut self) -> Result<()> {
         self.interner.flush()?;
-        self.manifest.dict_bin_len = len_of(&self.dir.join("dict.bin"))?;
-        self.manifest.dict_idx_len = len_of(&self.dir.join("dict.idx"))?;
+        // What the interner vouches for, not what `stat` says. A commit that
+        // interned nothing leaves a crashed run's torn tail on disk, and
+        // recording its size would make every later open fail validation
+        // (`specs/04-storage.md` § Manifest).
+        (self.manifest.dict_bin_len, self.manifest.dict_idx_len) = self.interner.extents();
         self.manifest.save(&self.dir)?;
         self.existing = true;
         // Only now. A crash anywhere above leaves the old manifest naming
@@ -274,14 +277,6 @@ impl Store {
             }
         }
         Ok(out)
-    }
-}
-
-fn len_of(path: &Path) -> Result<u64> {
-    match std::fs::metadata(path) {
-        Ok(meta) => Ok(meta.len()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(e),
     }
 }
 
@@ -485,6 +480,40 @@ mod tests {
             "the tear was cut, not read through"
         );
         Dict::open(&dir.path().join(DIR)).expect("the whole file validates now");
+    }
+
+    #[test]
+    fn a_commit_that_interns_nothing_records_the_trusted_extents_not_a_torn_tail() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trusted = {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+            (store.manifest().dict_bin_len, store.manifest().dict_idx_len)
+        };
+        // A crash mid-append: three bytes of a string landed, its offset did
+        // not, and no manifest records either.
+        let bin = dir.path().join(DIR).join("dict.bin");
+        let mut data = std::fs::read(&bin).expect("bin");
+        data.extend_from_slice(b"bet");
+        std::fs::write(&bin, &data).expect("writes");
+
+        {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("reopens past the tear");
+            // The same strings with different rows: the manifest changes and
+            // the dictionary does not.
+            write(&mut store, "a.rs", &[[1, 3, 0, 20]]);
+            assert_eq!(store.interner_mut().pending(), 0);
+            store.commit().expect("commits");
+            assert_eq!(
+                (store.manifest().dict_bin_len, store.manifest().dict_idx_len),
+                trusted,
+                "the torn bytes are not recorded as trusted"
+            );
+        }
+        let store = Store::open(dir.path(), "blake3:test").expect("the next open validates");
+        let rows = store.load().expect("loads");
+        assert_eq!(rows["def_span"].row(0).map(|r| r[2]), Some(3));
     }
 
     #[test]

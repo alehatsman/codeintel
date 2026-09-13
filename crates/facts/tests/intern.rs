@@ -192,3 +192,89 @@ fn a_large_dictionary_keeps_every_id_distinct() {
     }
     assert_eq!(reopened.len(), 5_001);
 }
+
+fn truncate(path: &std::path::Path, len: u64) {
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("opens")
+        .set_len(len)
+        .expect("truncates");
+}
+
+#[test]
+fn a_dictionary_missing_under_recorded_extents_is_corrupt() {
+    for missing in ["dict.bin", "dict.idx"] {
+        let dir = TempDir::new().expect("a temp dir");
+        let mut interner = Interner::open(dir.path()).expect("opens");
+        interner.intern("alpha").expect("room");
+        interner.flush().expect("flushes");
+        let (bin_len, idx_len) = interner.extents();
+        drop(interner);
+        fs::remove_file(dir.path().join(missing)).expect("removes");
+
+        let error =
+            Dict::open_to(dir.path(), bin_len, idx_len).expect_err("recorded extents, no file");
+        assert!(error.to_string().contains("corrupt"), "{error}");
+        assert!(error.to_string().contains(missing), "{error}");
+        assert!(
+            Dict::open(dir.path()).expect("opens").is_none(),
+            "with nothing recorded, a missing file is just no dictionary yet"
+        );
+    }
+}
+
+#[test]
+fn a_whole_dictionary_shorter_than_its_extents_is_corrupt() {
+    // What a sync tool or a filesystem rollback leaves: a dictionary that is
+    // consistent on its own, one string short of what the manifest recorded.
+    // It validates, which is exactly why the extents have to be checked.
+    let dir = TempDir::new().expect("a temp dir");
+    let mut interner = Interner::open(dir.path()).expect("opens");
+    interner.intern("alpha").expect("room");
+    interner.flush().expect("flushes");
+    let (short_bin, short_idx) = interner.extents();
+    interner.intern("beta").expect("room");
+    interner.flush().expect("flushes");
+    let (bin_len, idx_len) = interner.extents();
+    drop(interner);
+    truncate(&dir.path().join("dict.bin"), short_bin);
+    truncate(&dir.path().join("dict.idx"), short_idx);
+
+    assert!(Dict::open(dir.path()).expect("whole on its own").is_some());
+    let error = Dict::open_to(dir.path(), bin_len, idx_len).expect_err("shorter than recorded");
+    assert!(error.to_string().contains("corrupt"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_flush_leaves_the_interner_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().expect("a temp dir");
+    let mut interner = Interner::open(dir.path()).expect("opens");
+    let alpha = interner.intern("alpha").expect("room");
+    interner.flush().expect("flushes");
+    let beta = interner.intern("beta").expect("room");
+
+    let bin = dir.path().join("dict.bin");
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o444)).expect("chmod");
+    if fs::OpenOptions::new().append(true).open(&bin).is_ok() {
+        // Running as root, which ignores the mode: there is no failure to
+        // inject this way.
+        return;
+    }
+    interner.flush().expect_err("dict.bin is read-only");
+    assert_eq!(interner.len(), 3, "\"\", alpha, beta");
+    assert_eq!(interner.pending(), 1, "beta is still pending");
+    assert_eq!(interner.resolve(alpha), Some("alpha"));
+    assert_eq!(interner.resolve(beta), Some("beta"));
+    let gamma = interner.intern("gamma").expect("room");
+    assert_eq!(gamma, beta + 1, "the id space did not start over");
+
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o644)).expect("chmod");
+    interner.flush().expect("the retry flushes");
+    let reopened = Interner::open(dir.path()).expect("reopens");
+    assert_eq!(reopened.resolve(beta), Some("beta"));
+    assert_eq!(reopened.resolve(gamma), Some("gamma"));
+}

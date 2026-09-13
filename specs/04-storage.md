@@ -209,6 +209,25 @@ of its mapping. Recovery from a torn append is truncation to the recorded
 length: a reader bounds its view to the recorded extents, and a writer
 truncates both files to them before it appends.
 
+The rule runs in both directions:
+
+- **Longer than recorded is a torn append; shorter or missing is corrupt.**
+  Non-zero extents with `dict.bin` or `dict.idx` absent, or either file shorter
+  than its extent, is `corrupt`. Reading that as "no dictionary yet" starts the
+  id space over at `""`, and every segment atom past the surviving prefix is
+  then handed to a new string: old rows resolve to the wrong names, and the
+  next commit makes it permanent. Extents of zero still mean no dictionary,
+  whatever is on disk.
+- **A commit records the extents the interner vouches for, not the file
+  sizes.** A refresh that interns nothing appends nothing, so it leaves a
+  crashed run's torn tail where it is — past the extents, where no reader looks
+  and the next append cuts it — and records the extents it read through.
+  Recording `stat` sizes would stamp those torn bytes as trusted, and every
+  later open would fail validation until `rm -rf`.
+- **A flush that fails leaves the interner as it was.** The strings it did not
+  write are still pending, the view is still the one it had, and a retry cuts
+  back to where the failed append began.
+
 **`dict_generation` increments on `--rebuild`.** `--rebuild` renumbers every
 atom, and `query --raw` hands raw atom ids to the caller. Without a generation
 stamp, a saved raw id resolves after a rebuild to a *different string* rather
