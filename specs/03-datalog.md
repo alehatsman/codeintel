@@ -228,7 +228,8 @@ Scope for v1:
   binder placed *after* the derived literal it binds would otherwise forfeit
   the rewrite: `callers(C, S), def(S, _, _, "evaluate")` and its reverse must
   rewrite identically. The walk mirrors the planner's heuristic without
-  relation sizes — a constant or an already-bound variable counts as bound,
+  relation sizes — a literal sharing no bound variable goes after one that
+  shares one, a constant or an already-bound variable counts as bound,
   filters run as soon as their inputs exist, ties keep written order. Safety
   is still checked on the program as written (rule 7).
 - **`stats.demand` says why `stats.transformed` holds what it holds**:
@@ -313,9 +314,25 @@ for each stratum in topological order:
         for each R: R += new[R];  delta[R] = new[R]
 ```
 
-Joining a rule body: order literals by a simple cost heuristic (most-bound-first
-— a literal with `k` already-bound variables costs `|R| / 2^k`), then for each
-literal pick the narrowest access path the bindings allow:
+Joining a rule body: order literals by a two-key cost heuristic, then for each
+literal pick the narrowest access path the bindings allow.
+
+The order:
+
+- **Connected first.** Once any variable is bound, a relation literal that
+  shares none of the bound variables is a cross product — every row it matches
+  multiplies the rest of the join — and it ranks after every literal that
+  shares one. The second key cannot see this, because a constant counts as a
+  bound argument exactly as a join variable does. `exported`'s recursive body
+  tied `visibility(S, "inherited")` with `parent(S, P)` at `11380 >> 1` on
+  tokio, took the written one, and paired 1,788 seeds with 2,126 candidates:
+  868 ms, against 1 ms connected (#24). `stats.derived` counts derivations,
+  not rows visited, so it does not move when this breaks; the plan does.
+- **Then most-bound-first.** A literal with `k` bound arguments — constants or
+  already-bound variables — costs `|R| / 2^k`. Filters are free and run as
+  soon as their inputs exist. Ties keep written order.
+
+The access path:
 
 1. **prefix** — the leading column is bound: binary-search the sorted relation
    on the whole bound prefix.

@@ -319,9 +319,10 @@ impl Xform<'_> {
 /// the reverse spelling seeds `callers@fb` and derives 36 tuples instead of
 /// 198,025. The planner reorders most-bound-first at run time, but by then
 /// the adornment is fixed. So the walk here mirrors the planner's choice,
-/// without relation sizes: a constant or a bound variable in an argument
-/// counts as bound, and the literal with the most bound arguments goes first.
-/// Safety is still checked on the program as written; this is a cost
+/// without relation sizes: a literal sharing no bound variable goes after
+/// every literal that shares one, then a constant or a bound variable in an
+/// argument counts as bound, and the literal with the most bound arguments
+/// goes first. Safety is still checked on the program as written; this is a cost
 /// decision, and the rewrite is validated again afterwards.
 fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
     let mut bound = initially.clone();
@@ -356,7 +357,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
         })
         .collect();
     while out.len() < body.len() {
-        let mut best: Option<(usize, usize)> = None;
+        let mut best: Option<((bool, usize), usize)> = None;
         for (i, lit) in body.iter().enumerate() {
             if taken.get(i).copied().unwrap_or(true)
                 || !crate::solve::runnable(lit, &bound)
@@ -365,28 +366,31 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
                 continue;
             }
             // A filter is free and runs as soon as it can; a relation literal
-            // ranks by how many of its arguments are already bound. An
-            // aggregate is neither: it is a sub-evaluation, and everything
-            // that precedes a literal here becomes the body of that literal's
-            // magic rule, so an aggregate placed early puts an aggregate edge
-            // into every seed it precedes — and into a recursive cycle, if
-            // the seeded predicate is one. It ranks as an unbound relation
-            // literal: after anything already narrowed, before nothing else.
+            // ranks connected before disconnected, as the planner does, then
+            // by how many of its arguments are already bound. An aggregate is
+            // neither: it is a sub-evaluation, and everything that precedes a
+            // literal here becomes the body of that literal's magic rule, so
+            // an aggregate placed early puts an aggregate edge into every seed
+            // it precedes — and into a recursive cycle, if the seeded
+            // predicate is one. It ranks as an unbound relation literal:
+            // after anything already narrowed, before nothing else.
             let rank = match lit {
-                Literal::Pos(p) => p
-                    .args
-                    .iter()
-                    .filter(|t| match t {
-                        Term::Const(_) => true,
-                        Term::Var(v) => bound.contains(v),
-                        Term::Wildcard => false,
-                    })
-                    .count(),
+                Literal::Pos(p) => (
+                    !crate::solve::disconnected(&p.args, &bound),
+                    p.args
+                        .iter()
+                        .filter(|t| match t {
+                            Term::Const(_) => true,
+                            Term::Var(v) => bound.contains(v),
+                            Term::Wildcard => false,
+                        })
+                        .count(),
+                ),
                 Literal::Assign {
                     expr: Expr::Count { .. },
                     ..
-                } => 0,
-                _ => usize::MAX,
+                } => (bound.is_empty(), 0),
+                _ => (true, usize::MAX),
             };
             if best.is_none_or(|(r, _)| rank > r) {
                 best = Some((rank, i));
