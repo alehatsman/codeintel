@@ -106,6 +106,22 @@ fn rule_4_accepts_the_grouping_written_explicitly() {
 }
 
 #[test]
+fn rule_4_sees_a_variable_used_two_aggregates_out() {
+    // `Z` is bound only inside the inner count and used by `edge(Z, _)` at the
+    // top level. Checking against the nearest body alone accepted this, and
+    // the planner then grouped the inner count by `Z`.
+    let msg =
+        reject("?- M = count{ Y : edge(Y, _), K = count{ Z : edge(Z, _) }, K > 3 }, edge(Z, _).");
+    assert!(msg.contains("safety rule 4"), "{msg}");
+    assert!(msg.contains("`Z`"), "{msg}");
+}
+
+#[test]
+fn rule_4_accepts_a_nested_grouping_bound_at_the_top() {
+    accept("?- edge(Z, _), M = count{ Y : edge(Y, _), K = count{ W : edge(W, Z) }, K > 3 }.");
+}
+
+#[test]
 fn rule_5_stratification_rejects_negation_in_a_cycle() {
     let program = parse("p(X) :- edge(X, _), !p(X).", &mut Strings::new()).expect("parses");
     check(&program, base()).expect("safe as written");

@@ -94,7 +94,13 @@ step budget. We do not take a regex dependency for this.
 3. **Comparison safety.** Both sides of a comparison are bound by an earlier
    positive literal, or are literals.
 4. **Aggregate safety.** Every variable free in the aggregate's goal but used
-   outside it is bound outside it.
+   outside it is bound outside it. "Outside" is every enclosing body, not just
+   the nearest: in `M = count{ Y : e(Y), K = count{ Z : g(Z) }, K > 3 }, h(Z)`
+   the inner `Z` is used by `h(Z)` two levels out and nothing binds it first.
+   Checking only the nearest body accepted that query while the planner, which
+   does see nested variables, scheduled `h(Z)` first and grouped the inner
+   count by `Z` — a different answer from the one written, and the naive twin
+   shares the planner, so the differential test agreed with it.
 5. **Stratification.** See below.
 6. **Arity consistency.** A relation's arity is fixed by its first use; a later
    use with different arity is an error naming both sites.
