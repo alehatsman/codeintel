@@ -844,6 +844,62 @@ binding an import makes as a plain read at module scope, so `calls` carries
 two edges whose caller is a file; recorded in
 [research.md](research.md) § Language coverage, not patched.
 
+### What TypeScript cost, and what it changed
+
+**Shipped.** 11 kinds, a 98.4% anchor rate against `scip-typescript` 0.4.0
+(60 of 61, and the one miss is #21's), 17 exact `calls` edges, 4
+`implements` rows, 14 extractor tests and 10 end-to-end. The queries are 78
+lines that are not comments, plus 6 for JSX and 8 for imports. There are two
+`lang.rs` rows, TSX being TypeScript's row with its own grammar and JSX
+appended to the tag query, and a fixture. The polyglot fixture now holds all
+four languages, and extending it was adding a directory.
+
+It was the most expensive of the four in query lines, as estimated, and it
+still cost no per-language Rust. It did add two things to the convention.
+Both are data the next language reuses:
+
+- **`@value` and `function_values`.** `const make = (n) => n` is a function
+  by its value node, and `calls` counts callable kinds only. A query cannot
+  choose a capture suffix by a child's kind without enumerating every other
+  kind: 37 expression kinds across six statement shapes. So the extractor
+  applies the rule once, in about a dozen lines, and `lang.rs` names the kinds
+  ([02-extraction.md](../specs/02-extraction.md) § `@value`). Python's
+  `f = lambda: ...` would cost a row, when someone asks for it.
+- **`Export::Statement`.** TypeScript states visibility in two places, and
+  silence means opposite things in them: a bare declaration is not exported,
+  and a bare class member is public. Both are read from the declaration's own
+  node and its own statement.
+
+Two things the fixture forced that are not about TypeScript:
+
+- **#21, found by probing the indexer before writing a query.**
+  `scip-typescript` and `scip-python` declare no position encoding and count
+  UTF-16, and ingest had read those columns as bytes. Fixed and landed first
+  (`339f295`).
+- **One symbol, several declarations** ([01-facts.md](../specs/01-facts.md)
+  § `def`). An overload set is one symbol with a span per declaration.
+  Python's `@property` and its setter already worked that way, unspecified. It
+  is now written down and pinned by a test.
+
+JSDoc needed no code: `*/` and `*` are strip markers in `doc_markers`, tried
+in order.
+
+Not done, and said so:
+
+- `export { x }` and `export default x` do not make `x` exported (#22).
+- JavaScript is not registered. Dynamic `import()` and `require()` are not
+  `import` rows. Destructured bindings and computed member names are not
+  definitions.
+- `scip-typescript` 0.4.0 writes no kinds, no display names, no document
+  language, and an empty role bitset on every reference. Its parameters, type
+  parameters and per-file module symbols arrive as tier-B-only `def` rows of
+  kind `unknown`, named from their descriptors. The binding an import makes is
+  a module-scope reference, so `calls` has five rows whose caller is a file:
+  four import bindings and one decorator. Recorded in
+  [research.md](research.md) § Language coverage, not patched.
+- Incremental equivalence is covered, as for Go and Python, by the
+  language-neutral test in `cli.rs` rather than one per language.
+
 ### Dropped
 
 **Ruby is not shipping.** `tree-sitter-ruby` has no import node at all — `require`

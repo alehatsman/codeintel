@@ -80,6 +80,7 @@ ours, because the questions they answer are ones upstream does not ask.
 | `@scope.<kind>` | the node **owns** definitions but is not one. A Rust `impl Store` declares nothing that `struct Store` did not; it contributes the `Store#` descriptor and no `def` row |
 | `@owner` | an identifier **naming** this definition's owner, for a language where the owner does not enclose it |
 | `@doc` | the node whose text **is** this definition's documentation, for a language that keeps it inside the definition rather than in comments before it |
+| `@value` | the node a binding is initialized with. A definition whose `@value` has one of the language's `function_values` node kinds is a `function` |
 
 Every node carries at most one `@definition.*` or `@scope.*` capture, asserted
 by a test over every registered language.
@@ -145,6 +146,60 @@ emit two `def` rows for it. The text gets the same per-line strip a comment
 gets, with no marker — a docstring's lines are indented to the body. A language
 states one mechanism or the other, in its query and in its `doc_markers`; the
 two never compete for one definition.
+
+#### `@value`, and why the keyword is not enough
+
+`const make = (n) => n` says `const`, and what it binds is a function. The
+grammar states that in the value node's kind, and `calls` counts references to
+callable kinds only, so a `constant` there would hide every arrow helper and
+component from the call graph.
+
+A query cannot choose a capture suffix by a child's kind without enumerating
+every other kind that child could be. TypeScript's value is any of 37
+expression kinds, and a binding sits in one of six statement shapes, so doing
+it that way would put hundreds of lines of kind lists in `tags.scm` with no
+fact behind them. Go's fall-through type enumerates, and there the list is
+eleven kinds, once. So a binding pattern captures its value node as `@value`,
+and the language's `function_values` row in `lang.rs` names the node kinds that
+make the definition a `function`. The rule is in the extractor once, and the
+kinds are data. A class field with an arrow value stays a `field`: `@value` is
+captured only on bindings.
+
+#### TypeScript and TSX: two grammars, one query
+
+`tree-sitter-typescript` ships two grammars, registered as two languages:
+`typescript` (`.ts`, `.mts`, `.cts`) and `typescriptreact` (`.tsx`), the SCIP
+`Language` names ([01-facts.md](01-facts.md) § Atom vocabularies). JavaScript is
+not registered. TSX's node set is TypeScript's plus JSX, and a JSX pattern does
+not compile against the TypeScript grammar. So `queries/typescript/` is written
+once, against TypeScript, and `queries/typescript/jsx.scm` holds only what JSX
+adds. The `typescriptreact` row's tag query is the two concatenated. Nothing
+is written twice.
+
+A JSX element whose tag starts with an upper-case letter is a
+`@reference.call`: a use of a component at that position, as a call is. A
+lower-case tag is an intrinsic element and not a name in scope. That is the
+rule the TypeScript compiler applies to JSX, read from the name exactly as Go's
+export rule is. `<ui.Row />` is recorded by its final name, as `ui.row()` is.
+
+Three things the TypeScript query decides, all from the node it matches:
+
+- **A binding whose value node is a function is a `function`.** In
+  `const make = (n) => n`, the grammar states the value is an `arrow_function`,
+  and `calls` counts references to callable kinds only, so recording it as a
+  `constant` would hide every arrow helper and component from `calls`. The
+  function kinds are `arrow_function`, `function_expression` and
+  `generator_function`. Any other value is `constant` under `const` and
+  `variable` under `let` or `var`. The query does not make this choice
+  itself (§ `@value`).
+- **A binding is a definition only at module or namespace scope.** A `const`
+  inside a function body is a local, as a Python assignment inside a `def` is.
+  The same goes for a method: `method_definition` is a definition inside a
+  `class_body`, not inside an object literal.
+- **`constructor` is the `constructor` kind**, by the name the grammar gives
+  it, and `get x()` and `set x(v)` are methods named `x`
+  ([01-facts.md](01-facts.md) § `def` for the two declarations one symbol then
+  has).
 
 Example, `tree-sitter-rust/queries/tags.scm`:
 ```scheme
@@ -268,7 +323,7 @@ binary is on `PATH`, and shells out. That is the whole feature — a table, a
 | Language | Command | Needs |
 |---|---|---|
 | Rust | `rust-analyzer scip .` | a cargo workspace |
-| TypeScript/JS | `scip-typescript index --infer-tsconfig` | `node_modules` installed |
+| TypeScript/TSX | `scip-typescript index --infer-tsconfig` | `node_modules` installed, for anything beyond the project's own sources. `scip-typescript` 0.4.0 writes no `kind`, no `display_name`, no `Document.language`, an empty role bitset on every reference, and no position encoding while counting UTF-16 (§ Position normalization). It does write `is_implementation` for `implements`, so `implements/3` has TypeScript rows |
 | Python | `scip-python index . --output index.scip` | an environment with deps |
 | Go | `scip-go` | a buildable module. Installed from `github.com/scip-code/scip-go/cmd/scip-go` — the project moved out of the `sourcegraph` org, and the old path now fails `go install` with a module-path conflict rather than a 404 |
 | Java/Scala/Kotlin | `scip-java index` | a working build |

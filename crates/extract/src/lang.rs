@@ -87,6 +87,32 @@ pub enum Export {
     /// indicator", and a dunder (`__init__`) is a magic name, not a private
     /// one. Both are statements the name itself makes; neither is a walk.
     NotUnderscored,
+    /// TypeScript, which states visibility in two places and means opposite
+    /// things by silence in them (`specs/01-facts.md` § `visibility`).
+    ///
+    /// A member, a node whose kind is in `members`, is public unless a
+    /// `modifier` child reads one of `restricted` or its name node is a
+    /// `private_name`: the language makes a bare class member public. Any
+    /// other definition is public only when it is written under a `wrapper`,
+    /// looked for through the `through` kinds that sit between a declaration
+    /// and its statement. `export const a = 1` is a declarator inside a
+    /// declaration inside the statement, and `declare` adds one more. That is
+    /// the definition's own statement, not an ancestor walk: the search stops
+    /// at the first parent that is not in `through`.
+    Statement {
+        /// The node an exported declaration is written under.
+        wrapper: &'static str,
+        /// Node kinds between a definition and its `wrapper`.
+        through: &'static [&'static str],
+        /// Node kinds that are class members.
+        members: &'static [&'static str],
+        /// The child kind a member states its visibility with.
+        modifier: &'static str,
+        /// The texts of `modifier` that restrict a member.
+        restricted: &'static [&'static str],
+        /// The name node kind that makes a member private by its spelling.
+        private_name: &'static str,
+    },
 }
 
 /// What a definition states about its own visibility.
@@ -171,6 +197,15 @@ pub struct Lang {
     pub keyword_kinds: &'static [&'static str],
     /// Characters that end a declaration header, for `def_sig`.
     pub sig_stops: &'static [char],
+    /// Node kinds that make a binding a function.
+    ///
+    /// A definition whose `@value` capture is one of these is a `function`,
+    /// whatever its capture suffix said. `const make = (n) => n` states a
+    /// function in its value node, and `calls` counts only callable kinds
+    /// (`specs/02-extraction.md` § `@value`). A query cannot pick a suffix by
+    /// a child's kind without enumerating every other kind the child could be,
+    /// so the rule lives in the extractor once and the kinds live here.
+    pub function_values: &'static [&'static str],
     /// The canonical SCIP indexer command, verbatim and copy-pasteable.
     ///
     /// `index` prints it for every language it found. Not "no SCIP index
@@ -222,6 +257,7 @@ pub const LANGS: &[Lang] = &[
         attribute_kinds: &[],
         keyword_kinds: &["const", "var", "type"],
         sig_stops: &['{', '='],
+        function_values: &[],
         indexer: "scip-go",
     },
     Lang {
@@ -251,6 +287,7 @@ pub const LANGS: &[Lang] = &[
         // at the `=`. A colon or `=` inside the parameter list is nested and
         // does not count.
         sig_stops: &[':', '='],
+        function_values: &[],
         indexer: "scip-python index . --project-name <name>",
     },
     Lang {
@@ -297,9 +334,79 @@ pub const LANGS: &[Lang] = &[
         // A Rust definition node already contains its own head.
         keyword_kinds: &[],
         sig_stops: &['{', ';', '='],
+        function_values: &[],
         indexer: "rust-analyzer scip .",
     },
+    TYPESCRIPT,
+    // TSX is TypeScript's row with its own grammar and JSX appended to the tag
+    // query. A JSX pattern does not compile against the TypeScript grammar, so
+    // it cannot live in the shared file (`specs/02-extraction.md` § TypeScript
+    // and TSX). The name is SCIP's `Language` for it.
+    Lang {
+        name: "typescriptreact",
+        extensions: &["tsx"],
+        language: || tree_sitter_typescript::LANGUAGE_TSX.into(),
+        tags: concat!(
+            include_str!("../../../queries/typescript/tags.scm"),
+            include_str!("../../../queries/typescript/jsx.scm")
+        ),
+        ..TYPESCRIPT
+    },
 ];
+
+/// TypeScript's row, which TSX shares but for its grammar and its tag query.
+const TYPESCRIPT: Lang = Lang {
+    name: "typescript",
+    // `.d.ts` is a `.ts`: a declaration file is TypeScript with no bodies.
+    extensions: &["ts", "mts", "cts"],
+    language: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    tags: include_str!("../../../queries/typescript/tags.scm"),
+    imports: include_str!("../../../queries/typescript/imports.scm"),
+    // Every capture suffix in `typescript/tags.scm` is already a Kind.
+    kind_remap: &[],
+    export: Export::Statement {
+        wrapper: "export_statement",
+        through: &[
+            "lexical_declaration",
+            "variable_declaration",
+            "ambient_declaration",
+        ],
+        members: &[
+            "public_field_definition",
+            "method_definition",
+            "method_signature",
+            "abstract_method_signature",
+        ],
+        modifier: "accessibility_modifier",
+        restricted: &["private", "protected"],
+        private_name: "private_property_identifier",
+    },
+    // An interface member and an enum member have nowhere to write a modifier,
+    // so they are as visible as what owns them. A class member can, so a bare
+    // one has stated its (public) visibility.
+    vis_inherits_under: &["interface", "enum"],
+    // JSDoc. `*/` and `*` are here for the strip, not the match: no comment
+    // starts with either, and every inner line of a `/** ... */` block does.
+    // They are tried in order, so `*/` is stripped whole before `*` could take
+    // half of it.
+    doc_markers: &["/**", "*/", "*"],
+    comment_kinds: &["comment"],
+    attribute_kinds: &["decorator"],
+    // `export`, `default` and `declare` precede a declaration inside its
+    // statement, and `const`, `let` and `var` precede a declarator inside its
+    // declaration, so `def_sig` reads `export const LIMIT = 64` rather than
+    // `LIMIT = 64`.
+    keyword_kinds: &["export", "default", "declare", "const", "let", "var"],
+    // Not `=`. `=>` is how a function type and an arrow are written, so a
+    // header cut at `=` reads `handle: (key: string)`.
+    sig_stops: &['{', ';'],
+    function_values: &[
+        "arrow_function",
+        "function_expression",
+        "generator_function",
+    ],
+    indexer: "scip-typescript index --infer-tsconfig",
+};
 
 /// The language for a path, by extension.
 #[must_use]
@@ -324,6 +431,18 @@ mod tests {
         assert_eq!(for_path("src/store.RS").map(|l| l.name), None);
         assert_eq!(for_path("Makefile").map(|l| l.name), None);
         assert_eq!(for_path("app/main.py").map(|l| l.name), Some("python"));
+        assert_eq!(for_path("web/app.ts").map(|l| l.name), Some("typescript"));
+        assert_eq!(
+            for_path("web/types.d.ts").map(|l| l.name),
+            Some("typescript")
+        );
+        assert_eq!(
+            for_path("web/panel.tsx").map(|l| l.name),
+            Some("typescriptreact")
+        );
+        // JavaScript is not registered: the TypeScript grammar parsing it
+        // would label a `.js` file `typescript`.
+        assert_eq!(for_path("web/app.js").map(|l| l.name), None);
     }
 
     #[test]

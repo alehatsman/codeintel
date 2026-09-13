@@ -1,0 +1,406 @@
+def("local ambient.d.ts JSX/", "ambient.d.ts", "module", "JSX").
+def("local ambient.d.ts JSX/IntrinsicElements#", "ambient.d.ts", "interface", "IntrinsicElements").
+def("local ambient.d.ts VERSION.", "ambient.d.ts", "constant", "VERSION").
+def("local ambient.d.ts `\"legacy-logger\"`/", "ambient.d.ts", "module", "\"legacy-logger\"").
+def("local ambient.d.ts `\"legacy-logger\"`/level.", "ambient.d.ts", "constant", "level").
+def("local ambient.d.ts `\"legacy-logger\"`/log().", "ambient.d.ts", "function", "log").
+def("local app/app.ts start().", "app/app.ts", "function", "start").
+def("local db/conn.ts open().", "db/conn.ts", "function", "open").
+def("local kinds.ts AFTER_WIDE.", "kinds.ts", "constant", "AFTER_WIDE").
+def("local kinds.ts BANNER.", "kinds.ts", "constant", "BANNER").
+def("local kinds.ts Base#", "kinds.ts", "class", "Base").
+def("local kinds.ts Base#run().", "kinds.ts", "method", "run").
+def("local kinds.ts Config#", "kinds.ts", "class", "Config").
+def("local kinds.ts Config#DEFAULT.", "kinds.ts", "field", "DEFAULT").
+def("local kinds.ts Config#`#check`().", "kinds.ts", "method", "#check").
+def("local kinds.ts Config#`#secret`.", "kinds.ts", "field", "#secret").
+def("local kinds.ts Config#attempts.", "kinds.ts", "field", "attempts").
+def("local kinds.ts Config#constructor().", "kinds.ts", "constructor", "constructor").
+def("local kinds.ts Config#describe().", "kinds.ts", "method", "describe").
+def("local kinds.ts Config#handle().", "kinds.ts", "method", "handle").
+def("local kinds.ts Config#limit.", "kinds.ts", "field", "limit").
+def("local kinds.ts Config#quiet.", "kinds.ts", "field", "quiet").
+def("local kinds.ts Config#size().", "kinds.ts", "method", "size").
+def("local kinds.ts Handler#", "kinds.ts", "interface", "Handler").
+def("local kinds.ts Handler#handle().", "kinds.ts", "method", "handle").
+def("local kinds.ts Handler#name.", "kinds.ts", "field", "name").
+def("local kinds.ts Key#", "kinds.ts", "typealias", "Key").
+def("local kinds.ts Limits/", "kinds.ts", "module", "Limits").
+def("local kinds.ts Limits/MAX.", "kinds.ts", "constant", "MAX").
+def("local kinds.ts Limits/hidden().", "kinds.ts", "function", "hidden").
+def("local kinds.ts Mode#", "kinds.ts", "enum", "Mode").
+def("local kinds.ts Mode#Fast.", "kinds.ts", "constant", "Fast").
+def("local kinds.ts Mode#Slow.", "kinds.ts", "constant", "Slow").
+def("local kinds.ts WIDE.", "kinds.ts", "constant", "WIDE").
+def("local kinds.ts describe().", "kinds.ts", "function", "describe").
+def("local kinds.ts ids().", "kinds.ts", "function", "ids").
+def("local kinds.ts legacy.", "kinds.ts", "variable", "legacy").
+def("local kinds.ts outer().", "kinds.ts", "function", "outer").
+def("local kinds.ts outer().inner().", "kinds.ts", "function", "inner").
+def("local kinds.ts parse().", "kinds.ts", "function", "parse").
+def("local kinds.ts retries.", "kinds.ts", "variable", "retries").
+def("local kinds.ts sealed().", "kinds.ts", "function", "sealed").
+def("local net/conn.ts open().", "net/conn.ts", "function", "open").
+def("local store/store.test.ts testWarm().", "store/store.test.ts", "function", "testWarm").
+def("local store/store.ts Entry#", "store/store.ts", "class", "Entry").
+def("local store/store.ts Entry#constructor().", "store/store.ts", "constructor", "constructor").
+def("local store/store.ts Entry#describe().", "store/store.ts", "method", "describe").
+def("local store/store.ts Entry#value.", "store/store.ts", "field", "value").
+def("local store/store.ts Store#", "store/store.ts", "class", "Store").
+def("local store/store.ts Store#`#evict`().", "store/store.ts", "method", "#evict").
+def("local store/store.ts Store#entries.", "store/store.ts", "field", "entries").
+def("local store/store.ts Store#get().", "store/store.ts", "method", "get").
+def("local store/store.ts Store#handle().", "store/store.ts", "method", "handle").
+def("local store/store.ts Store#put().", "store/store.ts", "method", "put").
+def("local store/store.ts warm().", "store/store.ts", "function", "warm").
+def("local ui/panel.tsx Draw().", "ui/panel.tsx", "function", "Draw").
+def("local ui/panel.tsx Panel().", "ui/panel.tsx", "function", "Panel").
+def("local ui/row.tsx Row().", "ui/row.tsx", "function", "Row").
+def_doc("local app/app.ts start().", "Start up. `open` is defined twice repo-wide, so only tier B resolves it.").
+def_doc("local db/conn.ts open().", "The database layer. Nothing here may import from ui/.").
+def_doc("local kinds.ts Config#", "A class, with a documented field and a documented method.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local kinds.ts Config#limit.", "The limit.").
+def_doc("local kinds.ts Handler#", "A documented interface.").
+def_doc("local kinds.ts Handler#handle().", "Handle one key.").
+def_doc("local kinds.ts describe().", "An arrow binding is a function, so `calls` can reach it.").
+def_doc("local net/conn.ts open().", "A second connection layer, exporting a function with the same name as\ndb/conn's. That ambiguity is the whole point: tier A cannot decide which\n`open` a caller in a third file means, and gives up rather than guessing.").
+def_doc("local store/store.test.ts testWarm().", "A test file, so is_test(F) has something to match on by path.").
+def_doc("local store/store.ts Entry#", "One entry in the store.").
+def_doc("local store/store.ts Store#", "A tiny key-value store, implementing an interface from another file.").
+def_doc("local store/store.ts Store#get().", "Read one entry.\n\nTwo lines of documentation, to prove newlines survive.").
+def_doc("local store/store.ts warm().", "A free function that calls a method, so `calls` has an edge to find.").
+def_doc("local ui/row.tsx Row().", "A component, so a JSX tag has something to be a use of.").
+def_name("local ambient.d.ts JSX/", 3, 18).
+def_name("local ambient.d.ts JSX/IntrinsicElements#", 4, 12).
+def_name("local ambient.d.ts VERSION.", 14, 14).
+def_name("local ambient.d.ts `\"legacy-logger\"`/", 9, 15).
+def_name("local ambient.d.ts `\"legacy-logger\"`/level.", 11, 15).
+def_name("local ambient.d.ts `\"legacy-logger\"`/log().", 10, 18).
+def_name("local app/app.ts start().", 4, 16).
+def_name("local db/conn.ts open().", 2, 16).
+def_name("local kinds.ts AFTER_WIDE.", 102, 39).
+def_name("local kinds.ts BANNER.", 8, 13).
+def_name("local kinds.ts Base#", 72, 22).
+def_name("local kinds.ts Base#run().", 73, 11).
+def_name("local kinds.ts Config#", 39, 13).
+def_name("local kinds.ts Config#DEFAULT.", 45, 18).
+def_name("local kinds.ts Config#`#check`().", 67, 2).
+def_name("local kinds.ts Config#`#secret`.", 44, 2).
+def_name("local kinds.ts Config#attempts.", 43, 12).
+def_name("local kinds.ts Config#constructor().", 47, 2).
+def_name("local kinds.ts Config#describe().", 55, 2).
+def_name("local kinds.ts Config#handle().", 51, 2).
+def_name("local kinds.ts Config#limit.", 41, 2).
+def_name("local kinds.ts Config#quiet.", 42, 10).
+def_name("local kinds.ts Config#size().", 59, 6).
+def_name("local kinds.ts Config#size().", 63, 6).
+def_name("local kinds.ts Handler#", 20, 17).
+def_name("local kinds.ts Handler#handle().", 22, 2).
+def_name("local kinds.ts Handler#name.", 23, 2).
+def_name("local kinds.ts Key#", 31, 12).
+def_name("local kinds.ts Limits/", 94, 17).
+def_name("local kinds.ts Limits/MAX.", 95, 15).
+def_name("local kinds.ts Limits/hidden().", 96, 8).
+def_name("local kinds.ts Mode#", 26, 12).
+def_name("local kinds.ts Mode#Fast.", 27, 2).
+def_name("local kinds.ts Mode#Slow.", 28, 2).
+def_name("local kinds.ts WIDE.", 102, 13).
+def_name("local kinds.ts describe().", 13, 13).
+def_name("local kinds.ts ids().", 82, 17).
+def_name("local kinds.ts legacy.", 10, 4).
+def_name("local kinds.ts outer().", 86, 9).
+def_name("local kinds.ts outer().inner().", 88, 11).
+def_name("local kinds.ts parse().", 76, 16).
+def_name("local kinds.ts parse().", 77, 16).
+def_name("local kinds.ts parse().", 78, 16).
+def_name("local kinds.ts retries.", 9, 4).
+def_name("local kinds.ts sealed().", 15, 9).
+def_name("local net/conn.ts open().", 6, 16).
+def_name("local store/store.test.ts testWarm().", 4, 16).
+def_name("local store/store.ts Entry#", 4, 13).
+def_name("local store/store.ts Entry#constructor().", 7, 2).
+def_name("local store/store.ts Entry#describe().", 11, 2).
+def_name("local store/store.ts Entry#value.", 5, 2).
+def_name("local store/store.ts Store#", 17, 13).
+def_name("local store/store.ts Store#`#evict`().", 37, 2).
+def_name("local store/store.ts Store#entries.", 18, 10).
+def_name("local store/store.ts Store#get().", 25, 2).
+def_name("local store/store.ts Store#handle().", 33, 2).
+def_name("local store/store.ts Store#put().", 29, 2).
+def_name("local store/store.ts warm().", 43, 16).
+def_name("local ui/panel.tsx Draw().", 18, 13).
+def_name("local ui/panel.tsx Panel().", 10, 16).
+def_name("local ui/row.tsx Row().", 2, 16).
+def_sig("local ambient.d.ts JSX/", "declare namespace JSX").
+def_sig("local ambient.d.ts JSX/IntrinsicElements#", "interface IntrinsicElements").
+def_sig("local ambient.d.ts VERSION.", "declare const VERSION: string").
+def_sig("local ambient.d.ts `\"legacy-logger\"`/", "declare module \"legacy-logger\"").
+def_sig("local ambient.d.ts `\"legacy-logger\"`/level.", "export const level: number").
+def_sig("local ambient.d.ts `\"legacy-logger\"`/log().", "export function log(message: string): void").
+def_sig("local app/app.ts start().", "export function start(): boolean").
+def_sig("local db/conn.ts open().", "export function open(url: string): boolean").
+def_sig("local kinds.ts AFTER_WIDE.", "export const AFTER_WIDE = legacy").
+def_sig("local kinds.ts BANNER.", "export const BANNER = \"codeintel\"").
+def_sig("local kinds.ts Base#", "export abstract class Base").
+def_sig("local kinds.ts Base#run().", "abstract run(): void").
+def_sig("local kinds.ts Config#", "export class Config implements Handler").
+def_sig("local kinds.ts Config#DEFAULT.", "static readonly DEFAULT = 64").
+def_sig("local kinds.ts Config#`#check`().", "#check(): boolean").
+def_sig("local kinds.ts Config#`#secret`.", "#secret = \"s\"").
+def_sig("local kinds.ts Config#attempts.", "protected attempts = 3").
+def_sig("local kinds.ts Config#constructor().", "constructor(limit: number)").
+def_sig("local kinds.ts Config#describe().", "describe(): string").
+def_sig("local kinds.ts Config#handle().", "handle(key: string): boolean").
+def_sig("local kinds.ts Config#limit.", "limit = 64").
+def_sig("local kinds.ts Config#quiet.", "private quiet = false").
+def_sig("local kinds.ts Config#size().", "get size(): number").
+def_sig("local kinds.ts Config#size().", "set size(value: number)").
+def_sig("local kinds.ts Handler#", "export interface Handler").
+def_sig("local kinds.ts Handler#handle().", "handle(key: string): boolean").
+def_sig("local kinds.ts Handler#name.", "name?: string").
+def_sig("local kinds.ts Key#", "export type Key = string").
+def_sig("local kinds.ts Limits/", "export namespace Limits").
+def_sig("local kinds.ts Limits/MAX.", "export const MAX = 100").
+def_sig("local kinds.ts Limits/hidden().", "const hidden = () => outer()").
+def_sig("local kinds.ts Mode#", "export enum Mode").
+def_sig("local kinds.ts Mode#Fast.", "Fast").
+def_sig("local kinds.ts Mode#Slow.", "Slow = 2").
+def_sig("local kinds.ts WIDE.", "export const WIDE = \"é\"").
+def_sig("local kinds.ts describe().", "export const describe = (config: Config): string => config.describe()").
+def_sig("local kinds.ts ids().", "export function* ids(): Generator<number>").
+def_sig("local kinds.ts legacy.", "var legacy: string | undefined").
+def_sig("local kinds.ts outer().", "function outer(): number").
+def_sig("local kinds.ts outer().inner().", "function inner(): number").
+def_sig("local kinds.ts parse().", "export function parse(input: number): number").
+def_sig("local kinds.ts parse().", "export function parse(input: string | number): number").
+def_sig("local kinds.ts parse().", "export function parse(input: string): number").
+def_sig("local kinds.ts retries.", "let retries = 3").
+def_sig("local kinds.ts sealed().", "function sealed(target: unknown): void").
+def_sig("local net/conn.ts open().", "export function open(url: string): boolean").
+def_sig("local store/store.test.ts testWarm().", "export function testWarm(): boolean").
+def_sig("local store/store.ts Entry#", "export class Entry").
+def_sig("local store/store.ts Entry#constructor().", "constructor(value: string)").
+def_sig("local store/store.ts Entry#describe().", "describe(): string").
+def_sig("local store/store.ts Entry#value.", "value: string").
+def_sig("local store/store.ts Store#", "export class Store implements Handler").
+def_sig("local store/store.ts Store#`#evict`().", "#evict(): void").
+def_sig("local store/store.ts Store#entries.", "private entries = new Map<string, Entry>()").
+def_sig("local store/store.ts Store#get().", "get(key: string): Entry | undefined").
+def_sig("local store/store.ts Store#handle().", "handle(key: string): boolean").
+def_sig("local store/store.ts Store#put().", "put(key: string, value: string): void").
+def_sig("local store/store.ts warm().", "export function warm(store: Store): Entry | undefined").
+def_sig("local ui/panel.tsx Draw().", "export const Draw = () => <Panel url=\"sqlite://memory\" />").
+def_sig("local ui/panel.tsx Panel().", "export function Panel(props: { url: string })").
+def_sig("local ui/row.tsx Row().", "export function Row(props: { label: string; ok: boolean })").
+def_span("local ambient.d.ts JSX/", 3, 7, 67, 157).
+def_span("local ambient.d.ts JSX/IntrinsicElements#", 4, 6, 93, 155).
+def_span("local ambient.d.ts VERSION.", 14, 14, 271, 300).
+def_span("local ambient.d.ts `\"legacy-logger\"`/", 9, 12, 159, 269).
+def_span("local ambient.d.ts `\"legacy-logger\"`/level.", 11, 11, 240, 266).
+def_span("local ambient.d.ts `\"legacy-logger\"`/log().", 10, 10, 194, 237).
+def_span("local app/app.ts start().", 3, 6, 36, 186).
+def_span("local db/conn.ts open().", 1, 4, 0, 128).
+def_span("local kinds.ts AFTER_WIDE.", 102, 102, 2161, 2193).
+def_span("local kinds.ts BANNER.", 8, 8, 223, 256).
+def_span("local kinds.ts Base#", 72, 74, 1411, 1465).
+def_span("local kinds.ts Base#run().", 73, 73, 1442, 1462).
+def_span("local kinds.ts Config#", 33, 70, 707, 1409).
+def_span("local kinds.ts Config#DEFAULT.", 45, 45, 990, 1018).
+def_span("local kinds.ts Config#`#check`().", 67, 69, 1352, 1407).
+def_span("local kinds.ts Config#`#secret`.", 44, 44, 973, 986).
+def_span("local kinds.ts Config#attempts.", 43, 43, 947, 969).
+def_span("local kinds.ts Config#constructor().", 47, 49, 1023, 1079).
+def_span("local kinds.ts Config#describe().", 55, 57, 1181, 1240).
+def_span("local kinds.ts Config#handle().", 51, 53, 1083, 1177).
+def_span("local kinds.ts Config#limit.", 40, 41, 888, 918).
+def_span("local kinds.ts Config#quiet.", 42, 42, 922, 943).
+def_span("local kinds.ts Config#size().", 59, 61, 1244, 1291).
+def_span("local kinds.ts Config#size().", 63, 65, 1295, 1348).
+def_span("local kinds.ts Handler#", 19, 24, 503, 636).
+def_span("local kinds.ts Handler#handle().", 21, 22, 563, 616).
+def_span("local kinds.ts Handler#name.", 23, 23, 620, 633).
+def_span("local kinds.ts Key#", 31, 31, 680, 705).
+def_span("local kinds.ts Limits/", 94, 97, 1834, 1919).
+def_span("local kinds.ts Limits/MAX.", 95, 95, 1862, 1884).
+def_span("local kinds.ts Limits/hidden().", 96, 96, 1888, 1916).
+def_span("local kinds.ts Mode#", 26, 29, 638, 678).
+def_span("local kinds.ts Mode#Fast.", 27, 27, 659, 663).
+def_span("local kinds.ts Mode#Slow.", 28, 28, 667, 675).
+def_span("local kinds.ts WIDE.", 102, 102, 2135, 2159).
+def_span("local kinds.ts describe().", 12, 13, 308, 441).
+def_span("local kinds.ts ids().", 82, 84, 1642, 1704).
+def_span("local kinds.ts legacy.", 10, 10, 275, 305).
+def_span("local kinds.ts outer().", 86, 92, 1706, 1832).
+def_span("local kinds.ts outer().inner().", 88, 90, 1754, 1812).
+def_span("local kinds.ts parse().", 76, 76, 1467, 1512).
+def_span("local kinds.ts parse().", 77, 77, 1513, 1558).
+def_span("local kinds.ts parse().", 78, 80, 1559, 1640).
+def_span("local kinds.ts retries.", 9, 9, 258, 273).
+def_span("local kinds.ts sealed().", 15, 17, 444, 501).
+def_span("local net/conn.ts open().", 1, 8, 0, 315).
+def_span("local store/store.test.ts testWarm().", 3, 6, 40, 190).
+def_span("local store/store.ts Entry#", 3, 14, 42, 237).
+def_span("local store/store.ts Entry#constructor().", 7, 9, 114, 170).
+def_span("local store/store.ts Entry#describe().", 11, 13, 174, 235).
+def_span("local store/store.ts Entry#value.", 5, 5, 96, 109).
+def_span("local store/store.ts Store#", 16, 40, 239, 799).
+def_span("local store/store.ts Store#`#evict`().", 37, 39, 751, 797).
+def_span("local store/store.ts Store#entries.", 18, 18, 357, 399).
+def_span("local store/store.ts Store#get().", 20, 27, 404, 577).
+def_span("local store/store.ts Store#handle().", 33, 35, 673, 747).
+def_span("local store/store.ts Store#put().", 29, 31, 581, 669).
+def_span("local store/store.ts warm().", 42, 45, 801, 962).
+def_span("local ui/panel.tsx Draw().", 18, 18, 488, 545).
+def_span("local ui/panel.tsx Panel().", 10, 16, 324, 486).
+def_span("local ui/row.tsx Row().", 1, 4, 0, 178).
+file("ambient.d.ts", "typescript").
+file("app/app.ts", "typescript").
+file("db/conn.ts", "typescript").
+file("kinds.ts", "typescript").
+file("net/conn.ts", "typescript").
+file("store/store.test.ts", "typescript").
+file("store/store.ts", "typescript").
+file("ui/panel.tsx", "typescriptreact").
+file("ui/row.tsx", "typescriptreact").
+import("app/app.ts", "../db/conn", "").
+import("store/store.test.ts", "./store", "").
+import("store/store.ts", "../kinds", "").
+import("ui/panel.tsx", "../db/conn", "").
+import("ui/panel.tsx", "../net/conn", "net").
+import("ui/panel.tsx", "./row", "").
+name_ref("Entry", "store/store.ts", 30, 30, "local store/store.ts Store#put().").
+name_ref("Map", "store/store.ts", 18, 24, "local store/store.ts Store#entries.").
+name_ref("Number", "kinds.ts", 79, 9, "local kinds.ts parse().").
+name_ref("Panel", "ui/panel.tsx", 18, 27, "local ui/panel.tsx Draw().").
+name_ref("Row", "ui/panel.tsx", 13, 7, "local ui/panel.tsx Panel().").
+name_ref("Store", "store/store.test.ts", 5, 18, "local store/store.test.ts testWarm().").
+name_ref("clear", "store/store.ts", 38, 17, "local store/store.ts Store#`#evict`().").
+name_ref("describe", "kinds.ts", 13, 59, "local kinds.ts describe().").
+name_ref("get", "store/store.ts", 26, 24, "local store/store.ts Store#get().").
+name_ref("get", "store/store.ts", 34, 16, "local store/store.ts Store#handle().").
+name_ref("get", "store/store.ts", 44, 15, "local store/store.ts warm().").
+name_ref("inner", "kinds.ts", 91, 9, "local kinds.ts outer().").
+name_ref("open", "app/app.ts", 5, 9, "local app/app.ts start().").
+name_ref("open", "ui/panel.tsx", 13, 33, "local ui/panel.tsx Panel().").
+name_ref("open", "ui/panel.tsx", 13, 56, "local ui/panel.tsx Panel().").
+name_ref("outer", "kinds.ts", 96, 23, "local kinds.ts Limits/hidden().").
+name_ref("set", "store/store.ts", 30, 17, "local store/store.ts Store#put().").
+name_ref("startsWith", "net/conn.ts", 7, 13, "local net/conn.ts open().").
+name_ref("toUpperCase", "store/store.ts", 12, 22, "local store/store.ts Entry#describe().").
+name_ref("warm", "store/store.test.ts", 5, 9, "local store/store.test.ts testWarm().").
+parent("local ambient.d.ts JSX/", "ambient.d.ts").
+parent("local ambient.d.ts JSX/IntrinsicElements#", "local ambient.d.ts JSX/").
+parent("local ambient.d.ts VERSION.", "ambient.d.ts").
+parent("local ambient.d.ts `\"legacy-logger\"`/", "ambient.d.ts").
+parent("local ambient.d.ts `\"legacy-logger\"`/level.", "local ambient.d.ts `\"legacy-logger\"`/").
+parent("local ambient.d.ts `\"legacy-logger\"`/log().", "local ambient.d.ts `\"legacy-logger\"`/").
+parent("local app/app.ts start().", "app/app.ts").
+parent("local db/conn.ts open().", "db/conn.ts").
+parent("local kinds.ts AFTER_WIDE.", "kinds.ts").
+parent("local kinds.ts BANNER.", "kinds.ts").
+parent("local kinds.ts Base#", "kinds.ts").
+parent("local kinds.ts Base#run().", "local kinds.ts Base#").
+parent("local kinds.ts Config#", "kinds.ts").
+parent("local kinds.ts Config#DEFAULT.", "local kinds.ts Config#").
+parent("local kinds.ts Config#`#check`().", "local kinds.ts Config#").
+parent("local kinds.ts Config#`#secret`.", "local kinds.ts Config#").
+parent("local kinds.ts Config#attempts.", "local kinds.ts Config#").
+parent("local kinds.ts Config#constructor().", "local kinds.ts Config#").
+parent("local kinds.ts Config#describe().", "local kinds.ts Config#").
+parent("local kinds.ts Config#handle().", "local kinds.ts Config#").
+parent("local kinds.ts Config#limit.", "local kinds.ts Config#").
+parent("local kinds.ts Config#quiet.", "local kinds.ts Config#").
+parent("local kinds.ts Config#size().", "local kinds.ts Config#").
+parent("local kinds.ts Handler#", "kinds.ts").
+parent("local kinds.ts Handler#handle().", "local kinds.ts Handler#").
+parent("local kinds.ts Handler#name.", "local kinds.ts Handler#").
+parent("local kinds.ts Key#", "kinds.ts").
+parent("local kinds.ts Limits/", "kinds.ts").
+parent("local kinds.ts Limits/MAX.", "local kinds.ts Limits/").
+parent("local kinds.ts Limits/hidden().", "local kinds.ts Limits/").
+parent("local kinds.ts Mode#", "kinds.ts").
+parent("local kinds.ts Mode#Fast.", "local kinds.ts Mode#").
+parent("local kinds.ts Mode#Slow.", "local kinds.ts Mode#").
+parent("local kinds.ts WIDE.", "kinds.ts").
+parent("local kinds.ts describe().", "kinds.ts").
+parent("local kinds.ts ids().", "kinds.ts").
+parent("local kinds.ts legacy.", "kinds.ts").
+parent("local kinds.ts outer().", "kinds.ts").
+parent("local kinds.ts outer().inner().", "local kinds.ts outer().").
+parent("local kinds.ts parse().", "kinds.ts").
+parent("local kinds.ts retries.", "kinds.ts").
+parent("local kinds.ts sealed().", "kinds.ts").
+parent("local net/conn.ts open().", "net/conn.ts").
+parent("local store/store.test.ts testWarm().", "store/store.test.ts").
+parent("local store/store.ts Entry#", "store/store.ts").
+parent("local store/store.ts Entry#constructor().", "local store/store.ts Entry#").
+parent("local store/store.ts Entry#describe().", "local store/store.ts Entry#").
+parent("local store/store.ts Entry#value.", "local store/store.ts Entry#").
+parent("local store/store.ts Store#", "store/store.ts").
+parent("local store/store.ts Store#`#evict`().", "local store/store.ts Store#").
+parent("local store/store.ts Store#entries.", "local store/store.ts Store#").
+parent("local store/store.ts Store#get().", "local store/store.ts Store#").
+parent("local store/store.ts Store#handle().", "local store/store.ts Store#").
+parent("local store/store.ts Store#put().", "local store/store.ts Store#").
+parent("local store/store.ts warm().", "store/store.ts").
+parent("local ui/panel.tsx Draw().", "ui/panel.tsx").
+parent("local ui/panel.tsx Panel().", "ui/panel.tsx").
+parent("local ui/row.tsx Row().", "ui/row.tsx").
+visibility("local ambient.d.ts JSX/", "restricted").
+visibility("local ambient.d.ts JSX/IntrinsicElements#", "restricted").
+visibility("local ambient.d.ts VERSION.", "restricted").
+visibility("local ambient.d.ts `\"legacy-logger\"`/", "restricted").
+visibility("local ambient.d.ts `\"legacy-logger\"`/level.", "public").
+visibility("local ambient.d.ts `\"legacy-logger\"`/log().", "public").
+visibility("local app/app.ts start().", "public").
+visibility("local db/conn.ts open().", "public").
+visibility("local kinds.ts AFTER_WIDE.", "public").
+visibility("local kinds.ts BANNER.", "public").
+visibility("local kinds.ts Base#", "public").
+visibility("local kinds.ts Base#run().", "public").
+visibility("local kinds.ts Config#", "public").
+visibility("local kinds.ts Config#DEFAULT.", "public").
+visibility("local kinds.ts Config#`#check`().", "restricted").
+visibility("local kinds.ts Config#`#secret`.", "restricted").
+visibility("local kinds.ts Config#attempts.", "restricted").
+visibility("local kinds.ts Config#constructor().", "public").
+visibility("local kinds.ts Config#describe().", "public").
+visibility("local kinds.ts Config#handle().", "public").
+visibility("local kinds.ts Config#limit.", "public").
+visibility("local kinds.ts Config#quiet.", "restricted").
+visibility("local kinds.ts Config#size().", "public").
+visibility("local kinds.ts Handler#", "public").
+visibility("local kinds.ts Handler#handle().", "inherited").
+visibility("local kinds.ts Handler#name.", "inherited").
+visibility("local kinds.ts Key#", "public").
+visibility("local kinds.ts Limits/", "public").
+visibility("local kinds.ts Limits/MAX.", "public").
+visibility("local kinds.ts Limits/hidden().", "restricted").
+visibility("local kinds.ts Mode#", "public").
+visibility("local kinds.ts Mode#Fast.", "inherited").
+visibility("local kinds.ts Mode#Slow.", "inherited").
+visibility("local kinds.ts WIDE.", "public").
+visibility("local kinds.ts describe().", "public").
+visibility("local kinds.ts ids().", "public").
+visibility("local kinds.ts legacy.", "restricted").
+visibility("local kinds.ts outer().", "restricted").
+visibility("local kinds.ts outer().inner().", "restricted").
+visibility("local kinds.ts parse().", "public").
+visibility("local kinds.ts retries.", "restricted").
+visibility("local kinds.ts sealed().", "restricted").
+visibility("local net/conn.ts open().", "public").
+visibility("local store/store.test.ts testWarm().", "public").
+visibility("local store/store.ts Entry#", "public").
+visibility("local store/store.ts Entry#constructor().", "public").
+visibility("local store/store.ts Entry#describe().", "public").
+visibility("local store/store.ts Entry#value.", "public").
+visibility("local store/store.ts Store#", "public").
+visibility("local store/store.ts Store#`#evict`().", "restricted").
+visibility("local store/store.ts Store#entries.", "restricted").
+visibility("local store/store.ts Store#get().", "public").
+visibility("local store/store.ts Store#handle().", "public").
+visibility("local store/store.ts Store#put().", "public").
+visibility("local store/store.ts warm().", "public").
+visibility("local ui/panel.tsx Draw().", "public").
+visibility("local ui/panel.tsx Panel().", "public").
+visibility("local ui/row.tsx Row().", "public").

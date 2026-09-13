@@ -46,6 +46,10 @@ ignore = "0.4"
 tree-sitter-go = "0.25"
 # The third of the four grammar crates research.md § Language coverage names.
 tree-sitter-python = "0.25"
+# ── M5b: the fourth and last. One crate, two grammars (TypeScript and TSX).
+# 0.23.2 is the newest release and the grammar has had no commit since
+# 2024-11; research.md § Language coverage records the ABI check.
+tree-sitter-typescript = "0.23"
 # `04-storage.md`: segments are named by a content hash, and the manifest's
 # fast path hashes file contents. STACK default for speed-over-interop.
 blake3 = "1"

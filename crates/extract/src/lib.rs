@@ -51,6 +51,9 @@ pub fn fingerprint() -> String {
         for marker in lang.doc_markers {
             hasher.update(marker.as_bytes());
         }
+        for value in lang.function_values {
+            hasher.update(value.as_bytes());
+        }
         // The rest of the row. `04-storage.md` § Manifest says the whole
         // `lang.rs` table, and it means it: changing `sig_stops` or
         // `attribute_kinds` changes `def_sig` and `def_span` for every file,

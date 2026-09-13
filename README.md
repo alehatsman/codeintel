@@ -170,12 +170,17 @@ are import-complete, which is all conformance needs.
 
 ## Status
 
-M0–M4 shipped, and M5a with them: the Datalog engine, the fact store, the
-tree-sitter tier, the SCIP tier and the anchor join, all five verbs and the MCP
-tool. **Rust, Go and Python** index today, each with a committed fixture index
-and a 94% / 100% / 100% anchor rate.
+M0–M5 shipped: the Datalog engine, the fact store, the tree-sitter tier, the
+SCIP tier and the anchor join, all five verbs and the MCP tool. **Rust, Go,
+Python and TypeScript** (with TSX) index today, each with a committed fixture
+index. Anchor rates on those fixtures are 80% for Rust, where every miss is one
+of its 9 modules and modules are exempt
+([02-extraction.md](specs/02-extraction.md) § Validation), 100% for Go, 96.7%
+for Python and 98.4% for TypeScript. The one miss in each of the last two is an
+occurrence whose column #21 refuses to guess.
 
-Not built yet: TypeScript (M5b), and any performance work (M6).
+Not built yet: M6's performance work, beyond the bench harness and counter
+goldens that were pulled forward.
 See [docs/plan.md](docs/plan.md) for where the line is.
 
 Both examples above run today. The second one needs a SCIP index — without one
