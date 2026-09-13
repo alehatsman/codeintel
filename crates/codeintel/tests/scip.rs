@@ -192,6 +192,78 @@ fn a_symbol_defined_in_two_documents_is_not_adopted() {
     assert!(report.contains("scip collisions: 1"), "{report}");
 }
 
+fn index_with(root: &Path, scip: &[&str]) -> String {
+    let mut args = vec!["index", "."];
+    for path in scip {
+        args.extend(["--scip", path]);
+    }
+    let out = run(root, &args);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(out.status.success(), "{stderr}");
+    stderr
+}
+
+fn status_json(root: &Path) -> serde_json::Value {
+    let out = run(root, &["status", "--format", "json"]);
+    serde_json::from_slice(&out.stdout).expect("status is JSON")
+}
+
+/// Drop a second SCIP input into the tree, stamped like `index.scip`.
+fn add_input(dir: &Path, from: &Path, name: &str) {
+    std::fs::copy(from, dir.join(name)).expect("copy");
+    set_mtime(&dir.join(name), SOURCE_MTIME + 60);
+}
+
+/// A collision belongs to the merge, not to an input. Each input used to carry
+/// the merged count and `index` and `status` summed them, so two inputs
+/// reported every collision twice (#23).
+#[test]
+fn two_scip_inputs_count_a_collision_once() {
+    let dir = tree();
+    add_input(dir.path(), &dir.path().join("index.scip"), "again.scip");
+
+    let summary = index_with(dir.path(), &["index.scip", "again.scip"]);
+    assert!(
+        summary.contains("scip collisions: 1 symbol(s)"),
+        "{summary}"
+    );
+    let report = String::from_utf8_lossy(&run(dir.path(), &["status"]).stdout).to_string();
+    assert!(report.contains("scip collisions: 1 symbol(s)"), "{report}");
+
+    let json = status_json(dir.path());
+    assert_eq!(json["scip_collisions"], 1, "{json}");
+    let inputs = json["scip"].as_array().expect("scip is an array");
+    assert_eq!(inputs.len(), 2, "{json}");
+    assert!(
+        inputs.iter().all(|i| i.get("collisions").is_none()),
+        "a per-input collision count reads as that input's own: {json}"
+    );
+}
+
+/// `tool` and `documents` are each input's own. The merge stamped its document
+/// total and the last-read tool on every input (#23).
+#[test]
+fn each_scip_input_reports_its_own_tool_and_documents() {
+    let dir = tree();
+    index(dir.path());
+    let alone = status_json(dir.path());
+    let rust = &alone["scip"][0];
+
+    add_input(dir.path(), &fixture().join("../go/index.scip"), "go.scip");
+    index_with(dir.path(), &["index.scip", "go.scip"]);
+    let both = status_json(dir.path());
+    let inputs = both["scip"].as_array().expect("scip is an array");
+    assert_eq!(inputs.len(), 2, "{both}");
+    // Sorted by path.
+    let (go, rust_again) = (&inputs[0], &inputs[1]);
+    assert_eq!(go["path"], "go.scip", "{both}");
+
+    assert_eq!(rust_again["tool"], rust["tool"], "{both}");
+    assert_eq!(rust_again["documents"], rust["documents"], "{both}");
+    assert_ne!(go["tool"], rust["tool"], "{both}");
+    assert_ne!(go["documents"], rust["documents"], "{both}");
+}
+
 #[test]
 fn tier_a_references_are_bounded_by_what_tier_b_confirms() {
     let dir = tree();
