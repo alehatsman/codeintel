@@ -56,7 +56,19 @@ query returns `ok` with zero rows on a fresh install.
 0.** They are answers about a known-imperfect index, not failures: the caller
 gets what there is and is told exactly what is wrong with it. Only `no-index`,
 `invalid-query`, `unstratified`, `timeout`, `budget-exceeded`, `locked` and
-`corrupt` exit 2.
+`corrupt` exit 2 — and so does an error no status expresses (an unreadable
+program on stdin, an I/O failure), because 2 means "the query never ran" and 1
+is `--expect-empty`'s "it ran and found a violation" (§ `query`).
+
+**When two of those apply, the index's condition wins the `status` and the cap
+rides along.** A truncated answer from a stale index is `stale`, not
+`truncated`; likewise `no-scip` and `scip-stale`. Truncation is already carried
+structurally — `truncated: true` and `cap` are set whatever `status` says — so
+a status of `truncated` would add nothing a consumer cannot read, while
+overwriting `stale` would erase the one fact that is nowhere else in the
+response. The hint names both: the index's problem first, then the cap. Between
+the index conditions the order is `stale`, then `no-scip`, then `scip-stale`: a
+refresh that did not finish makes the SCIP verdict moot.
 
 ---
 
@@ -177,16 +189,26 @@ Text format is TSV-ish, one row per line, aligned, designed to be read by a
 human and grepped by an agent. JSON is
 `{ status, columns, rows, truncated, cap, stats }`.
 
-**Row order is lexicographic over the rendered row**, applied here rather than
-in the engine. The engine's own order is by atom, which is dictionary order —
-insertion order ([03-datalog.md](03-datalog.md) § Determinism). That is total
-and deterministic for one index, but a cold index and an incrementally-updated
-one assign different atom ids to the same string, so the same repo state would
-print the same rows in a different order depending on how the index was built.
-Sorting the rendered text costs one sort per query and makes invariant 8 hold
-across index paths, which is the property a consumer actually relies on. The
-sort runs **after** the row cap, so a truncated result is still the engine's
-stable prefix rather than a re-sorted sample of it.
+**Row order is lexicographic over the rendered row, then over the raw row**,
+applied here rather than in the engine. The engine's own order is by atom, which
+is dictionary order — insertion order ([03-datalog.md](03-datalog.md)
+§ Determinism). That is total and deterministic for one index, but a cold index
+and an incrementally-updated one assign different atom ids to the same string,
+so the same repo state would print the same rows in a different order depending
+on how the index was built. Sorting the rendered text costs one sort per query
+and makes invariant 8 hold across index paths, which is the property a consumer
+actually relies on.
+
+**The raw row breaks ties.** Two different tuples can render identically — two
+symbols of one name defined on one line, or a symbol beside a string with the
+same text. Ordered by the rendered row alone they kept atom order, which is the
+index-dependent order this sort exists to remove, and the byte cap could keep a
+different one of them. The raw row is the tuple itself, so the key is total.
+
+The sort runs **before** the byte cap, so the rows a truncated answer keeps are
+a function of the rendered text alone. `max_result_rows` still fires inside the
+engine, in atom order, so that cap's surviving *set* can depend on how the
+index was built — a known gap, named so it is not mistaken for closed.
 
 **Symbol rendering.** A raw `SymId` is a ~68-character SCIP string — 17 tokens,
 unreadable, and impossible for an agent to retype correctly. In text format a
@@ -225,8 +247,8 @@ the tuple is unchanged, and `--raw` is what round-trips.
 **The byte cap is measured on the printed text**, not on the engine's estimate
 over raw atoms. Symbol expansion is what the consumer's context window actually
 pays for, and `crates/datalog` cannot account for it without learning what a
-symbol is (invariant 6). It is applied before the sort, so a truncated answer is
-still the engine's stable prefix.
+symbol is (invariant 6). It is applied after the sort, so a truncated answer is
+a stable prefix of the ordered rows.
 
 For that to be true the engine's own cap must not be the one that fires. The
 rendered form is **shorter** than the raw one — a ~68-character `SymId` becomes
@@ -478,6 +500,23 @@ dependency: the protocol surface this server needs is `initialize`, `tools/list`
 `tools/call` and `ping`, `serde_json` is already present for the response
 contract, and the whole transport is ~150 lines. Recorded in
 [research.md](../docs/research.md) §6.
+
+**A bad line is answered, and the session survives it.** A client that sent a
+request and gets silence waits forever, so every line that is not a valid
+request gets a JSON-RPC error with `id: null`, and the server reads the next
+line:
+
+| Line | Error |
+|---|---|
+| not UTF-8, or not JSON | `-32700` parse error |
+| JSON, but not an object — including a batch array | `-32600` invalid request |
+| longer than 1 MiB | `-32600` invalid request; the rest of the line is skipped unread into memory |
+
+**Batches are rejected, not served.** The server speaks one request per line;
+MCP dropped batching in a later revision, and supporting it would be protocol
+surface no client of this tool needs. **`tools/call` names its tool.** A `name`
+other than `code_query` — or none — is `-32602` naming the one tool that exists,
+rather than running `code_query` under whatever name was sent.
 
 ### Response contract
 

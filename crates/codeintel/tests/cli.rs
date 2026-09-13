@@ -508,6 +508,60 @@ fn a_reader_that_cannot_take_the_lock_says_stale_not_locked() {
 }
 
 #[test]
+fn a_truncated_answer_from_a_stale_index_still_says_stale() {
+    // Both apply. `truncated` and `cap` carry the cut structurally; the status
+    // is the one place `stale` can live, so the cap must not overwrite it (#35).
+    let dir = tree();
+    index(dir.path());
+    let mut lock = facts::Lock::open(&dir.path().join(".codeintel")).expect("opens");
+    let held = lock.try_hold().expect("no io error").expect("uncontended");
+
+    let options = codeintel::Options {
+        limit: 1,
+        ..codeintel::Options::default()
+    };
+    let answer =
+        codeintel::query::run(dir.path(), "?- def(S, F, K, N).", &options).expect("answers");
+    assert_eq!(answer.status, codeintel::Status::Stale);
+    assert!(answer.truncated);
+    assert_eq!(answer.cap, Some("max_result_rows"));
+    let hint = answer.hint.unwrap_or_default();
+    assert!(hint.contains("codeintel index"), "{hint}");
+    assert!(hint.contains("max_result_rows"), "{hint}");
+    drop(held);
+}
+
+#[test]
+fn an_error_exits_2_not_the_1_that_means_a_violation() {
+    // `--expect-empty` exits 1 on rows. A program that could not even be read
+    // is "I could not tell you", and CI must not read it as "you violate this".
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = Command::new(binary())
+        .args(["query", "-", "--expect-empty"])
+        .current_dir(dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary runs");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&[0xff, 0xfe, b'\n'])
+        .expect("write");
+    let out = child.wait_with_output().expect("exits");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn truncation_is_reported_with_the_cap_that_fired() {
     let dir = tree();
     index(dir.path());

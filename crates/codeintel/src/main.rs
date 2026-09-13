@@ -108,9 +108,12 @@ enum Format {
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
+        // 2, not 1: 1 is `--expect-empty`'s "ran and found a violation", and
+        // CI must not read "could not run" as that (`specs/05-surface.md`
+        // § Status taxonomy).
         Err(e) => {
             eprintln!("codeintel: {e:#}");
-            ExitCode::FAILURE
+            ExitCode::from(2)
         }
     }
 }
