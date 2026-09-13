@@ -15,7 +15,7 @@ use datalog::atom::Atom;
 use datalog::relation::Relation;
 
 use crate::intern::Interner;
-use crate::manifest::{FileEntry, Manifest};
+use crate::manifest::{FileEntry, Manifest, SegName};
 use crate::schema::{self, Rel};
 use crate::segment::Segment;
 
@@ -37,7 +37,7 @@ pub struct Store {
     /// Segments the manifest stopped naming this run. Unlinked after commit,
     /// never before: until the new manifest is in place, the old one names
     /// them and a reader may be opening them.
-    retired: BTreeSet<String>,
+    retired: BTreeSet<SegName>,
 }
 
 impl Store {
@@ -195,8 +195,11 @@ impl Store {
     /// I/O failure appending the dictionary or writing the manifest.
     pub fn commit(&mut self) -> Result<()> {
         self.interner.flush()?;
-        self.manifest.dict_bin_len = len_of(&self.dir.join("dict.bin"))?;
-        self.manifest.dict_idx_len = len_of(&self.dir.join("dict.idx"))?;
+        // What the interner vouches for, not what `stat` says. A commit that
+        // interned nothing leaves a crashed run's torn tail on disk, and
+        // recording its size would make every later open fail validation
+        // (`specs/04-storage.md` § Manifest).
+        (self.manifest.dict_bin_len, self.manifest.dict_idx_len) = self.interner.extents();
         self.manifest.save(&self.dir)?;
         self.existing = true;
         // Only now. A crash anywhere above leaves the old manifest naming
@@ -277,14 +280,6 @@ impl Store {
     }
 }
 
-fn len_of(path: &Path) -> Result<u64> {
-    match std::fs::metadata(path) {
-        Ok(meta) => Ok(meta.len()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(e),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,7 +287,7 @@ mod tests {
 
     fn entry(_path: &str) -> FileEntry {
         FileEntry {
-            seg: String::new(),
+            seg: SegName::default(),
             mtime: 1,
             size: 2,
             hash: "blake3:00".to_string(),
@@ -356,7 +351,7 @@ mod tests {
             assert!(seg.push("def_span", &[f, *a, *b, *c, *d]));
         }
         store.put(path, &mut seg, entry(path)).expect("writes");
-        store.manifest().files[path].seg.clone()
+        store.manifest().files[path].seg.to_string()
     }
 
     fn segment_files(dir: &Path) -> Vec<String> {
@@ -488,6 +483,40 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_that_interns_nothing_records_the_trusted_extents_not_a_torn_tail() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let trusted = {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+            (store.manifest().dict_bin_len, store.manifest().dict_idx_len)
+        };
+        // A crash mid-append: three bytes of a string landed, its offset did
+        // not, and no manifest records either.
+        let bin = dir.path().join(DIR).join("dict.bin");
+        let mut data = std::fs::read(&bin).expect("bin");
+        data.extend_from_slice(b"bet");
+        std::fs::write(&bin, &data).expect("writes");
+
+        {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("reopens past the tear");
+            // The same strings with different rows: the manifest changes and
+            // the dictionary does not.
+            write(&mut store, "a.rs", &[[1, 3, 0, 20]]);
+            assert_eq!(store.interner_mut().pending(), 0);
+            store.commit().expect("commits");
+            assert_eq!(
+                (store.manifest().dict_bin_len, store.manifest().dict_idx_len),
+                trusted,
+                "the torn bytes are not recorded as trusted"
+            );
+        }
+        let store = Store::open(dir.path(), "blake3:test").expect("the next open validates");
+        let rows = store.load().expect("loads");
+        assert_eq!(rows["def_span"].row(0).map(|r| r[2]), Some(3));
+    }
+
+    #[test]
     fn a_missing_segment_is_an_error_not_a_short_answer() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
@@ -502,6 +531,35 @@ mod tests {
         std::fs::remove_file(dir.path().join(DIR).join(SEG).join(seg)).expect("removes");
         let err = store.load().expect_err("a named segment must exist");
         assert!(err.to_string().contains("codeintel index"), "{err}");
+    }
+
+    #[test]
+    fn a_manifest_naming_a_file_outside_the_index_is_refused_and_the_file_survives() {
+        // The cloned-repository case: a committed `.codeintel/` whose manifest
+        // names a victim for a source file the tree does not have, so the
+        // next refresh would `forget` it and unlink the name at commit.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("precious.txt");
+        std::fs::write(&victim, b"keep me").expect("writes");
+        {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+        }
+        let path = dir.path().join(DIR).join(crate::manifest::MANIFEST);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("json");
+        let mut gone = json["files"]["a.rs"].clone();
+        gone["seg"] = victim.display().to_string().into();
+        json["files"]["gone.rs"] = gone;
+        std::fs::write(&path, json.to_string()).expect("writes");
+
+        let error = Store::open(dir.path(), "blake3:test").expect_err("a hostile manifest");
+        assert!(error.to_string().contains("segment name"), "{error}");
+        assert_eq!(
+            std::fs::read(&victim).expect("the victim is still there"),
+            b"keep me"
+        );
     }
 
     #[test]
