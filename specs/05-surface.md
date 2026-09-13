@@ -142,7 +142,12 @@ the worst failure this tool has, because it looks like a right one.
   it is abandoned, the query runs against the index as it stands, and the
   response carries `status: "stale"` naming the files it could not refresh.
   Never a silent slow path and never a silent stale answer.
-- `stats.refreshed` lists what was re-extracted. Zero is the common case. It
+- `stats.refreshed` **counts** the files re-extracted before the answer, as an
+  integer. It was specified as a list, and a list has no bound: one
+  `git checkout` can re-extract hundreds of files, and every response would
+  carry every path (#19). A refresh that runs out of time already names the
+  files it left behind, five at most, in the `stale` hint. Zero is the common
+  case. It
   costs a gitignore-aware walk of the tree, one `stat` per file (which is how
   new files are found), and **no write**
   ([04-storage.md](04-storage.md) § Incremental reindex). ~5 ms for 799 files.
@@ -477,7 +482,7 @@ contract, and the whole transport is ~150 lines. Recorded in
   "rows": [["handle_read", "src/api/handler.rs", 42]],
   "truncated": false,
   "hint": null,
-  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": [], "transformed": ["impact_of"],
+  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": 0, "transformed": ["impact_of"],
              "demand": "applied", "depends": ["def", "name_ref", "scip_ref"] }
 }
 ```
