@@ -327,7 +327,7 @@ binary is on `PATH`, and shell out. The whole feature would be a table, a
 |---|---|---|
 | Rust | `rust-analyzer scip .` | a cargo workspace |
 | TypeScript/TSX | `scip-typescript index --infer-tsconfig` | `node_modules` installed, for anything beyond the project's own sources. `scip-typescript` 0.4.0 writes no `kind`, no `display_name`, no `Document.language`, an empty role bitset on every reference, and no position encoding while counting UTF-16 (§ Position normalization). It does write `is_implementation` for `implements`, so `implements/3` has TypeScript rows |
-| Python | `scip-python index . --output index.scip` | an environment with deps |
+| Python | `scip-python index . --project-name <name>` | an environment with deps. `--project-name` defaults to empty, which upstream says supports repository-local navigation only; `--output` already defaults to `index.scip` |
 | Go | `scip-go` | a buildable module. Installed from `github.com/scip-code/scip-go/cmd/scip-go` — the project moved out of the `sourcegraph` org, and the old path now fails `go install` with a module-path conflict rather than a 404 |
 | Java/Scala/Kotlin | `scip-java index` | a working build |
 | C / C++ | `scip-clang --compdb-path compile_commands.json` | a compilation database |
