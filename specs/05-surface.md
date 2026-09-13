@@ -94,14 +94,9 @@ present. `--rebuild` discards and rewrites, including the dictionary. `--lang`
 restricts grammars: files of every other language are neither refreshed nor
 dropped, they are carried forward unchanged.
 
-`--run-indexers` shells out to the canonical SCIP indexer for each detected
-language before indexing ([02-extraction.md](02-extraction.md) § Acquisition).
-Never implicit — an indexer runs arbitrary build code, so it takes an explicit
-flag every time. A missing binary or a failed indexer prints the command and its
-stderr and **continues with tier A only**; it is never fatal.
-
-Without the flag, `index` prints the exact indexer command for every language it
-found. Copy-pasteable, not a description of one.
+`index` prints the exact indexer command for every language it found.
+Copy-pasteable, not a description of one. It never runs one: `--run-indexers`
+is not built ([docs/plan.md](../docs/plan.md) M3, § Explicitly deferred).
 
 Prints a summary to stderr: files indexed/skipped/unchanged, facts per relation,
 SCIP coverage, anchor rate, SCIP occurrences skipped because their column is

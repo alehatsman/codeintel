@@ -315,9 +315,12 @@ different from "indexed and empty".
 By default `codeintel` reads `index.scip` if present, at `--scip <path>` or the
 default `./index.scip`. It does not produce one.
 
-**`codeintel index --run-indexers`** opts into producing one. It detects the
-languages present, looks up the canonical indexer in a static table, checks the
-binary is on `PATH`, and shells out. That is the whole feature — a table, a
+**`codeintel index --run-indexers` is not built** ([docs/plan.md](../docs/plan.md)
+M3, § Explicitly deferred). The command printed today is each registered
+language's `indexer` field in `crates/extract/src/lang.rs`. The table and the
+rules below are the design, kept for when it is built: detect the
+languages present, look up the canonical indexer in a static table, check the
+binary is on `PATH`, and shell out. The whole feature would be a table, a
 `which`, and a subprocess.
 
 | Language | Command | Needs |
