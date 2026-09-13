@@ -364,6 +364,28 @@ If a document specifies UTF-16 and its source is unavailable, **skip that
 document and report it** in `status` — do not emit approximate columns. A
 half-byte-wrong column silently breaks every edit built on it.
 
+**An unspecified encoding is not UTF-8.** `UnspecifiedPositionEncoding` is what
+an indexer writes when it does not say, and not saying is not counting bytes:
+`scip-python` 0.6.6 and `scip-typescript` 0.4.0 both declare nothing and count
+UTF-16. Both place `x` in `s = "ééé"; x = 1` at column 11; its byte column is 14
+(measured 2026-09-13, #21). Read as bytes, every occurrence after a non-ASCII
+character on its line lands on the wrong byte, and a definition that then fails
+to anchor comes back as a second, tier-B-only `def`.
+
+So a declared encoding is transcoded as above, and an unspecified column is
+kept only where every encoding agrees on it: **when the line's text before the
+column is ASCII**, its UTF-8, UTF-16 and UTF-32 columns are the same number.
+Otherwise the column is ambiguous. The occurrence is skipped and counted per
+SCIP input as `ambiguous`, in the manifest, in the `index` summary and in
+`status`. An ambiguous endpoint of an `enclosing_range` drops that range, not
+the definition it belongs to.
+
+There is no table of which tool counts what. The declared encoding is the only
+statement an index makes about its columns, and a belief about a tool's
+behaviour goes stale the release it changes. Telling ASCII from not needs the
+text, so an unspecified document whose source is unavailable is skipped exactly
+as a UTF-16 one is.
+
 The same rule applies per occurrence, not only per document:
 
 - A **negative line or column** is a malformed range. Skip the occurrence; do

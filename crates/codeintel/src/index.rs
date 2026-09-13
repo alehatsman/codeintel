@@ -6,7 +6,7 @@
 //! a refresh that runs out of time converges next call instead of abandoning
 //! its work and paying the full budget forever.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -138,6 +138,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             into.tool.clone_from(&known.tool);
             into.documents = known.documents;
             into.collisions = known.collisions;
+            into.ambiguous = known.ambiguous;
         }
     }
     let invalidated = extractor_changed || scip_changed;
@@ -154,10 +155,10 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             .is_some_and(|e| e.looks_unchanged(c.mtime, c.size))
     });
     let reingest = !inputs.is_empty() && (plan.rebuild || invalidated || stale_file);
-    let ingest = if reingest {
+    let (ingest, ambiguous) = if reingest {
         read_scip(&root, &plan.scip)?
     } else {
-        Ingest::default()
+        (Ingest::default(), BTreeMap::new())
     };
     report.scip_skipped.clone_from(&ingest.skipped);
     if reingest {
@@ -165,6 +166,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             input.tool.clone_from(&ingest.tool);
             input.documents = ingest.docs.len() as u64;
             input.collisions = ingest.collisions.len() as u64;
+            input.ambiguous = ambiguous.get(&input.path).copied().unwrap_or(0);
         }
     }
     report.scip.clone_from(&inputs);
@@ -494,6 +496,7 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
                 size: meta.len(),
                 documents: 0,
                 collisions: 0,
+                ambiguous: 0,
             })
         })
         .collect();
@@ -512,12 +515,17 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
 /// and any symbol two indexes both describe are last-wins, so reading in CLI
 /// order made `--scip a --scip b` and `--scip b --scip a` write different
 /// manifests from the same files.
-fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<Ingest> {
+///
+/// Beside the merge, each input's `ambiguous` count, keyed as [`stat_scip`]
+/// keys the input. A per-input number cannot be recovered from the merge, and
+/// storing the merged one on every input counts it once per input.
+fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, BTreeMap<String, u64>)> {
     let mut paths: Vec<&PathBuf> = paths.iter().collect();
     let key = |p: &PathBuf| p.display().to_string().replace('\\', "/");
     paths.sort_by_key(|p| key(p));
     paths.dedup_by_key(|p| key(p));
     let mut merged = Ingest::default();
+    let mut ambiguous = BTreeMap::new();
     for path in paths {
         let absolute = absolute(root, path);
         if !absolute.exists() {
@@ -530,9 +538,10 @@ fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<Ingest> {
         merged.symbols.extend(one.symbols);
         merged.externs.extend(one.externs);
         merged.skipped.extend(one.skipped);
+        ambiguous.insert(key(path), one.ambiguous as u64);
     }
     merged.recount_collisions();
-    Ok(merged)
+    Ok((merged, ambiguous))
 }
 
 fn absolute(root: &Path, path: &Path) -> PathBuf {

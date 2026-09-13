@@ -501,7 +501,11 @@ are named from the symbol's own descriptor (02-extraction.md § Ingest) and
 their kind is `unknown`. And it records the binding `from db.conn import open`
 makes as a plain read of `open` at module scope, with no `Import` role bit, so
 `calls` carries an edge whose caller is the file. The row is what the indexer
-stated. rust-analyzer, for comparison, sets no role bits at all.
+stated. rust-analyzer, for comparison, sets no role bits at all. It also declares
+no position encoding and counts columns in UTF-16, as `scip-typescript` 0.4.0
+does, and ingest had read those columns as bytes (#21); an undeclared column
+is now kept only over an ASCII prefix ([02-extraction.md](../specs/02-extraction.md)
+§ Position normalization).
 
 **Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —
 `require` is an ordinary method call and idiomatic Rails autoloads without one —
