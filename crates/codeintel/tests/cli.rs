@@ -532,6 +532,36 @@ fn a_truncated_answer_from_a_stale_index_still_says_stale() {
 }
 
 #[test]
+fn an_error_exits_2_not_the_1_that_means_a_violation() {
+    // `--expect-empty` exits 1 on rows. A program that could not even be read
+    // is "I could not tell you", and CI must not read it as "you violate this".
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = Command::new(binary())
+        .args(["query", "-", "--expect-empty"])
+        .current_dir(dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary runs");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&[0xff, 0xfe, b'\n'])
+        .expect("write");
+    let out = child.wait_with_output().expect("exits");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn truncation_is_reported_with_the_cap_that_fired() {
     let dir = tree();
     index(dir.path());

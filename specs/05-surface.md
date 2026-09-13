@@ -56,7 +56,9 @@ query returns `ok` with zero rows on a fresh install.
 0.** They are answers about a known-imperfect index, not failures: the caller
 gets what there is and is told exactly what is wrong with it. Only `no-index`,
 `invalid-query`, `unstratified`, `timeout`, `budget-exceeded`, `locked` and
-`corrupt` exit 2.
+`corrupt` exit 2 — and so does an error no status expresses (an unreadable
+program on stdin, an I/O failure), because 2 means "the query never ran" and 1
+is `--expect-empty`'s "it ran and found a violation" (§ `query`).
 
 **When two of those apply, the index's condition wins the `status` and the cap
 rides along.** A truncated answer from a stale index is `stale`, not
