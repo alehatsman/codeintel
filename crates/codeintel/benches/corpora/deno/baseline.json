@@ -1,0 +1,135 @@
+{
+  "cold_page_cache": null,
+  "corpus": {
+    "defs": 88514,
+    "files": 4711,
+    "name": "deno",
+    "rev": "336da420f4343cbb1dcbd5eed9d075ff555ed6ee"
+  },
+  "host": {
+    "arch": "aarch64",
+    "cpus": 12,
+    "os": "macos"
+  },
+  "mcp_first_ms": 309.8,
+  "metrics": {
+    "cli_p50_ms": 224.265,
+    "index_cold_ms": 58242.851,
+    "load_warm_ms": 137.562,
+    "mcp_p50_ms": 202.454,
+    "mcp_p95_ms": 322.712,
+    "query_p50_ms": 218.474,
+    "query_p95_ms": 325.48,
+    "reindex_one_ms": 179.145
+  },
+  "queries": [
+    {
+      "cli_p50_ms": 161.022,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 16474,
+      "id": "1",
+      "mcp_p50_ms": 151.455,
+      "p50_ms": 155.028,
+      "p95_ms": 157.889,
+      "query": "?- def(S, F, \"function\", N).",
+      "rows": 1000,
+      "status": "truncated"
+    },
+    {
+      "cli_p50_ms": 197.188,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 186810,
+      "id": "2",
+      "mcp_p50_ms": 187.973,
+      "p50_ms": 190.986,
+      "p95_ms": 194.347,
+      "query": "?- ambiguous(N).",
+      "rows": 1000,
+      "status": "truncated"
+    },
+    {
+      "cli_p50_ms": 212.951,
+      "demand": "applied",
+      "derived": 262015,
+      "id": "3",
+      "mcp_p50_ms": 202.371,
+      "p50_ms": 208.199,
+      "p95_ms": 225.284,
+      "query": "?- def(S, \"cli/graph_util.rs\", \"function\", \"graph_valid\"), impact_of(S, C).",
+      "rows": 36,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 232.469,
+      "demand": "applied",
+      "derived": 262416,
+      "id": "4",
+      "mcp_p50_ms": 208.634,
+      "p50_ms": 227.614,
+      "p95_ms": 232.46,
+      "query": "?- def(S, \"cli/graph_util.rs\", \"function\", \"graph_valid\"), reach_of(S, C).",
+      "rows": 52,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 224.265,
+      "demand": "applied",
+      "derived": 261705,
+      "id": "5",
+      "mcp_p50_ms": 198.765,
+      "p50_ms": 218.421,
+      "p95_ms": 222.712,
+      "query": "?- innermost_at(\"cli/graph_util.rs\", 120, S), about(S, Rel, A, B, L).",
+      "rows": 13,
+      "status": "no-scip"
+    },
+    {
+      "cli_p50_ms": 158.13,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 341,
+      "id": "6",
+      "mcp_p50_ms": 153.414,
+      "p50_ms": 152.917,
+      "p95_ms": 156.375,
+      "query": "?- import(F, M, _), prefix(F, \"cli/tools/\"), contains(M, \"deno_core\").",
+      "rows": 337,
+      "status": "ok"
+    },
+    {
+      "cli_p50_ms": 329.793,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 443615,
+      "id": "7",
+      "mcp_p50_ms": 319.014,
+      "p50_ms": 324.977,
+      "p95_ms": 329.378,
+      "query": "?- dead_export(S), def(S, F, _, _), prefix(F, \"cli/tools/\").",
+      "rows": 1000,
+      "status": "truncated"
+    },
+    {
+      "cli_p50_ms": 326.782,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 590173,
+      "id": "8",
+      "mcp_p50_ms": 320.641,
+      "p50_ms": 322.891,
+      "p95_ms": 327.922,
+      "query": "?- def(S, _, \"function\", _), C = count{ X : calls(X, S) }.",
+      "rows": 1000,
+      "status": "truncated"
+    },
+    {
+      "cli_p50_ms": 308.316,
+      "demand": "nothing to seed: no derived literal has a bound argument",
+      "derived": 416384,
+      "id": "9",
+      "mcp_p50_ms": 302.648,
+      "p50_ms": 303.408,
+      "p95_ms": 312.085,
+      "query": "?- depends(F, G).",
+      "rows": 1000,
+      "status": "truncated"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
-# The fixed query set behind `benches/corpus.rs`, against tokio at the pin in
-# tasks/bench.yml. id<TAB>query. Lines starting with `#` are comments.
+# tokio's query set for `benches/corpus.rs`, at its pin in tasks/bench.yml.
+# id<TAB>query. Lines starting with `#` are comments. Every corpus runs the
+# same nine shapes under the same ids, seeded with its own tree's names.
 #
 # Seeded traversals, whole-graph aggregates and a conformance check, because p95
 # over only the cheap shape would say nothing about the expensive one. Changing

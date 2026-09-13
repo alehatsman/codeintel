@@ -112,8 +112,8 @@ Non-negotiable, per milestone in [docs/plan.md](docs/plan.md):
   change, rows moved means a correctness change. `UPDATE_GOLDEN=1` only once you
   can say which, and why.
 - **Performance claims** cite `provision apply tasks/bench.yml`
-  (`target/bench/corpus.json`) against the pinned corpus. A hand-run table on an
-  unpinned tree is not evidence.
+  (`target/bench/<name>.json`) against the pinned corpora. A hand-run table on
+  an unpinned tree is not evidence.
 - **Eval:** `tests/eval_rot.rs` recomputes the agent eval's set A. A moved
   reference answer is a finding, not a golden to refresh.
 

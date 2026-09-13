@@ -1,17 +1,18 @@
-//! Wall clock over a pinned corpus: `docs/plan.md` M6 § Pulled forward,
+//! Wall clock over the pinned corpora: `docs/plan.md` M6 § Pulled forward,
 //! harness 2. Local only — CI's regression gate is `tests/counters.rs`.
 //!
 //! ```sh
-//! provision apply --stream tasks/bench.yml                # checks the corpus out first
-//! cargo bench -p codeintel --bench corpus -- <corpus-dir> # or directly
-//! UPDATE_BASELINE=1 cargo bench -p codeintel --bench corpus -- <corpus-dir>
+//! provision apply --stream tasks/bench.yml                       # checks every corpus out first
+//! cargo bench -p codeintel --bench corpus -- <name> <corpus-dir> # or one corpus directly
+//! UPDATE_BASELINE=1 cargo bench -p codeintel --bench corpus -- <name> <corpus-dir>
 //! ```
 //!
-//! Works on a copy of the corpus in a temp directory, never on the checkout.
-//! Writes `target/bench/corpus.json`, then compares it with
-//! `benches/baseline.json`: counters exactly, wall clock at +20% — but only on
-//! the host the baseline was measured on, and never against a different
-//! corpus commit.
+//! `<name>` picks `benches/corpora/<name>/`, which holds `corpus.json`,
+//! `queries.tsv` and `baseline.json`. The bench works on a copy of the corpus in
+//! a temp directory, never on the checkout. It writes `target/bench/<name>.json`,
+//! then compares it with that corpus's baseline: counters exactly, wall clock
+//! at +20%. Wall clock is compared only on the host the baseline was measured
+//! on, and nothing is compared against a different corpus commit.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -23,11 +24,6 @@ use codeintel::index::{self, Plan};
 use codeintel::query::{self, Options};
 use facts::Store;
 use serde_json::{Value, json};
-
-const QUERIES: &str = include_str!("queries.tsv");
-
-/// The file `reindex_one_ms` edits. Tokio's, because the corpus is tokio.
-const REINDEX_FILE: &str = "tokio/src/sync/mpsc/bounded.rs";
 
 const INDEX_RUNS: usize = 3;
 const LOAD_RUNS: usize = 20;
@@ -56,9 +52,17 @@ fn main() -> ExitCode {
 fn run() -> Result<bool> {
     // `cargo bench` passes `--bench` to a harness-less target; flags are not
     // ours.
-    let Some(corpus) = std::env::args().skip(1).find(|a| !a.starts_with("--")) else {
-        bail!("usage: cargo bench -p codeintel --bench corpus -- <corpus-dir>");
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    let [name, corpus] = args.as_slice() else {
+        bail!("usage: cargo bench -p codeintel --bench corpus -- <name> <corpus-dir>");
     };
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec = manifest.join("benches/corpora").join(name);
+    let reindex_file = reindex_file(&spec)?;
+    let set = query_set(&spec)?;
     let corpus = PathBuf::from(corpus)
         .canonicalize()
         .context("the corpus directory")?;
@@ -80,7 +84,7 @@ fn run() -> Result<bool> {
 
     let mut queries = Vec::new();
     let (mut pooled, mut pooled_cli) = (Vec::new(), Vec::new());
-    for (id, goal) in query_set()? {
+    for (id, goal) in &set {
         let measured = measure_query(&root, id, goal)?;
         println!(
             "query {id:<3} p50 {:>8.1}  p95 {:>8.1}  cli p50 {:>8.1}  {} rows  {} derived",
@@ -92,7 +96,7 @@ fn run() -> Result<bool> {
     }
 
     // One MCP session over the same set, warm after its first call.
-    let mcp = measure_mcp(&root, &query_set()?)?;
+    let mcp = measure_mcp(&root, &set)?;
     for (value, runs) in queries.iter_mut().zip(&mcp.per_query) {
         if let Some(object) = value.as_object_mut() {
             object.insert("mcp_p50_ms".to_string(), json!(percentile(runs, 0.50)));
@@ -107,11 +111,11 @@ fn run() -> Result<bool> {
     );
 
     // Last: it edits the tree the queries above ran against.
-    let reindex_one_ms = reindex_one(&root)?;
+    let reindex_one_ms = reindex_one(&root, &reindex_file)?;
     println!("reindex_one_ms  {reindex_one_ms:>9.1}");
 
     let current = json!({
-        "corpus": { "rev": rev, "files": files, "defs": defs },
+        "corpus": { "name": name, "rev": rev, "files": files, "defs": defs },
         "host": host(),
         // Needs root to drop (`purge`, /proc/sys/vm/drop_caches). Not measured,
         // and saying so rather than leaving the key out.
@@ -138,12 +142,13 @@ fn run() -> Result<bool> {
         percentile(&pooled_cli, 0.50)
     );
 
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = manifest.join("../../target/bench/corpus.json");
+    let out = manifest
+        .join("../../target/bench")
+        .join(format!("{name}.json"));
     write_json(&out, &current)?;
     println!("wrote {}", out.display());
 
-    let baseline = manifest.join("benches/baseline.json");
+    let baseline = spec.join("baseline.json");
     if std::env::var_os("UPDATE_BASELINE").is_some() {
         write_json(&baseline, &current)?;
         println!("wrote {}", baseline.display());
@@ -192,13 +197,13 @@ fn load_warm(root: &Path) -> Result<f64> {
     Ok(percentile(&runs, 0.50))
 }
 
-/// p50 of re-indexing after one file grows by a line. Each run must re-extract
+/// p50 of re-indexing after `file` grows by a line. Each run must re-extract
 /// exactly one file, or it measured something else.
-fn reindex_one(root: &Path) -> Result<f64> {
-    let path = root.join(REINDEX_FILE);
+fn reindex_one(root: &Path, file: &str) -> Result<f64> {
+    let path = root.join(file);
     let mut runs = Vec::new();
     for i in 0..REINDEX_RUNS {
-        let mut text = std::fs::read_to_string(&path).context(REINDEX_FILE)?;
+        let mut text = std::fs::read_to_string(&path).with_context(|| file.to_string())?;
         writeln!(text, "// bench edit {i}")?;
         std::fs::write(&path, text)?;
         let started = Instant::now();
@@ -316,7 +321,7 @@ struct Mcp {
 ///
 /// Latency is measured flush to flush. The server flushes after every
 /// response and its input is already in memory, so each gap is one call.
-fn measure_mcp(root: &Path, set: &[(&str, &str)]) -> Result<Mcp> {
+fn measure_mcp(root: &Path, set: &[(String, String)]) -> Result<Mcp> {
     let per = QUERY_WARMUPS + QUERY_RUNS;
     let mut input = String::new();
     let mut calls = 0_usize;
@@ -471,15 +476,36 @@ fn judge(name: &str, old: f64, new: f64, floor: f64, failed: &mut Vec<String>) {
     }
 }
 
-fn query_set() -> Result<Vec<(&'static str, &'static str)>> {
-    QUERIES
+/// The corpus's `queries.tsv`: `id<TAB>query`, `#` lines skipped. A missing or
+/// empty set is an error naming the file, never an empty run.
+fn query_set(spec: &Path) -> Result<Vec<(String, String)>> {
+    let path = spec.join("queries.tsv");
+    let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
+    let set = text
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .map(|l| {
             l.split_once('\t')
-                .with_context(|| format!("queries.tsv: `{l}`"))
+                .map(|(id, goal)| (id.to_string(), goal.to_string()))
+                .with_context(|| format!("{}: `{l}`", path.display()))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    if set.is_empty() {
+        bail!("{}: no queries", path.display());
+    }
+    Ok(set)
+}
+
+/// The file `reindex_one_ms` edits, from the corpus's `corpus.json`.
+fn reindex_file(spec: &Path) -> Result<String> {
+    let path = spec.join("corpus.json");
+    let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
+    let value: Value = serde_json::from_str(&text).with_context(|| path.display().to_string())?;
+    value
+        .get("reindex_file")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .with_context(|| format!("{}: no `reindex_file`", path.display()))
 }
 
 /// Nearest rank. `values` need not be sorted.

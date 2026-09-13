@@ -1,32 +1,60 @@
 ---
-description: wall-clock bench over the pinned corpus — docs/plan.md M6
+description: wall-clock bench over the pinned corpora — docs/plan.md M6
 
 # Local only. CI's regression gate is `tests/counters.rs`, which is exact; a
 # shared runner's clock is not.
 #
-# `provision apply --stream tasks/bench.yml` to watch the numbers; without it a
-# passing step prints only its verdict. The result is `target/bench/corpus.json`
-# either way, and that file is what to read.
+# One corpus per size decade: fd (~10k LOC), tokio (~100k), deno (~1M). Each has
+# a directory, `crates/codeintel/benches/corpora/<name>/`, holding its queries,
+# its reindex file and its baseline.
 #
-# The corpus pin lives here, and a second copy lives in
-# `crates/codeintel/benches/baseline.json` as `corpus.rev`. The bench refuses to
-# compare when the two disagree. Bump the pin here, then run once with
-# `UPDATE_BASELINE=1` to rewrite the baseline.
+# The pins live here and nowhere else. Each baseline also records the rev it
+# measured, and the bench refuses to compare against a different tree. Bump a
+# pin here, then run that corpus once with `UPDATE_BASELINE=1`.
+#
+# `provision apply --stream tasks/bench.yml` to watch the numbers; without it a
+# passing step prints only its verdict. The results are `target/bench/<name>.json`
+# either way, and those files are what to read.
 steps:
   - vars:
-      corpus_rev: 53542467a3b0fdfbcdcaff236e31f7ab2e9503f0
-      corpus_dir: "{{ home }}/.cache/codeintel/corpus/tokio"
+      corpora: "{{ home }}/.cache/codeintel/corpus"
+      fd_rev: b422e5d8c9cffaa1ae43ba68e7b97a60fb3e8ae5
+      tokio_rev: 53542467a3b0fdfbcdcaff236e31f7ab2e9503f0
+      deno_rev: 336da420f4343cbb1dcbd5eed9d075ff555ed6ee
 
-  # A sha converges offline once it is on disk.
-  - name: "tokio at {{ corpus_rev }}"
+  # A sha converges offline once it is on disk. `git` has no shallow clone
+  # (alehatsman/provision#6), so deno's checkout carries its whole history, ~400 MB.
+  - name: "fd at {{ fd_rev }}"
+    git:
+      repo: https://github.com/sharkdp/fd.git
+      dest: "{{ corpora }}/fd"
+      ref: "{{ fd_rev }}"
+
+  - name: "tokio at {{ tokio_rev }}"
     git:
       repo: https://github.com/tokio-rs/tokio.git
-      dest: "{{ corpus_dir }}"
-      ref: "{{ corpus_rev }}"
+      dest: "{{ corpora }}/tokio"
+      ref: "{{ tokio_rev }}"
 
-  # Several minutes: three cold indexes, and ~40 evaluations of queries
-  # measured at a second each.
-  - name: bench
-    shell: cargo bench --locked -p codeintel --bench corpus -- "{{ corpus_dir }}"
+  - name: "deno at {{ deno_rev }}"
+    git:
+      repo: https://github.com/denoland/deno.git
+      dest: "{{ corpora }}/deno"
+      ref: "{{ deno_rev }}"
+
+  # Smallest first, so a broken harness fails in seconds rather than after deno.
+  - name: bench fd
+    shell: cargo bench --locked -p codeintel --bench corpus -- fd "{{ corpora }}/fd"
+    changed_when: "false"
+    timeout: 10m
+
+  # Several minutes: three cold indexes, and ~40 evaluations of each query.
+  - name: bench tokio
+    shell: cargo bench --locked -p codeintel --bench corpus -- tokio "{{ corpora }}/tokio"
     changed_when: "false"
     timeout: 30m
+
+  - name: bench deno
+    shell: cargo bench --locked -p codeintel --bench corpus -- deno "{{ corpora }}/deno"
+    changed_when: "false"
+    timeout: 90m
