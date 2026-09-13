@@ -5,6 +5,7 @@
 //! § Concurrency). It is written last, after every segment is `fsync`ed.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,7 +91,7 @@ impl ScipInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Segment file name inside `seg/`.
-    pub seg: String,
+    pub seg: SegName,
     /// Source mtime in seconds since the epoch.
     pub mtime: u64,
     /// Source length in bytes.
@@ -130,6 +131,69 @@ impl FileEntry {
             Some(seen) => *seen != self.hash,
             None => self.mtime > newest_scip,
         }
+    }
+}
+
+/// A segment file name: 64 lowercase hex digits and `.bin`, the shape
+/// [`crate::segment_name`] produces and the only one that parses.
+///
+/// It is joined onto `seg/` to load a segment and to unlink a retired one, and
+/// the manifest it comes from sits in a directory a cloned repository can ship.
+/// A bare `String` there let `"/home/x/.ssh/id_ed25519"` or `"../../main.rs"`
+/// through `Path::join` and into `remove_file` (`specs/04-storage.md`
+/// § Manifest).
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct SegName(String);
+
+impl SegName {
+    /// Hex digits in a blake3 digest.
+    const HEX: usize = 64;
+
+    /// The name for a segment's encoded bytes.
+    pub(crate) fn of(bytes: &[u8]) -> Self {
+        Self(format!("{}.bin", blake3::hash(bytes).to_hex()))
+    }
+
+    /// The name as written in the manifest. Empty for the [`Default`]
+    /// placeholder, which [`crate::Store::put`] replaces.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for SegName {
+    type Error = String;
+
+    fn try_from(name: String) -> std::result::Result<Self, String> {
+        let hex = name.strip_suffix(".bin").unwrap_or_default();
+        if hex.len() == Self::HEX && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            Ok(Self(name))
+        } else {
+            Err(format!(
+                "segment name {name:?} is not {} lowercase hex digits and `.bin`",
+                Self::HEX
+            ))
+        }
+    }
+}
+
+impl From<SegName> for String {
+    fn from(name: SegName) -> Self {
+        name.0
+    }
+}
+
+impl AsRef<Path> for SegName {
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
+impl fmt::Display for SegName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -245,13 +309,17 @@ mod tests {
         assert_eq!(rfc3339(1_709_208_000), "2024-02-29T12:00:00Z");
     }
 
+    fn seg_name() -> SegName {
+        SegName::try_from(format!("{}.bin", "a3f1".repeat(16))).expect("a valid name")
+    }
+
     #[test]
     fn a_manifest_round_trips() {
         let mut manifest = Manifest::new(Path::new("/tmp/repo"), "blake3:abc".to_string());
         manifest.files.insert(
             "src/store.rs".to_string(),
             FileEntry {
-                seg: "a3f1.bin".to_string(),
+                seg: seg_name(),
                 mtime: 1_757_000_000,
                 size: 4_021,
                 hash: "blake3:9c2e".to_string(),
@@ -275,7 +343,7 @@ mod tests {
     #[test]
     fn the_fast_path_needs_both_halves() {
         let entry = FileEntry {
-            seg: "a.bin".to_string(),
+            seg: SegName::default(),
             mtime: 10,
             size: 20,
             hash: String::new(),
@@ -291,7 +359,7 @@ mod tests {
     #[test]
     fn scip_staleness_is_by_content_when_recorded_and_by_mtime_otherwise() {
         let mut entry = FileEntry {
-            seg: "a.bin".to_string(),
+            seg: SegName::default(),
             mtime: 10,
             size: 20,
             hash: "blake3:aa".to_string(),
@@ -314,8 +382,55 @@ mod tests {
         // An index written before the field existed.
         let text = r#"{"schema_version":1,"created_at":"","roots":[],"writer_version":"",
             "extractor_fingerprint":"","dict_bin_len":0,"dict_idx_len":0,"dict_generation":0,
-            "files":{"a.rs":{"seg":"a.bin","mtime":1,"size":2,"hash":"h","lang":"rust","tiers":["ts"]}}}"#;
-        let manifest: Manifest = serde_json::from_str(text).expect("parses");
+            "files":{"a.rs":{"seg":"SEG","mtime":1,"size":2,"hash":"h","lang":"rust","tiers":["ts"]}}}"#
+            .replace("SEG", seg_name().as_str());
+        let manifest: Manifest = serde_json::from_str(&text).expect("parses");
         assert_eq!(manifest.files["a.rs"].scip_hash, None);
+    }
+
+    #[test]
+    fn a_segment_name_of_any_other_shape_is_refused() {
+        let hex = "0123456789abcdef".repeat(4);
+        SegName::try_from(format!("{hex}.bin")).expect("a content hash parses");
+        for bad in [
+            String::new(),
+            "/etc/passwd".to_string(),
+            format!("/{hex}.bin"),
+            format!("../{hex}.bin"),
+            format!("seg/../{hex}.bin"),
+            format!("{}.bin", hex.get(1..).unwrap_or_default()),
+            format!("{hex}0.bin"),
+            format!("{}.bin", hex.to_uppercase()),
+            hex.clone(),
+            format!("{hex}.bin.tmp"),
+        ] {
+            assert!(SegName::try_from(bad.clone()).is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn a_manifest_naming_a_path_outside_seg_does_not_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut manifest = Manifest::new(dir.path(), "blake3:abc".to_string());
+        manifest.files.insert(
+            "gone.rs".to_string(),
+            FileEntry {
+                seg: seg_name(),
+                mtime: 1,
+                size: 2,
+                hash: "blake3:00".to_string(),
+                lang: "rust".to_string(),
+                tiers: vec!["ts".to_string()],
+                scip_hash: None,
+            },
+        );
+        manifest.save(dir.path()).expect("saves");
+        let path = dir.path().join(MANIFEST);
+        let text = std::fs::read_to_string(&path).expect("reads");
+        for hostile in ["/home/x/.ssh/id_ed25519", "../../src/main.rs"] {
+            std::fs::write(&path, text.replace(seg_name().as_str(), hostile)).expect("writes");
+            let error = Manifest::open(dir.path()).expect_err("a hostile name is refused");
+            assert!(error.to_string().contains("rm -rf .codeintel"), "{error}");
+        }
     }
 }

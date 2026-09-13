@@ -194,6 +194,14 @@ evidence. Fifteen lines.
 Retrofitting it after segment paths are committed is an invasive change; doing
 it now is one character.
 
+**`seg` is exactly what the writer names it: 64 lowercase hex digits and
+`.bin`, and nothing else parses.** It is joined onto `seg/` to load a segment
+and to unlink a retired one, and the manifest is a file in a directory a cloned
+repository can ship. An unchecked `"/home/x/.ssh/id_ed25519"` or `"../../src/main.rs"`
+survives `Path::join` as a path outside the index, and the first refresh that
+retires that entry — a file the tree no longer has is enough — deletes it. A
+manifest naming any other shape is `corrupt`, never read and never followed.
+
 **`dict_bin_len` / `dict_idx_len` bound what a reader may trust.** The manifest
 names segments but does not name dictionary extents, so a reader that loads a
 new manifest and mmaps a dictionary mid-append can read an offset past the end

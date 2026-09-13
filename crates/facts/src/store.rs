@@ -15,7 +15,7 @@ use datalog::atom::Atom;
 use datalog::relation::Relation;
 
 use crate::intern::Interner;
-use crate::manifest::{FileEntry, Manifest};
+use crate::manifest::{FileEntry, Manifest, SegName};
 use crate::schema::{self, Rel};
 use crate::segment::Segment;
 
@@ -37,7 +37,7 @@ pub struct Store {
     /// Segments the manifest stopped naming this run. Unlinked after commit,
     /// never before: until the new manifest is in place, the old one names
     /// them and a reader may be opening them.
-    retired: BTreeSet<String>,
+    retired: BTreeSet<SegName>,
 }
 
 impl Store {
@@ -292,7 +292,7 @@ mod tests {
 
     fn entry(_path: &str) -> FileEntry {
         FileEntry {
-            seg: String::new(),
+            seg: SegName::default(),
             mtime: 1,
             size: 2,
             hash: "blake3:00".to_string(),
@@ -356,7 +356,7 @@ mod tests {
             assert!(seg.push("def_span", &[f, *a, *b, *c, *d]));
         }
         store.put(path, &mut seg, entry(path)).expect("writes");
-        store.manifest().files[path].seg.clone()
+        store.manifest().files[path].seg.to_string()
     }
 
     fn segment_files(dir: &Path) -> Vec<String> {
@@ -502,6 +502,35 @@ mod tests {
         std::fs::remove_file(dir.path().join(DIR).join(SEG).join(seg)).expect("removes");
         let err = store.load().expect_err("a named segment must exist");
         assert!(err.to_string().contains("codeintel index"), "{err}");
+    }
+
+    #[test]
+    fn a_manifest_naming_a_file_outside_the_index_is_refused_and_the_file_survives() {
+        // The cloned-repository case: a committed `.codeintel/` whose manifest
+        // names a victim for a source file the tree does not have, so the
+        // next refresh would `forget` it and unlink the name at commit.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("precious.txt");
+        std::fs::write(&victim, b"keep me").expect("writes");
+        {
+            let mut store = Store::open(dir.path(), "blake3:test").expect("opens");
+            write(&mut store, "a.rs", &[[1, 2, 0, 10]]);
+            store.commit().expect("commits");
+        }
+        let path = dir.path().join(DIR).join(crate::manifest::MANIFEST);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("json");
+        let mut gone = json["files"]["a.rs"].clone();
+        gone["seg"] = victim.display().to_string().into();
+        json["files"]["gone.rs"] = gone;
+        std::fs::write(&path, json.to_string()).expect("writes");
+
+        let error = Store::open(dir.path(), "blake3:test").expect_err("a hostile manifest");
+        assert!(error.to_string().contains("segment name"), "{error}");
+        assert_eq!(
+            std::fs::read(&victim).expect("the victim is still there"),
+            b"keep me"
+        );
     }
 
     #[test]

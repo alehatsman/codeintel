@@ -13,7 +13,7 @@ pub mod store;
 
 pub use intern::{Dict, Interner};
 pub use lock::{Contended, Lock};
-pub use manifest::{FileEntry, Manifest, ScipInput};
+pub use manifest::{FileEntry, Manifest, ScipInput, SegName};
 pub use schema::{RELATIONS, Rel, SCHEMA_VERSION};
 pub use segment::Segment;
 pub use store::Store;
@@ -65,8 +65,8 @@ pub fn content_hash(bytes: &[u8]) -> String {
 /// directory tree to create and no path-length limit to hit; the manifest is
 /// what maps it back to a path.
 #[must_use]
-pub fn segment_name(bytes: &[u8]) -> String {
-    format!("{}.bin", blake3::hash(bytes).to_hex())
+pub fn segment_name(bytes: &[u8]) -> SegName {
+    SegName::of(bytes)
 }
 
 #[cfg(test)]
@@ -92,10 +92,16 @@ mod tests {
     fn a_segment_name_is_a_function_of_the_bytes() {
         assert_eq!(segment_name(b"CIF1 a"), segment_name(b"CIF1 a"));
         assert_ne!(segment_name(b"CIF1 a"), segment_name(b"CIF1 b"));
+        let name = segment_name(b"CIF1 a");
         assert!(
-            Path::new(&segment_name(b"CIF1 a"))
+            Path::new(name.as_str())
                 .extension()
                 .is_some_and(|ext| ext == "bin")
+        );
+        assert_eq!(
+            SegName::try_from(name.to_string()),
+            Ok(name),
+            "what the writer names, the reader parses"
         );
     }
 }

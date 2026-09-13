@@ -351,7 +351,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
                 path,
                 &mut segment,
                 FileEntry {
-                    seg: String::new(), // `put` names it from the bytes
+                    seg: facts::SegName::default(), // `put` names it from the bytes
                     mtime: mtime_of(&meta),
                     size: meta.len(),
                     hash: String::new(),
@@ -594,7 +594,7 @@ fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
 
 fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
     FileEntry {
-        seg: String::new(), // `put` names it from the bytes
+        seg: facts::SegName::default(), // `put` names it from the bytes
         mtime: candidate.mtime,
         size: candidate.size,
         hash: hash.to_string(),
