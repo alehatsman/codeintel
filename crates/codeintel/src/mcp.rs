@@ -12,7 +12,7 @@
 //! the ~150 lines below rather than a dependency tree. Recorded in
 //! [research.md](../../../docs/research.md) §6 with that reasoning.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -29,12 +29,18 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// (`specs/00-overview.md` § Surface budget).
 pub const TOOL: &str = "code_query";
 
+/// JSON-RPC's code for a line that is not JSON at all.
+const PARSE_ERROR: i64 = -32700;
 /// JSON-RPC's code for a message that is not a well-formed request.
 const INVALID_REQUEST: i64 = -32600;
 /// JSON-RPC's code for a method the server does not implement.
 const METHOD_NOT_FOUND: i64 = -32601;
 /// JSON-RPC's code for parameters that do not fit the method.
 const INVALID_PARAMS: i64 = -32602;
+
+/// The longest line read into memory. A program is a few hundred bytes; this
+/// bounds what one line can cost, not what a query can say.
+pub const MAX_LINE_BYTES: usize = 1 << 20;
 
 /// Serve on `input`/`output` until the client closes the stream.
 ///
@@ -43,33 +49,76 @@ const INVALID_PARAMS: i64 = -32602;
 /// `notifications/initialized` a no-op rather than an error.
 ///
 /// # Errors
-/// A write to `output` that fails. A malformed *message* is answered with a
-/// JSON-RPC error, not propagated — one bad request must not end the session.
-pub fn serve(root: &Path, input: impl BufRead, mut output: impl Write) -> Result<()> {
+/// A read or write that fails. A malformed *message* — not UTF-8, not JSON,
+/// a batch, too long — is answered with a JSON-RPC error, not propagated: one
+/// bad line must not end the session (`specs/05-surface.md` § MCP).
+pub fn serve(root: &Path, mut input: impl BufRead, mut output: impl Write) -> Result<()> {
     // One loaded index for the life of the session, rebuilt when a refresh
     // moves the manifest (`specs/05-surface.md` § MCP).
     let mut warm = Warm::default();
-    for line in input.lines() {
-        let line = line.context("reading a request")?;
-        if line.trim().is_empty() {
-            continue;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let limit = u64::try_from(MAX_LINE_BYTES).unwrap_or(u64::MAX);
+        let read = (&mut input)
+            .take(limit)
+            .read_until(b'\n', &mut line)
+            .context("reading a request")?;
+        if read == 0 {
+            return Ok(());
         }
-        let Some(response) = respond(root, &mut warm, &line) else {
+        let response = if line.last() == Some(&b'\n') || read < MAX_LINE_BYTES {
+            respond(root, &mut warm, &line)
+        } else {
+            // The cap stopped the read mid-line. Skip the rest without holding
+            // it: bounding the buffer is the point.
+            input.skip_until(b'\n').context("skipping a long request")?;
+            Some(error(
+                &serde_json::Value::Null,
+                INVALID_REQUEST,
+                &format!("a request longer than {MAX_LINE_BYTES} bytes"),
+            ))
+        };
+        let Some(response) = response else {
             continue;
         };
         writeln!(output, "{response}").context("writing a response")?;
         output.flush().context("flushing a response")?;
     }
-    Ok(())
 }
 
-/// One message in, at most one message out.
-fn respond(root: &Path, warm: &mut Warm, line: &str) -> Option<serde_json::Value> {
+/// One line in, at most one message out.
+fn respond(root: &Path, warm: &mut Warm, line: &[u8]) -> Option<serde_json::Value> {
+    // No id can be read out of these, so the error goes to `id: null` — the
+    // client that sent them is still waiting for something.
+    let Ok(line) = std::str::from_utf8(line) else {
+        return Some(error(
+            &serde_json::Value::Null,
+            PARSE_ERROR,
+            "a request that is not UTF-8",
+        ));
+    };
+    if line.trim().is_empty() {
+        return None;
+    }
     let request: serde_json::Value = match serde_json::from_str(line) {
         Ok(request) => request,
-        // No id to answer with, so this cannot be a JSON-RPC response at all.
-        Err(_) => return None,
+        Err(e) => {
+            return Some(error(
+                &serde_json::Value::Null,
+                PARSE_ERROR,
+                &format!("a request that is not JSON: {e}"),
+            ));
+        }
     };
+    if !request.is_object() {
+        let message = if request.is_array() {
+            "batches are not supported; send one request per line"
+        } else {
+            "a request is a JSON object"
+        };
+        return Some(error(&serde_json::Value::Null, INVALID_REQUEST, message));
+    }
     // A notification has no `id` and takes no reply, by the spec. Everything
     // that DOES carry an id gets an answer, including one we cannot route — a
     // caller blocked forever on a silent id is the worst outcome here.
@@ -158,6 +207,17 @@ fn call(
     warm: &mut Warm,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    // Any other name ran `code_query` anyway, which answers a question the
+    // caller did not ask under a name that does not exist.
+    match params.get("name").and_then(serde_json::Value::as_str) {
+        Some(TOOL) => {}
+        Some(other) => return Err(format!("no tool `{other}`; the one tool is `{TOOL}`")),
+        None => {
+            return Err(format!(
+                "a tools/call needs a `name`; the one tool is `{TOOL}`"
+            ));
+        }
+    }
     let arguments = params.get("arguments").unwrap_or(&serde_json::Value::Null);
     let program = arguments.get("query").and_then(serde_json::Value::as_str);
     let wants_schema = arguments

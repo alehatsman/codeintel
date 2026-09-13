@@ -518,6 +518,90 @@ fn the_mcp_schema_call_works_with_no_index() {
     assert!(out[1]["error"]["message"].is_string(), "{:?}", out[1]);
 }
 
+/// Raw bytes in, the responses out — for lines no `serde_json::Value` can be.
+fn rpc_bytes(root: &Path, input: &[u8]) -> Vec<serde_json::Value> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new(binary())
+        .args(["mcp"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the server starts");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(input)
+        .expect("write");
+    let out = child.wait_with_output().expect("the server exits");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("a JSON-RPC response"))
+        .collect()
+}
+
+#[test]
+fn a_malformed_line_is_answered_and_the_session_survives_it() {
+    // Silence on a line the client sent leaves it waiting forever, and ending
+    // the session on one bad line takes every later call with it (#36). Each
+    // bad line gets an `id: null` error, and the `ping` after them still works.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ping = serde_json::json!({"jsonrpc":"2.0","id":9,"method":"ping"});
+    let mut input = Vec::new();
+    input.extend_from_slice(b"\xff\xfe not utf-8\n");
+    input.extend_from_slice(b"{not json\n");
+    input.extend_from_slice(b"[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}]\n");
+    input.extend_from_slice(b"42\n");
+    input.extend(std::iter::repeat_n(
+        b'x',
+        codeintel::mcp::MAX_LINE_BYTES + 10,
+    ));
+    input.push(b'\n');
+    input.extend_from_slice(format!("{ping}\n").as_bytes());
+
+    let out = rpc_bytes(dir.path(), &input);
+    let codes: Vec<i64> = out
+        .iter()
+        .take(5)
+        .map(|r| r["error"]["code"].as_i64().unwrap_or_default())
+        .collect();
+    assert_eq!(codes, [-32700, -32700, -32600, -32600, -32600], "{out:?}");
+    for response in out.iter().take(5) {
+        assert!(response["id"].is_null(), "{response}");
+    }
+    assert_eq!(out.len(), 6, "{out:?}");
+    assert_eq!(out[5]["id"], 9, "the session did not survive: {out:?}");
+}
+
+#[test]
+fn a_tools_call_under_another_name_is_refused() {
+    // The one tool has one name. Anything else ran `code_query` regardless.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = rpc(
+        dir.path(),
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"rules","arguments":{"query":"?- def(S, F, K, N)."}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "arguments":{"query":"?- def(S, F, K, N)."}}}),
+        ],
+    );
+    assert_eq!(out.len(), 2, "{out:?}");
+    for response in &out {
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains(codeintel::mcp::TOOL)),
+            "{response}"
+        );
+    }
+}
+
 #[test]
 fn a_request_with_no_method_is_answered_rather_than_ignored() {
     // A caller blocked forever on a silent id is the worst outcome this server

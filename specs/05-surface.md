@@ -499,6 +499,23 @@ dependency: the protocol surface this server needs is `initialize`, `tools/list`
 contract, and the whole transport is ~150 lines. Recorded in
 [research.md](../docs/research.md) §6.
 
+**A bad line is answered, and the session survives it.** A client that sent a
+request and gets silence waits forever, so every line that is not a valid
+request gets a JSON-RPC error with `id: null`, and the server reads the next
+line:
+
+| Line | Error |
+|---|---|
+| not UTF-8, or not JSON | `-32700` parse error |
+| JSON, but not an object — including a batch array | `-32600` invalid request |
+| longer than 1 MiB | `-32600` invalid request; the rest of the line is skipped unread into memory |
+
+**Batches are rejected, not served.** The server speaks one request per line;
+MCP dropped batching in a later revision, and supporting it would be protocol
+surface no client of this tool needs. **`tools/call` names its tool.** A `name`
+other than `code_query` — or none — is `-32602` naming the one tool that exists,
+rather than running `code_query` under whatever name was sent.
+
 ### Response contract
 
 ```json
