@@ -1,5 +1,6 @@
 def("local app/app.py start().", "app/app.py", "function", "start").
 def("local db/conn.py open().", "db/conn.py", "function", "open").
+def("local kinds.py AFTER_WIDE.", "kinds.py", "variable", "AFTER_WIDE").
 def("local kinds.py BANNER.", "kinds.py", "variable", "BANNER").
 def("local kinds.py Config#", "kinds.py", "class", "Config").
 def("local kinds.py Config#__init__().", "kinds.py", "method", "__init__").
@@ -10,6 +11,7 @@ def("local kinds.py Config#limit.", "kinds.py", "field", "limit").
 def("local kinds.py Config#quiet().", "kinds.py", "method", "quiet").
 def("local kinds.py Handler#", "kinds.py", "class", "Handler").
 def("local kinds.py Handler#handle().", "kinds.py", "method", "handle").
+def("local kinds.py WIDE.", "kinds.py", "variable", "WIDE").
 def("local kinds.py _retries.", "kinds.py", "variable", "_retries").
 def("local kinds.py describe().", "kinds.py", "function", "describe").
 def("local kinds.py outer().", "kinds.py", "function", "outer").
@@ -45,6 +47,7 @@ def_doc("local store/store.py warm().", "A free function that calls a method, so
 def_doc("local ui/panel.py draw().", "Draw the panel.").
 def_name("local app/app.py start().", 9, 4).
 def_name("local db/conn.py open().", 4, 4).
+def_name("local kinds.py AFTER_WIDE.", 66, 13).
 def_name("local kinds.py BANNER.", 11, 0).
 def_name("local kinds.py Config#", 15, 6).
 def_name("local kinds.py Config#__init__().", 21, 8).
@@ -55,6 +58,7 @@ def_name("local kinds.py Config#limit.", 18, 4).
 def_name("local kinds.py Config#quiet().", 36, 8).
 def_name("local kinds.py Handler#", 41, 6).
 def_name("local kinds.py Handler#handle().", 44, 8).
+def_name("local kinds.py WIDE.", 66, 0).
 def_name("local kinds.py _retries.", 12, 0).
 def_name("local kinds.py describe().", 49, 4).
 def_name("local kinds.py outer().", 54, 4).
@@ -73,6 +77,7 @@ def_name("local store/test_store.py test_warm().", 6, 4).
 def_name("local ui/panel.py draw().", 10, 4).
 def_sig("local app/app.py start().", "def start() -> bool").
 def_sig("local db/conn.py open().", "def open(url: str) -> bool").
+def_sig("local kinds.py AFTER_WIDE.", "AFTER_WIDE").
 def_sig("local kinds.py BANNER.", "BANNER").
 def_sig("local kinds.py Config#", "class Config").
 def_sig("local kinds.py Config#__init__().", "def __init__(self, limit: int = 64) -> None").
@@ -83,6 +88,7 @@ def_sig("local kinds.py Config#limit.", "limit").
 def_sig("local kinds.py Config#quiet().", "def quiet(self) -> bool").
 def_sig("local kinds.py Handler#", "class Handler(Config)").
 def_sig("local kinds.py Handler#handle().", "def handle(self, key: str) -> bool").
+def_sig("local kinds.py WIDE.", "WIDE").
 def_sig("local kinds.py _retries.", "_retries").
 def_sig("local kinds.py describe().", "def describe(config: Config) -> str").
 def_sig("local kinds.py outer().", "def outer() -> int").
@@ -101,6 +107,7 @@ def_sig("local store/test_store.py test_warm().", "def test_warm() -> None").
 def_sig("local ui/panel.py draw().", "def draw() -> bool").
 def_span("local app/app.py start().", 9, 11, 203, 278).
 def_span("local db/conn.py open().", 4, 6, 62, 139).
+def_span("local kinds.py AFTER_WIDE.", 66, 66, 1726, 1740).
 def_span("local kinds.py BANNER.", 11, 11, 344, 364).
 def_span("local kinds.py Config#", 15, 38, 385, 1025).
 def_span("local kinds.py Config#__init__().", 21, 23, 512, 644).
@@ -111,6 +118,7 @@ def_span("local kinds.py Config#limit.", 18, 18, 472, 487).
 def_span("local kinds.py Config#quiet().", 35, 38, 896, 1025).
 def_span("local kinds.py Handler#", 41, 45, 1028, 1209).
 def_span("local kinds.py Handler#handle().", 44, 45, 1135, 1209).
+def_span("local kinds.py WIDE.", 66, 66, 1713, 1724).
 def_span("local kinds.py _retries.", 12, 12, 365, 382).
 def_span("local kinds.py describe().", 48, 51, 1212, 1335).
 def_span("local kinds.py outer().", 54, 60, 1338, 1501).
@@ -160,6 +168,7 @@ name_ref("upper", "store/store.py", 17, 47, "local store/store.py Entry#describe
 name_ref("warm", "store/test_store.py", 7, 11, "local store/test_store.py test_warm().").
 parent("local app/app.py start().", "app/app.py").
 parent("local db/conn.py open().", "db/conn.py").
+parent("local kinds.py AFTER_WIDE.", "kinds.py").
 parent("local kinds.py BANNER.", "kinds.py").
 parent("local kinds.py Config#", "kinds.py").
 parent("local kinds.py Config#__init__().", "local kinds.py Config#").
@@ -170,6 +179,7 @@ parent("local kinds.py Config#limit.", "local kinds.py Config#").
 parent("local kinds.py Config#quiet().", "local kinds.py Config#").
 parent("local kinds.py Handler#", "kinds.py").
 parent("local kinds.py Handler#handle().", "local kinds.py Handler#").
+parent("local kinds.py WIDE.", "kinds.py").
 parent("local kinds.py _retries.", "kinds.py").
 parent("local kinds.py describe().", "kinds.py").
 parent("local kinds.py outer().", "kinds.py").
@@ -188,6 +198,7 @@ parent("local store/test_store.py test_warm().", "store/test_store.py").
 parent("local ui/panel.py draw().", "ui/panel.py").
 visibility("local app/app.py start().", "public").
 visibility("local db/conn.py open().", "public").
+visibility("local kinds.py AFTER_WIDE.", "public").
 visibility("local kinds.py BANNER.", "public").
 visibility("local kinds.py Config#", "public").
 visibility("local kinds.py Config#__init__().", "public").
@@ -198,6 +209,7 @@ visibility("local kinds.py Config#limit.", "public").
 visibility("local kinds.py Config#quiet().", "public").
 visibility("local kinds.py Handler#", "public").
 visibility("local kinds.py Handler#handle().", "public").
+visibility("local kinds.py WIDE.", "public").
 visibility("local kinds.py _retries.", "restricted").
 visibility("local kinds.py describe().", "public").
 visibility("local kinds.py outer().", "public").

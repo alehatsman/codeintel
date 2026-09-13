@@ -178,6 +178,11 @@ pub struct Ingest {
     /// breaks every edit built on it, so a document we cannot place exactly is
     /// dropped and reported (`specs/02-extraction.md` § Position normalization).
     pub skipped: Vec<(String, &'static str)>,
+    /// Occurrences skipped because their document declares no position
+    /// encoding and the line is not ASCII before the column
+    /// (`specs/02-extraction.md` § Position normalization). Counted, because a
+    /// skip nobody reports reads as a reference that was never there.
+    pub ambiguous: usize,
 }
 
 impl Ingest {
@@ -285,9 +290,16 @@ impl Ingest {
                 continue;
             }
             // A line the source no longer has is a stale range, not a column to
-            // approximate (`specs/02-extraction.md` § Position normalization).
-            let Some(col) = columns.byte(line, col) else {
-                continue;
+            // approximate; an undeclared column over non-ASCII text is neither
+            // placed nor dropped silently (`specs/02-extraction.md` § Position
+            // normalization).
+            let col = match columns.byte(line, col) {
+                Ok(col) => col,
+                Err(Unplaced::Ambiguous) => {
+                    self.ambiguous += 1;
+                    continue;
+                }
+                Err(Unplaced::Stale) => continue,
             };
             if has(occurrence.symbol_roles, SymbolRole::Definition) {
                 doc.defs.push(Def {
@@ -295,7 +307,12 @@ impl Ingest {
                     line,
                     col,
                     enclosing: enclosing_of(occurrence).and_then(|(sl, sc, el, ec)| {
-                        Some((sl, columns.byte(sl, sc)?, el, columns.byte(el, ec)?))
+                        Some((
+                            sl,
+                            columns.byte(sl, sc).ok()?,
+                            el,
+                            columns.byte(el, ec).ok()?,
+                        ))
                     }),
                 });
             } else {
@@ -537,58 +554,91 @@ fn nonneg(n: i32) -> Option<u32> {
 
 /// Column transcoding for one document.
 ///
+/// Why a SCIP column could not be placed on a byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unplaced {
+    /// The line is past the source: the file on disk no longer matches the
+    /// index.
+    Stale,
+    /// The document declares no encoding and the line is not ASCII before the
+    /// column, so UTF-8, UTF-16 and UTF-32 put it on different bytes.
+    Ambiguous,
+}
+
 /// SCIP columns are code units from the line start in the document's own
-/// encoding; ours are UTF-8 bytes. For a UTF-8 document that is the identity
-/// and no source is needed. For anything else it is a per-line scan, and a
-/// document whose source we cannot read is **skipped**, not approximated.
+/// encoding; ours are UTF-8 bytes. For a declared UTF-8 document that is the
+/// identity and no source is needed. A declared UTF-16 or UTF-32 document is a
+/// per-line scan, and an undeclared one is trusted only over an ASCII prefix.
+/// Both need the source, and a document whose source we cannot read is
+/// **skipped**, not approximated.
 #[derive(Debug)]
 enum Columns {
     /// Already ours.
     Identity,
     /// Line text, indexed by 1-based line number, plus the code unit width.
     Transcode { lines: Vec<String>, utf16: bool },
+    /// Line text for a document that declares no encoding at all.
+    Ascii { lines: Vec<String> },
 }
 
 impl Columns {
     fn for_document(document: &Document, root: &Path, encoding: PositionEncoding) -> Option<Self> {
         let utf16 = match encoding {
-            // `UnspecifiedPositionEncoding` is what indexers that predate the
-            // field emit, and every one of them is byte-oriented. Treating it
-            // as UTF-16 would move every column on every non-ASCII line.
-            PositionEncoding::UTF8CodeUnitOffsetFromLineStart
-            | PositionEncoding::UnspecifiedPositionEncoding => return Some(Self::Identity),
-            PositionEncoding::UTF16CodeUnitOffsetFromLineStart => true,
-            PositionEncoding::UTF32CodeUnitOffsetFromLineStart => false,
+            PositionEncoding::UTF8CodeUnitOffsetFromLineStart => return Some(Self::Identity),
+            // Not "byte-oriented by default". `scip-python` 0.6.6 and
+            // `scip-typescript` 0.4.0 declare nothing and count UTF-16 (#21),
+            // so an undeclared column is exact only where every encoding
+            // agrees on it (`specs/02-extraction.md` § Position normalization).
+            PositionEncoding::UnspecifiedPositionEncoding => None,
+            PositionEncoding::UTF16CodeUnitOffsetFromLineStart => Some(true),
+            PositionEncoding::UTF32CodeUnitOffsetFromLineStart => Some(false),
         };
         let text = if document.text.is_empty() {
             std::fs::read_to_string(root.join(&document.relative_path)).ok()?
         } else {
             document.text.clone()
         };
-        Some(Self::Transcode {
-            lines: text.lines().map(str::to_string).collect(),
-            utf16,
+        let lines = text.lines().map(str::to_string).collect();
+        Some(match utf16 {
+            Some(utf16) => Self::Transcode { lines, utf16 },
+            None => Self::Ascii { lines },
         })
     }
 
     /// The UTF-8 byte column for a code-unit column on a 1-based line.
     ///
-    /// `None` when the line is past the transcoded source — the file on disk no
-    /// longer matches the index, and returning the code-unit column unchanged
-    /// would emit an approximate column for a UTF-16 document, which
+    /// [`Unplaced::Stale`] when the line is past the source — the file on disk
+    /// no longer matches the index, and returning the code-unit column
+    /// unchanged would emit an approximate column for a UTF-16 document, which
     /// `specs/02-extraction.md` § Position normalization forbids.
-    fn byte(&self, line: u32, col: u32) -> Option<u32> {
+    /// [`Unplaced::Ambiguous`] when no encoding was declared and the text
+    /// before the column is not ASCII, where the encodings disagree.
+    fn byte(&self, line: u32, col: u32) -> std::result::Result<u32, Unplaced> {
         let (lines, utf16) = match self {
-            Self::Identity => return Some(col),
-            Self::Transcode { lines, utf16 } => (lines, *utf16),
+            Self::Identity => return Ok(col),
+            Self::Transcode { lines, utf16 } => (lines, Some(*utf16)),
+            Self::Ascii { lines } => (lines, None),
         };
         let text = usize::try_from(line)
             .ok()
-            .and_then(|l| lines.get(l.checked_sub(1)?))?;
+            .and_then(|l| lines.get(l.checked_sub(1)?))
+            .ok_or(Unplaced::Stale)?;
+        let Some(utf16) = utf16 else {
+            // Every encoding counts an ASCII character as one unit, so over an
+            // ASCII prefix the column is the same number in all of them.
+            let prefix = usize::try_from(col)
+                .ok()
+                .and_then(|c| text.as_bytes().get(..c));
+            return match prefix {
+                Some(prefix) if prefix.is_ascii() => Ok(col),
+                Some(_) => Err(Unplaced::Ambiguous),
+                None => Err(Unplaced::Stale),
+            };
+        };
         let mut units = 0_u32;
         for (offset, c) in text.char_indices() {
             if units >= col {
-                return u32::try_from(offset).ok();
+                return u32::try_from(offset).ok().ok_or(Unplaced::Stale);
             }
             units = units.saturating_add(if utf16 {
                 u32::try_from(c.len_utf16()).unwrap_or(1)
@@ -596,7 +646,7 @@ impl Columns {
                 1
             });
         }
-        u32::try_from(text.len()).ok()
+        u32::try_from(text.len()).ok().ok_or(Unplaced::Stale)
     }
 }
 
@@ -701,9 +751,9 @@ mod tests {
         };
         // `🦀` is two UTF-16 units and four UTF-8 bytes, so everything after it
         // shifts. Getting this wrong is a silently wrong edit position.
-        assert_eq!(columns.byte(1, 0), Some(0));
-        assert_eq!(columns.byte(1, 4), Some(4));
-        assert_eq!(columns.byte(1, 6), Some(8));
+        assert_eq!(columns.byte(1, 0), Ok(0));
+        assert_eq!(columns.byte(1, 4), Ok(4));
+        assert_eq!(columns.byte(1, 6), Ok(8));
     }
 
     #[test]
@@ -715,8 +765,8 @@ mod tests {
         // The file on disk no longer matches the index. Returning the code-unit
         // column unchanged would be an approximate column for a UTF-16
         // document, which `specs/02-extraction.md` forbids.
-        assert_eq!(columns.byte(2, 4), None);
-        assert_eq!(columns.byte(0, 4), None);
+        assert_eq!(columns.byte(2, 4), Err(Unplaced::Stale));
+        assert_eq!(columns.byte(0, 4), Err(Unplaced::Stale));
     }
 
     #[test]
@@ -725,7 +775,65 @@ mod tests {
             lines: vec!["let 🦀 = crab;".to_string()],
             utf16: false,
         };
-        assert_eq!(columns.byte(1, 5), Some(8));
+        assert_eq!(columns.byte(1, 5), Ok(8));
+    }
+
+    #[test]
+    fn an_undeclared_column_is_kept_only_where_every_encoding_agrees() {
+        // `s = "é"; x = 1`: `x` is UTF-16 column 9 and byte column 10. With no
+        // declared encoding the index could mean either, so a column past the
+        // `é` is refused rather than guessed. One before it is the same number
+        // in every encoding and is kept (#21).
+        let columns = Columns::Ascii {
+            lines: vec![r#"s = "é"; x = 1"#.to_string()],
+        };
+        assert_eq!(columns.byte(1, 0), Ok(0));
+        assert_eq!(columns.byte(1, 5), Ok(5));
+        assert_eq!(columns.byte(1, 9), Err(Unplaced::Ambiguous));
+        assert_eq!(columns.byte(2, 0), Err(Unplaced::Stale));
+    }
+
+    #[test]
+    fn an_undeclared_document_counts_what_it_could_not_place() {
+        let mut document = Document::new();
+        document.relative_path = "wide.py".to_string();
+        document.text = "s = \"é\"; x = 1\n".to_string();
+        for (symbol, start, end) in [
+            ("scip-python python p 1.0 wide/s.", 0, 1),
+            ("scip-python python p 1.0 wide/x.", 9, 10),
+        ] {
+            let mut occurrence = Occurrence::new();
+            occurrence.symbol = symbol.to_string();
+            occurrence.range = vec![0, start, end];
+            occurrence.symbol_roles = protobuf::Enum::value(&SymbolRole::Definition);
+            document.occurrences.push(occurrence);
+        }
+        let mut index = Index::new();
+        index.documents.push(document);
+        let ingest = Ingest::of(&index, Path::new("/nonexistent"));
+        let defs: Vec<&str> = ingest
+            .docs
+            .get("wide.py")
+            .expect("ingested from its own text")
+            .defs
+            .iter()
+            .map(|d| d.symbol.as_str())
+            .collect();
+        assert_eq!(defs, ["scip-python python p 1.0 wide/s."]);
+        assert_eq!(ingest.ambiguous, 1);
+        assert!(ingest.skipped.is_empty(), "{:?}", ingest.skipped);
+    }
+
+    #[test]
+    fn an_undeclared_document_with_no_source_is_skipped_not_approximated() {
+        // It used to need no source at all, because it was read as UTF-8.
+        let mut document = Document::new();
+        document.relative_path = "nowhere.py".to_string();
+        let mut index = Index::new();
+        index.documents.push(document);
+        let ingest = Ingest::of(&index, Path::new("/nonexistent"));
+        assert!(ingest.docs.is_empty());
+        assert_eq!(ingest.skipped.len(), 1, "{:?}", ingest.skipped);
     }
 
     #[test]
@@ -739,7 +847,7 @@ mod tests {
             PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
         )
         .expect("utf-8 needs nothing");
-        assert_eq!(columns.byte(9, 42), Some(42));
+        assert_eq!(columns.byte(9, 42), Ok(42));
     }
 
     #[test]
@@ -841,6 +949,9 @@ mod tests {
         let mut document = Document::new();
         document.relative_path = "src/store.rs".to_string();
         document.language = "Rust".to_string();
+        // What rust-analyzer declares. Undeclared would need the source to
+        // tell an ASCII prefix from not, and this test has none.
+        document.position_encoding = PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into();
         document.symbols = vec![info];
         document.occurrences = vec![def, reference];
 

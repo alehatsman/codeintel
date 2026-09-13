@@ -62,6 +62,12 @@ pub struct ScipInput {
     /// refused. Zero until it is parsed.
     #[serde(default)]
     pub collisions: u64,
+    /// Occurrences it placed nowhere: the document declares no position
+    /// encoding and the line is not ASCII before the column, where UTF-8,
+    /// UTF-16 and UTF-32 disagree (`specs/02-extraction.md` § Position
+    /// normalization). Zero until it is parsed.
+    #[serde(default)]
+    pub ambiguous: u64,
 }
 
 impl ScipInput {

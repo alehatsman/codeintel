@@ -304,6 +304,14 @@ impl fmt::Display for Report<'_> {
                      not adopted; their definitions keep tier-A identity and no `resolved` row"
                 )?;
             }
+            let ambiguous: u64 = manifest.scip.iter().map(|i| i.ambiguous).sum();
+            if ambiguous > 0 {
+                writeln!(
+                    f,
+                    "scip ambiguous: {ambiguous} occurrence(s) skipped; the index declares no \
+                     position encoding and the line is not ASCII before the column"
+                )?;
+            }
             // The same staleness `query` acts on, from the same function. These
             // disagreed: `query` answered `scip-stale` naming two files while
             // this report — the artifact a bug report is supposed to carry —
@@ -376,6 +384,7 @@ impl Report<'_> {
             "tool": input.tool,
             "documents": input.documents,
             "collisions": input.collisions,
+            "ambiguous": input.ambiguous,
             "mtime": input.mtime,
             "size": input.size,
         })).collect::<Vec<_>>(),

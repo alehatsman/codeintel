@@ -104,7 +104,9 @@ Without the flag, `index` prints the exact indexer command for every language it
 found. Copy-pasteable, not a description of one.
 
 Prints a summary to stderr: files indexed/skipped/unchanged, facts per relation,
-SCIP coverage, anchor rate, elapsed. Skipped files are summarized **by reason**
+SCIP coverage, anchor rate, SCIP occurrences skipped because their column is
+ambiguous ([02-extraction.md](02-extraction.md) § Position normalization),
+elapsed. Skipped files are summarized **by reason**
 — "3 too large, 88 unsupported (`.scala`)" — because a silently unindexed
 subtree is the single most confusing failure this tool can have.
 
@@ -387,7 +389,7 @@ prose to learn that a kind is at zero — that is the same defect as handing
 
 Index freshness, per-tier. Reports the counts a user needs to trust or distrust
 an answer: files indexed, files changed since index, SCIP tool/coverage/
-staleness, anchor rate, unsupported languages, fact counts per relation.
+staleness/ambiguous columns, anchor rate, unsupported languages, fact counts per relation.
 
 `status: ok` when nothing has changed since the index was written, `stale` when
 something has, `no-index` when there is nothing here. A missing index **exits

@@ -58,3 +58,9 @@ def outer() -> int:
         return _retries
 
     return inner()
+
+
+# A non-ASCII character before a definition on its own line. `scip-python`
+# counts that column in UTF-16 and declares no encoding, so the second
+# definition's SCIP occurrence is ambiguous and skipped (#21).
+WIDE = "é"; AFTER_WIDE = 1

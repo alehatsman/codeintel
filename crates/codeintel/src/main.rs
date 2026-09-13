@@ -383,6 +383,13 @@ fn report_scip(report: &index::Report) {
             report.scip_counts.collided
         );
     }
+    let ambiguous: u64 = report.scip.iter().map(|i| i.ambiguous).sum();
+    if ambiguous > 0 {
+        eprintln!(
+            "  scip ambiguous: {ambiguous} occurrence(s) skipped; the index declares no position \
+             encoding and the line is not ASCII before the column"
+        );
+    }
     if let Some(rate) = report.anchor_rate() {
         eprintln!(
             "  anchored: {}/{} defs ({rate:.1}%)",

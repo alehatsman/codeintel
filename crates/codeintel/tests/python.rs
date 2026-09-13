@@ -302,3 +302,45 @@ fn a_symbol_the_indexer_left_nameless_is_named_from_its_descriptor() {
     let (empty, _) = query(dir.path(), r#"?- def(S, _, _, "")."#);
     assert!(empty.is_empty(), "a nameless def survived: {empty:?}");
 }
+
+#[test]
+fn an_undeclared_column_after_a_non_ascii_character_is_skipped_not_misplaced() {
+    // `scip-python` 0.6.6 declares no position encoding and counts UTF-16
+    // (#21). On `WIDE = "é"; AFTER_WIDE = 1` it puts `AFTER_WIDE` at column
+    // 12, and the byte column is 13. Read as bytes, that definition failed to
+    // anchor and came back as a second, tier-B-only `def`. It is now skipped
+    // and counted, and `WIDE`, whose prefix is ASCII, still anchors
+    // (`specs/02-extraction.md` § Position normalization).
+    let dir = tree();
+    let summary = index(dir.path());
+    assert!(
+        summary.contains("scip ambiguous: 1 occurrence(s) skipped"),
+        "{summary}"
+    );
+
+    let (rows, stderr) = query(dir.path(), r#"?- def(S, "kinds.py", _, "AFTER_WIDE")."#);
+    assert!(stderr.contains("status=ok"), "{stderr}");
+    assert_eq!(rows.len(), 1, "one definition, not two: {rows:?}");
+
+    let (resolved, _) = query(
+        dir.path(),
+        r#"?- def(S, "kinds.py", _, N), resolved(S), match(N, "WIDE")."#,
+    );
+    let names: Vec<&str> = resolved
+        .iter()
+        .filter_map(|r| r.split('\t').nth(1))
+        .collect();
+    assert_eq!(names, ["WIDE"]);
+
+    // The count survives into the bug-report artifact, not only the summary.
+    let status = run(dir.path(), &["status", "--format", "json"]);
+    let json: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status --format json is JSON");
+    let ambiguous: u64 = json["scip"]
+        .as_array()
+        .expect("scip inputs")
+        .iter()
+        .filter_map(|i| i["ambiguous"].as_u64())
+        .sum();
+    assert_eq!(ambiguous, 1, "{json}");
+}

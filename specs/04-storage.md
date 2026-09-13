@@ -131,7 +131,8 @@ deliberately deferred.
   "dict_generation": 3,
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
-      "mtime": 1757000000, "size": 40218811, "documents": 812 }
+      "mtime": 1757000000, "size": 40218811, "documents": 812,
+      "collisions": 0, "ambiguous": 0 }
   ],
   "files": {
     "src/store.rs": {
@@ -157,12 +158,16 @@ Staleness by mtime alone could not: the touched-but-unchanged path refreshes
 index written before the field existed has none and falls back to mtime until
 its next ingest.
 
-**A SCIP input carries `mtime` and `size` for the same reason, and `tool` and
-`documents` are *not* compared.** Those two are only known after the index is
-parsed, and a refresh that changes nothing must not parse it — a large
+**A SCIP input carries `mtime` and `size` for the same reason, and `tool`,
+`documents`, `collisions` and `ambiguous` are *not* compared.** Those are only
+known after the index is parsed, and a refresh that changes nothing must not parse it — a large
 `index.scip` on the query path would put a protobuf decode in front of every
 answer. Comparing them would make every refresh look like a changed SCIP input
-and re-extract the whole tree.
+and re-extract the whole tree. `ambiguous` counts the occurrences placed
+nowhere because the index declares no position encoding and the text before
+the column is not ASCII ([02-extraction.md](02-extraction.md) § Position
+normalization). It is kept per input, not merged: every input carrying the
+merged number would count it once per input.
 
 **`extractor_fingerprint` is blake3 over the binary version, every vendored and
 authored `.scm` byte, the `lang.rs` table, and the kind-mapping table. A
