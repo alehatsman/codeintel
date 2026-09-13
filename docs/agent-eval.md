@@ -121,8 +121,9 @@ only show that nothing regressed.
 
 ## Result
 
-**Set A's total is withdrawn. See § Rescored, 2026-09-13.** The table below
-is kept as it was measured.
+**Set A was re-run on 2026-09-13 and scored 89/90. See § Set A, re-run.** The
+table below is kept as it was measured. Its set-A row was withdrawn
+(§ Rescored).
 
 | Set | Round 1 | Round 2 | Round 3 | Total | Gate |
 |---|---:|---:|---:|---:|---|
@@ -141,6 +142,96 @@ scoring old transcripts against the new standard library measures nothing about
 the agents. Everything below was produced by fresh agents reading the shipped
 schema.
 
+## Set A, re-run, 2026-09-13 (#25)
+
+| Round | Score |
+|---|---:|
+| 1 | 30/30 |
+| 2 | 30/30 |
+| 3 | 29/30 |
+| **Total** | **89/90** |
+
+The gate is >= 24/30 per round, and every round clears it. **This is set A's
+score, replacing the withdrawn 85/90.** Set B's 45/45 is unchanged and was not
+re-run.
+
+The method is the M4 method below. This run also pins down what the last one
+left unrecorded:
+
+- **Tree.** Commit `f3366a9` and `tests/fixtures/rust/` with its committed
+  `index.scip`, indexed as `eval_rot.rs::indexed()` does: sources backdated
+  and `index.scip` newer. Before any agent ran, `score.py expected A`
+  reproduced `expectedA.tsv` byte-identical.
+- **Agents.** 30 fresh general-purpose subagents on Claude Opus 5
+  (`claude-opus-5`), 10 per round, 3 questions each. Each got `setA.tsv`'s
+  question text only, never a reference query. Each read the generated
+  `schema` output (5,688 characters), and every one of the 30 made exactly one
+  tool call, that read.
+- **Partition.** Round 1 took the questions in order. Rounds 2 and 3 were
+  drawn with Python's `random.Random(25)`, retried until no pair of questions
+  shared a group twice across the three rounds.
+- **Prompt**, verbatim apart from the questions and the schema path:
+
+  > You are a participant in an evaluation of a query language. Read exactly
+  > one file: `<schema.txt>`. It documents a Datalog query language over
+  > facts extracted from a small code repository. Use no other tool after
+  > reading it: do not open any other file, list directories, search, or run
+  > commands. You cannot execute queries; write your first answer. For each
+  > question below write one Datalog query, starting with `?-` and ending
+  > with `.`, that binds the variables the question names. Reply with exactly
+  > one line per question and nothing else, in the form: `Q<id>: <query>`
+
+- **The scorer was checked before it was trusted.** The withdrawn runs, scored
+  against the same index, still fail exactly the questions `eval_rot.rs`
+  pinned for them, at 28, 27 and 26. So what moved is the answers, not the
+  scorer or the index.
+- **Transcription.** Answers were recorded as submitted. The one change was
+  decoding `&gt;` back to `>`, an escaping added by the channel that carried
+  the replies.
+
+### The failure
+
+**Q26, round 3.** *Which definition names are used by more than one definition
+in this repository?*
+
+```prolog
+?- named(A), K = count{F: def(S, _, _, A), ref(S, _, _, _, F, _, _)}, K > 1.
+```
+
+It counts, per name, the distinct symbols that reference any definition of that
+name, so it reads "used by" as "referenced from". The question's wording
+supports that reading. `ambiguous(N)`'s line, "N names >1 definition", is the
+other reading, and the other two samples took it. The question is not reworded:
+rewording it now would change what a recorded run was asked.
+
+### Why 89 is not a paired comparison with 85
+
+Q13 failed in every M4 round and passed in every round here. Q28 failed in two
+M4 rounds and passed in all three here. Between the two runs the vocabulary
+changed:
+
+- Schema 2 landed.
+- `local_def`'s doc line, the line behind Q28, was corrected. All three Q28
+  answers here count `def` rows directly.
+- `schema` prints `type 1` and `struct 3` side by side in its Kind census, and
+  all three Q13 answers here leave Kind unbound.
+
+At three samples a question, the copy change cannot be separated from agent
+variance. This run measures the schema as it ships today. It does not measure
+whether the edits fixed anything.
+
+### Caveats
+
+- **The schema's static examples quote a fixture path.** Its START HERE and
+  EXAMPLES blocks print `innermost_at("src/store.rs", 142, S)` and the
+  `innermost_at … impact_of` pattern. Those lines are the same for every
+  repository and are not generated from this index. But `src/store.rs` is
+  also a fixture file, and Q3 and Q21 have that shape. A grep of the schema
+  for the fixture's symbol ids, `src/app.rs`, `crate::db::conn`, `"warm"` and
+  `"Store"` found nothing else.
+- The M1 caveats still hold: every agent is from the same model family as the
+  author, and the one-file rule was an instruction, not a sandbox.
+
 ## Rescored, 2026-09-13 — set A withdrawn
 
 `crates/codeintel/tests/eval_rot.rs` (#17) now recomputes set A's reference
@@ -158,9 +249,9 @@ failures are not agents answering wrongly. Q5 in all three rounds calls
 removed both. This page's rule is that a signature change invalidates a run,
 because the agent could not have written the query that now exists. Schema 2 was
 that change, and nobody applied the rule when it landed. So 81/90 is what old
-transcripts earn against a new vocabulary, not a score. **A fresh set-A run is
-owed.** The other failures are the recorded ones: Q13 in every round and Q28 in
-rounds 2 and 3.
+transcripts earn against a new vocabulary, not a score. **A fresh set-A run was
+owed**, and § Set A, re-run is that run. The other failures are the recorded
+ones: Q13 in every round and Q28 in rounds 2 and 3.
 
 **Set B stands.** Its tree is pinned. Its one moved reference answer, Q8 at 16
 → 23 rows, moved together with the recorded queries, and all three rounds still
