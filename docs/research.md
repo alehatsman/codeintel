@@ -163,7 +163,9 @@ fail.
 - **§6's maintenance signal used `pushed_at`, which bot branches defeat.**
   Default-branch human commits: `scip-python` **none since 2025-09-05**, with
   open bugs on `kind=UnspecifiedKind` and silently-dropped cross-package
-  references; `scip-typescript` shipped symbol-kind emission on 2026-09-11.
+  references; `scip-typescript` committed symbol-kind emission on 2026-09-11,
+  unreleased as of 2026-09-13: npm's newest is 0.4.0 (2025-10-02), which emits
+  no kinds.
   Python ships in v1 for its tier-A story; do not promise `calls_exact` quality
   there.
 - **§6 omitted `blake3` and `regex`.** Fixed in M0, along with a full
@@ -485,7 +487,7 @@ work.
 | Rust | `tree-sitter-rust` 0.24.2 | `rust-analyzer scip .` | M2 / M3 |
 | Go | `tree-sitter-go` 0.25.0 | `scip-go` | M5a — **landed** |
 | Python | `tree-sitter-python` 0.25.0 | `scip-python` | M5a — **landed** |
-| TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | M5b |
+| TypeScript (+TSX) | `tree-sitter-typescript` 0.23.2 | `scip-typescript` | M5b — **landed** |
 
 Python's tier B is on notice: `scip-python` has had no human commit on its
 default branch since 2025-09-05 and three open correctness bugs, one of which
@@ -507,6 +509,18 @@ does, and ingest had read those columns as bytes (#21); an undeclared column
 is now kept only over an ASCII prefix ([02-extraction.md](../specs/02-extraction.md)
 § Position normalization).
 
+What `scip-typescript` 0.4.0 emitted on the fixture, 2026-09-13: a 98.4%
+anchor rate, every `calls` edge exact, and `is_implementation` for
+`implements`, on the class and on each method that satisfies an interface
+method, so `implements/3` has rows for the first time. It writes no `kind`, no
+`display_name`, no `Document.language`, and no position encoding while counting
+UTF-16 (#21). Every reference carries an empty role bitset. So its parameters,
+type parameters and per-file module symbols are tier-B-only `def` rows of kind
+`unknown`, named from their descriptors, and the binding an import makes is a
+role-less reference at module scope, which `calls` counts as an edge from the
+file. Symbol kinds and document languages are committed upstream
+(2026-09-11) and unreleased.
+
 **Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —
 `require` is an ordinary method call and idiomatic Rails autoloads without one —
 so it fails at tier A, at tier B, and at the conformance capability that is the
@@ -518,10 +532,13 @@ than silently empty.
 One risk to check at M5: the grammar crates span tree-sitter ABI versions
 (0.23.x through 0.25.x against a 0.27 runtime). tree-sitter maintains ABI
 compatibility across a range, but a grammar should be smoke-loaded before
-anything is built on it. Checked for Go and Python: `tree-sitter-go` 0.25.0 and
-`tree-sitter-python` 0.25.0 load and their queries compile against the 0.27
-runtime, both asserted by tests over every registered language rather than over
-Rust alone.
+anything is built on it. Checked for Go, Python and TypeScript:
+`tree-sitter-go` 0.25.0, `tree-sitter-python` 0.25.0 and both grammars of
+`tree-sitter-typescript` 0.23.2 (ABI 14) load, and their queries compile against
+the 0.27 runtime. All of it is asserted by tests over every registered language
+rather than over Rust alone. `tree-sitter-typescript` has had no grammar commit
+since 2024-11, and 0.23.2 is its newest release. It is the only TypeScript
+grammar, so this is recorded rather than acted on.
 
 `scip-go` has **moved out of the Sourcegraph org**. It installs from
 `github.com/scip-code/scip-go/cmd/scip-go`; the old `sourcegraph` path fails

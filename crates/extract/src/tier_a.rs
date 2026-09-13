@@ -405,6 +405,7 @@ impl Extractor {
             let mut doc = None;
             let mut trait_name = None;
             let mut target = None;
+            let mut value = None;
             for capture in m.captures() {
                 let Some(label) = self.tags.capture_names().get(capture.index as usize) else {
                     continue;
@@ -415,6 +416,7 @@ impl Extractor {
                     "doc" => doc = capture.node.utf8_text(src.as_bytes()).ok(),
                     "trait" => trait_name = capture.node.utf8_text(src.as_bytes()).ok(),
                     "target" => target = capture.node.utf8_text(src.as_bytes()).ok(),
+                    "value" => value = Some(capture.node.kind()),
                     label => subject = Some((label, capture.node)),
                 }
             }
@@ -452,6 +454,14 @@ impl Extractor {
                 lang: self.lang.name,
                 capture: (*label).to_string(),
             })?;
+            // A binding whose value node is a function is a `function`,
+            // whatever its keyword said: the grammar states it, and `calls`
+            // counts only callable kinds (`specs/02-extraction.md` § `@value`).
+            let kind = if value.is_some_and(|v| self.lang.function_values.contains(&v)) {
+                "function"
+            } else {
+                kind
+            };
             items.push(self.item(
                 src,
                 Tag {
@@ -597,6 +607,31 @@ impl Extractor {
             Export::NotUnderscored => {
                 let text = name.utf8_text(src.as_bytes()).unwrap_or_default();
                 !text.starts_with('_') || (text.starts_with("__") && text.ends_with("__"))
+            }
+            Export::Statement {
+                wrapper,
+                through,
+                members,
+                modifier,
+                restricted,
+                private_name,
+            } => {
+                if members.contains(&node.kind()) {
+                    let mut cursor = node.walk();
+                    let restricts = node
+                        .children(&mut cursor)
+                        .filter(|c| c.kind() == modifier)
+                        .any(|c| {
+                            restricted.contains(&c.utf8_text(src.as_bytes()).unwrap_or_default())
+                        });
+                    !restricts && name.kind() != private_name
+                } else {
+                    let mut up = node.parent();
+                    while let Some(parent) = up.filter(|p| through.contains(&p.kind())) {
+                        up = parent.parent();
+                    }
+                    up.is_some_and(|p| p.kind() == wrapper)
+                }
             }
         };
         if public { Vis::Public } else { Vis::Restricted }

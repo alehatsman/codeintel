@@ -151,6 +151,27 @@ qualification); `S` carries the qualification.
 def("local src/store.rs Store#get().", "src/store.rs", "method", "get").
 ```
 
+**One symbol, several declarations, one file.** Some languages declare one
+symbol in more than one place in a file. TypeScript overloads
+(`function f(a: string): void;` above `function f(a: any) {}`) and declaration
+merging (`interface A` written twice) do it, as do a getter and setter pair in
+a tier-A-only index, and Python's `@property` with its `@x.setter`. Tier A
+synthesizes one `S` for all of them, and SCIP names an overload set one
+symbol as well. So `def` carries **one** row for the symbol, since its columns
+do not differ, while `def_span`, `def_name` and `def_sig` carry **one row per
+declaration**, each exact for its own bytes. `at/3` answers every
+declaration's line, and a position inside an implementation body finds that
+body's span. `parent` stays one row because the declarations share an owner.
+`visibility` is one row when they state the same visibility, and two
+declarations that state different ones give two rows, because that is what the
+source says.
+
+Nothing picks one declaration as the real one. Which declaration is the
+implementation is a question about one language's grammar, and these facts are
+language-neutral. This is within one file only: a symbol an index defines in
+two *documents* is refused ([02-extraction.md](02-extraction.md) § The anchor
+join).
+
 ### `def_span(S, StartLine, EndLine, StartByte, EndByte)`
 The **full** definition including body, attributes, and doc comment. Byte range
 is exact and sliceable.
@@ -249,11 +270,11 @@ What `S` says about its own visibility, and nothing about what that implies.
 Exactly one row per definition. `Vis` is from the closed vocabulary § Atom
 vocabularies § `Vis`:
 
-| `Vis` | Meaning | Rust | Go |
-|---|---|---|---|
-| `public` | States unrestricted visibility outside its module. | `pub` | capitalized name |
-| `restricted` | States a *bounded* visibility, or states none where the grammar offers the slot. | `pub(crate)`, `pub(super)`, `pub(in ...)`, bare `fn` | lowercase name |
-| `inherited` | The grammar gives this node kind no slot to state one. | enum variant, trait item | — |
+| `Vis` | Meaning | Rust | Go | TypeScript |
+|---|---|---|---|---|
+| `public` | States unrestricted visibility outside its module. | `pub` | capitalized name | written under `export`; a class member with no modifier or `public` |
+| `restricted` | States a *bounded* visibility, or states none where the grammar offers the slot. | `pub(crate)`, `pub(super)`, `pub(in ...)`, bare `fn` | lowercase name | a declaration with no `export`; a `private`, `protected` or `#name` member |
+| `inherited` | The grammar gives this node kind no slot to state one. | enum variant, trait item | — | interface member, enum member |
 
 ```
 visibility("local src/kinds.rs Mode#", "public").
@@ -278,6 +299,14 @@ the node kind has nowhere to write a modifier, so the answer must come from the
 enclosing definition. A Rust struct field is `restricted`, not `inherited` —
 the grammar lets a field say `pub`, so one that does not has stated privacy.
 
+TypeScript states visibility in two places, and silence means opposite things
+in them. A declaration is exported only by an `export` it is written under, so
+a bare one is `restricted`. A class member is public unless it says otherwise.
+That is the language's default, not a guess, so a bare member is `public`.
+Both are read from the declaration node alone. `const x = 1; export { x };`
+exports `x` from a separate clause, which `visibility` does not read: `x` is
+`restricted` and `exported` misses it (#22).
+
 ### `resolved(S)`
 Present iff `S` has SCIP-grade identity. The gate for precision-critical
 queries: `def(S,...), resolved(S)` restricts to symbols a compiler agreed exist.
@@ -299,6 +328,17 @@ row could not hold both aliases. `from m import a, b as c` is **one** row with
 `Module = "m"` and no alias: the names it binds are members of `m`, not local
 names for `m`. The dots of a relative import are part of the specifier as
 written, so `from ..db import conn` has `Module = "..db"`.
+
+TypeScript's `Module` is the string's content, without its quotes.
+`import * as ns from "m"` and `import fs = require("fs")` set `Alias`, because
+each binds a local name for the module. A default or named import
+(`import d from "m"`, `import { a as b } from "m"`) does not: those bind
+members, as `from m import a` does. A re-export (`export { x } from "m"`,
+`export * from "m"`) is a row too, because the file depends on `m` exactly as
+an import would, and a layering rule that missed a re-export would pass a
+violation. `import type` is a row. A dynamic `import("m")` or `require("m")`
+call is not captured: it is an expression rather than a statement, and its
+argument need not be a literal.
 ```
 import("src/api.rs", "crate::store", "").
 import("web/app.ts", "./util/retry", "retry").

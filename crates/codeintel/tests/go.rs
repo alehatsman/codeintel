@@ -198,9 +198,9 @@ fn a_method_is_reachable_through_its_type() {
 
 #[test]
 fn every_language_in_one_tree_is_one_index() {
-    // The polyglot half of `docs/plan.md` M5's done-when, as far as three
-    // languages can take it. Adding TypeScript extends this fixture; it does
-    // not need a different assertion.
+    // The polyglot half of `docs/plan.md` M5's done-when: Rust, Go, Python
+    // and TypeScript (with TSX) in one tree. Adding a language extended the
+    // fixture; it did not need a different assertion.
     let dir = tempfile::tempdir().expect("tempdir");
     copy(&fixture(), &dir.path().join("svc"));
     copy(
@@ -211,18 +211,24 @@ fn every_language_in_one_tree_is_one_index() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/python"),
         &dir.path().join("py"),
     );
+    copy(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/typescript"),
+        &dir.path().join("ts"),
+    );
     for stale in [
         "svc/expected.facts",
         "svc/index.scip",
         "cli/expected.facts",
         "py/expected.facts",
         "py/index.scip",
+        "ts/expected.facts",
+        "ts/index.scip",
     ] {
         drop(std::fs::remove_file(dir.path().join(stale)));
     }
     // `cli/` carries a `rust-analyzer` index built at the repository root, and
     // its documents name `src/…`, not `cli/src/…`. Tier A alone is the subject
-    // here: that one walk, one dictionary and one store hold three grammars.
+    // here: that one walk, one dictionary and one store hold five grammars.
     drop(std::fs::remove_file(dir.path().join("cli/index.scip")));
 
     let summary = index(dir.path());
@@ -231,6 +237,7 @@ fn every_language_in_one_tree_is_one_index() {
     assert!(summary.contains("scip-go"), "{summary}");
     assert!(summary.contains("rust-analyzer scip ."), "{summary}");
     assert!(summary.contains("scip-python"), "{summary}");
+    assert!(summary.contains("scip-typescript"), "{summary}");
 
     let (rows, stderr) = query(dir.path(), "?- file(F, Lang).");
     assert!(stderr.contains("status=ok"), "{stderr}");
@@ -238,7 +245,7 @@ fn every_language_in_one_tree_is_one_index() {
         rows.iter().filter_map(|r| r.split('\t').nth(1)).collect();
     assert_eq!(
         langs.into_iter().collect::<Vec<_>>(),
-        ["go", "python", "rust"]
+        ["go", "python", "rust", "typescript", "typescriptreact"]
     );
 
     // A question asked once, answered across every grammar: each definition
@@ -256,6 +263,8 @@ fn every_language_in_one_tree_is_one_index() {
             "py/net/conn.py",
             "svc/db/conn.go",
             "svc/net/conn.go",
+            "ts/db/conn.ts",
+            "ts/net/conn.ts",
         ]
     );
 }
