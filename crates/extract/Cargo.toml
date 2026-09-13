@@ -17,6 +17,7 @@ protobuf.workspace = true
 scip.workspace = true
 tree-sitter.workspace = true
 tree-sitter-go.workspace = true
+tree-sitter-python.workspace = true
 tree-sitter-rust.workspace = true
 
 [dev-dependencies]

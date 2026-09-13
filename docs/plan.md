@@ -725,7 +725,7 @@ row. The prior estimate assumed vendoring, and vendoring does not work.
 | Language | Grammar | SCIP indexer | Notes |
 |---|---|---|---|
 | Go | `tree-sitter-go` 0.25.0 | `scip-go` | **shipped.** upstream emits `@definition.type` and five bare `@name` captures with no tag at all |
-| Python | `tree-sitter-python` 0.25.0 | `scip-python` | upstream has **no** `@definition.method`; `scip-python` has had no human commit on its default branch since 2025-09-05 |
+| Python | `tree-sitter-python` 0.25.0 | `scip-python` | **shipped.** upstream has **no** `@definition.method` and tags a module-level assignment `constant`; `scip-python` has had no human commit on its default branch since 2025-09-05 |
 
 Python's tier B is on notice. `scip-python` has three open correctness bugs, one
 of which silently drops cross-package references. Python ships because its
@@ -791,6 +791,52 @@ One deviation from the done-when: the polyglot fixture is **Rust + Go**, since
 Python and TypeScript do not exist yet. It asserts what the four-language
 version will — one walk, one dictionary, one store, and a single query answered
 across both grammars — and extending it is adding a directory.
+
+### What Python cost, and the one thing it changed
+
+**Shipped.** 5 kinds, 100% anchor rate against `scip-python` 0.6.6, 9 exact
+`calls` edges on the fixture, 12 extractor tests and 8 end-to-end. Roughly 80
+lines of query, one `lang.rs` row, and a fixture. The polyglot fixture is now
+Rust + Go + Python, and extending it was adding a directory, as promised.
+
+**One capture was added to the convention, not one code path.** Python keeps
+its documentation *inside* the definition — the docstring is the first
+statement of the body — so the preamble walk over preceding comments, which
+serves Rust and Go, cannot see it, and a `#` comment above a `def` is not
+documentation to any Python tool. `@doc`
+([02-extraction.md](../specs/02-extraction.md) § `@doc`) names the node whose
+text is the documentation; the extractor strips it per line exactly as it
+strips a comment, with no marker. Data in `tags.scm`, so the next language that
+documents from inside — Elixir, Clojure — costs a pattern.
+
+Two things the fixture forced, both language-general:
+
+- **A method is a promotion, not a capture.** Upstream's `tags.scm` has no
+  `@definition.method`, and ours does not either: a query cannot see its own
+  nesting without double-capturing the node, which is the upstream Rust defect.
+  The extractor already promoted a `function` under a type-like owner to
+  `method` for Rust's `impl` blocks, and a Python `class` is type-like, so the
+  same pattern serves free functions, methods and nested functions.
+- **A tier-B definition the indexer left nameless is named from its
+  descriptor.** `scip-python` writes no `display_name` for a parameter, an
+  attribute bound in `__init__`, or a module, so `Store#entries.` arrived with
+  `Name = ""`. The descriptor grammar is mandatory and the name is written in
+  it; reading it is extraction. The kind stays `unknown` — a `.` descriptor
+  does not say field from variable — and rust-analyzer, which names
+  everything, is unaffected.
+
+One statement about visibility joined the table rather than the extractor:
+`Export::NotUnderscored` counts a dunder (`__init__`) as public. PEP 8 states
+that a single leading underscore is a weak internal-use indicator and a dunder
+is a magic name, not a private one; both are read from the name.
+
+Not done, and said so: `from m import a, b` is one `import` row for `m` with no
+alias, because the names it binds are members of `m` rather than local names
+for it ([01-facts.md](../specs/01-facts.md) § `import`). A conformance rule
+that needs the member list reads the source. And `scip-python` records the
+binding an import makes as a plain read at module scope, so `calls` carries
+two edges whose caller is a file; recorded in
+[research.md](research.md) § Language coverage, not patched.
 
 ### Dropped
 

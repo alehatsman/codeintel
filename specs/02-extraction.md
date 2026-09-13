@@ -79,6 +79,7 @@ ours, because the questions they answer are ones upstream does not ask.
 | `@reference.call` | a call site |
 | `@scope.<kind>` | the node **owns** definitions but is not one. A Rust `impl Store` declares nothing that `struct Store` did not; it contributes the `Store#` descriptor and no `def` row |
 | `@owner` | an identifier **naming** this definition's owner, for a language where the owner does not enclose it |
+| `@doc` | the node whose text **is** this definition's documentation, for a language that keeps it inside the definition rather than in comments before it |
 
 Every node carries at most one `@definition.*` or `@scope.*` capture, asserted
 by a test over every registered language.
@@ -119,6 +120,31 @@ never become that method's own owner.
 
 Tier B overrides all of this where it has an answer (§ Parent precedence): the
 compiler knows the receiver's package-qualified type and we do not.
+
+#### `@doc`, and why the preamble walk is not enough
+
+`def_doc` is read from the comment run immediately before the definition
+(§ Emission), which is where Rust and Go keep it. Python does not: a docstring
+is the first statement **of the body**, inside the node the definition captures,
+and a `#` comment above a `def` is not documentation to any Python tool.
+
+So a language may capture `@doc` on the node whose text is the documentation.
+Python's `tags.scm` captures the `string_content` of a string that is the first
+statement of the body, so the delimiters are never part of the text:
+
+```scheme
+(function_definition
+  name: (identifier) @name
+  body: (block . (expression_statement (string (string_content) @doc))?))
+  @definition.function
+```
+
+The capture is optional inside the one definition pattern rather than a second
+pattern, because a second pattern would match a documented function twice and
+emit two `def` rows for it. The text gets the same per-line strip a comment
+gets, with no marker — a docstring's lines are indented to the body. A language
+states one mechanism or the other, in its query and in its `doc_markers`; the
+two never compete for one definition.
 
 Example, `tree-sitter-rust/queries/tags.scm`:
 ```scheme
@@ -167,7 +193,9 @@ Per file, one parse, then:
    body delimiter (`{`, `:` + newline, `=`, or end of line), whitespace-collapsed,
    capped at 512 bytes. Crude and honest — it is a display string, not a parse.
 4. `def_doc` = contiguous comment lines immediately preceding `def_span.start`,
-   marker prefixes stripped. Emitted only if non-empty.
+   marker prefixes stripped. Emitted only if non-empty. A language whose
+   documentation lives inside the definition captures it with `@doc` instead
+   (§ `@doc`).
 5. `visibility(S, Vis)` per the language's visibility predicate — one row for
    every definition, always. The extractor reports what the definition *states*
    (`public`, or `restricted` when it states a bounded visibility or states
@@ -283,7 +311,7 @@ From `scip.proto` (field names verbatim):
 | `Document.relative_path`, `.language` | `file(F, Lang)` — `Lang` lowercased from the `Language` enum |
 | `Occurrence` with `symbol_roles & Definition` | a definition site; `symbol` → `SymId` |
 | `SymbolInformation.kind` | `Kind`, via the mapping table below |
-| `SymbolInformation.display_name` | `Name` |
+| `SymbolInformation.display_name`, else the name of the symbol's final descriptor | `Name`. `scip-python` writes no `display_name` for a parameter, an attribute or a module; the descriptor grammar is mandatory and the name is written in it, so reading it is not a guess. The kind is not read the same way: a `.` descriptor is a field, a variable or a constant, and the suffix does not say which |
 | symbol-string descriptor prefix, else `SymbolInformation.enclosing_symbol` | `parent(S, Owner)` — replaces tier A's row, see § Parent precedence |
 | `SymbolInformation.documentation[]` | `def_doc` (if tier A did not supply one) |
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
