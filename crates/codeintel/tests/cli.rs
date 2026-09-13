@@ -537,6 +537,55 @@ fn truncation_is_reported_with_the_cap_that_fired() {
     );
 }
 
+/// When the engine stops at `--limit` and the printed budget then cuts further,
+/// the byte cap decided the answer, so it is the one named, and its hint is not
+/// "raise --limit" (#27). ~280 printed bytes a row puts the 262,144-byte budget
+/// near row 940, under a limit of 1,200.
+#[test]
+fn when_both_caps_fire_the_one_that_cut_the_rows_is_reported() {
+    use std::fmt::Write as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+    let long = "x".repeat(115);
+    let mut source = String::new();
+    for i in 0..1500 {
+        writeln!(source, "pub fn f{i:04}_{long}() {{}}").expect("writes to a String");
+    }
+    std::fs::write(dir.path().join("src/lib.rs"), source).expect("write");
+    index(dir.path());
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- def(S, F, K, N).",
+            "--limit",
+            "1200",
+            "--format",
+            "json",
+        ],
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(
+        body.get("status").and_then(|v| v.as_str()),
+        Some("truncated")
+    );
+    assert_eq!(
+        body.get("cap").and_then(|v| v.as_str()),
+        Some("max_result_bytes")
+    );
+    let rows = body
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .map_or(0, Vec::len);
+    assert!((1..1200).contains(&rows), "{rows} rows");
+    let hint = body
+        .get("hint")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(!hint.contains("--limit"), "{hint}");
+}
+
 #[test]
 fn a_conformance_check_passes_clean_and_fails_dirty() {
     // The headline capability in the form CI consumes it: a rule file in the
