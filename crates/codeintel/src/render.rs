@@ -178,6 +178,10 @@ pub struct Rendered {
 /// by one key also means `--raw` and the default print the same answer in the
 /// same sequence, rather than two shuffles of it.
 ///
+/// **The raw row breaks ties.** Two different tuples can print identically —
+/// two symbols of one name on one line — and ordered by display alone they
+/// kept atom order, which is the index-dependent order this sort removes.
+///
 /// The cap runs **after** the sort. An earlier version capped first, on the
 /// argument that a truncated answer should be the engine's stable prefix — but
 /// the engine's order is by atom, which is dictionary insertion order, so that
@@ -205,7 +209,7 @@ pub fn render(
             raw: tuple.iter().map(|a| raw(engine, *a)).collect(),
         })
         .collect();
-    rows.sort_by(|a, b| a.display.cmp(&b.display));
+    rows.sort_by(|a, b| a.display.cmp(&b.display).then_with(|| a.raw.cmp(&b.raw)));
 
     let mut bytes = 0usize;
     let mut kept = 0usize;
@@ -310,6 +314,41 @@ mod tests {
             display.rows, raw.rows,
             "--raw reordered an answer it only reprints"
         );
+    }
+
+    #[test]
+    fn rows_that_print_the_same_are_ordered_by_the_tuple_not_the_atom() {
+        // Two symbols, one name, one line: identical display rows. Interned in
+        // reverse raw order, so the engine yields them z-first; a display-only
+        // sort kept that, and an index built in the other order printed a-first.
+        let mut engine = Engine::new(Box::new(Strings::new()));
+        let mut def = Relation::new(4);
+        let mut span = Relation::new(5);
+        for symbol in ["local src/a.rs z().", "local src/a.rs a()."] {
+            let symbol = engine.intern(symbol).expect("room");
+            let file = engine.intern("src/a.rs").expect("room");
+            let kind = engine.intern("function").expect("room");
+            let name = engine.intern("same").expect("room");
+            assert!(def.push(&[symbol, file, kind, name]));
+            assert!(span.push(&[symbol, 7, 7, 0, 0]));
+        }
+        def.settle();
+        span.settle();
+        let mut relations = BTreeMap::new();
+        relations.insert("def", def.clone());
+        relations.insert("def_span", span.clone());
+        let sites = Sites::of(&relations);
+        engine.insert_relation("def", def);
+        engine.insert_relation("def_span", span);
+
+        let result = engine
+            .query("?- def(S, _, _, _).", &Limits::default())
+            .expect("the query runs");
+        let out = render(&engine, &result, &sites, false, usize::MAX);
+        assert_eq!(out.rows.len(), 2);
+        assert_eq!(out.rows[0].display, out.rows[1].display, "not a tie");
+        let raw: Vec<&str> = out.rows.iter().map(|r| r.raw[0].as_str()).collect();
+        assert_eq!(raw, ["local src/a.rs a().", "local src/a.rs z()."]);
     }
 
     #[test]

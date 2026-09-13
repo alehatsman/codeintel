@@ -435,6 +435,33 @@ fn no_scip_fires_on_the_dependency_closure_not_the_syntax() {
 }
 
 #[test]
+fn a_truncated_answer_that_needs_scip_still_says_no_scip() {
+    // `ref` carries name-grade rows without SCIP, so it both truncates and
+    // needs tier B. The cap used to win and hide that half the answer's
+    // provenance could never be there (#35).
+    let dir = tree();
+    std::fs::remove_file(dir.path().join("index.scip")).expect("removes");
+    index(dir.path());
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- ref(S, F, L, C, X, R, P).",
+            "--limit",
+            "1",
+            "--format",
+            "json",
+        ],
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(body["status"], "no-scip", "{body}");
+    assert_eq!(body["truncated"], true, "{body}");
+    assert_eq!(body["cap"], "max_result_rows", "{body}");
+    let hint = body["hint"].as_str().unwrap_or_default();
+    assert!(hint.contains("max_result_rows"), "{hint}");
+}
+
+#[test]
 fn a_present_scip_index_answers_ok() {
     let dir = tree();
     index(dir.path());

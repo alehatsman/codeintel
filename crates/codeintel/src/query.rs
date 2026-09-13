@@ -354,11 +354,19 @@ fn evaluate(
         result.cap
     };
 
+    // The index's condition first. A refresh that did not finish outranks the
+    // SCIP verdict, which is why `verdict` is only asked on an `ok` refresh.
+    if status == Status::Ok
+        && let Some((scip_status, scip_hint)) =
+            loaded.scip.verdict(&result.stats.depends, &loaded.langs)
+    {
+        status = scip_status;
+        hint = Some(scip_hint);
+    }
     if truncated {
-        status = Status::Truncated;
         // `--limit` moves `max_result_rows` and nothing else, so offering it
         // against a byte cap is advice that changes nothing.
-        hint = Some(match cap {
+        let cut = match cap {
             Some("max_result_rows") => format!(
                 "max_result_rows fired at {}; raise it with --limit or narrow the query",
                 options.limit
@@ -374,13 +382,18 @@ fn evaluate(
                 format!("{fired} fired at {at} bytes; narrow the query")
             }
             None => "a cap fired; narrow the query".to_string(),
+        };
+        // `truncated` and `cap` carry the cut whatever the status says, so a
+        // `stale` or `no-scip` already on the answer keeps the status: it is
+        // the one fact nowhere else in the response (`specs/05-surface.md`
+        // § Status taxonomy).
+        hint = Some(match hint {
+            Some(condition) if status != Status::Ok => format!("{condition}. also: {cut}"),
+            _ => {
+                status = Status::Truncated;
+                cut
+            }
         });
-    } else if status == Status::Ok
-        && let Some((scip_status, scip_hint)) =
-            loaded.scip.verdict(&result.stats.depends, &loaded.langs)
-    {
-        status = scip_status;
-        hint = Some(scip_hint);
     }
     // `hint` is non-null whenever the status is not `ok` **or** the result is
     // empty. Zero rows from a valid query is indistinguishable from a typo, a

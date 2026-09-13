@@ -508,6 +508,30 @@ fn a_reader_that_cannot_take_the_lock_says_stale_not_locked() {
 }
 
 #[test]
+fn a_truncated_answer_from_a_stale_index_still_says_stale() {
+    // Both apply. `truncated` and `cap` carry the cut structurally; the status
+    // is the one place `stale` can live, so the cap must not overwrite it (#35).
+    let dir = tree();
+    index(dir.path());
+    let mut lock = facts::Lock::open(&dir.path().join(".codeintel")).expect("opens");
+    let held = lock.try_hold().expect("no io error").expect("uncontended");
+
+    let options = codeintel::Options {
+        limit: 1,
+        ..codeintel::Options::default()
+    };
+    let answer =
+        codeintel::query::run(dir.path(), "?- def(S, F, K, N).", &options).expect("answers");
+    assert_eq!(answer.status, codeintel::Status::Stale);
+    assert!(answer.truncated);
+    assert_eq!(answer.cap, Some("max_result_rows"));
+    let hint = answer.hint.unwrap_or_default();
+    assert!(hint.contains("codeintel index"), "{hint}");
+    assert!(hint.contains("max_result_rows"), "{hint}");
+    drop(held);
+}
+
+#[test]
 fn truncation_is_reported_with_the_cap_that_fired() {
     let dir = tree();
     index(dir.path());
