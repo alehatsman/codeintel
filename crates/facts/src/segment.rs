@@ -11,7 +11,7 @@
 //! with no error, which is why the checksum is not optional.
 
 use std::collections::BTreeMap;
-use std::io::{Error, ErrorKind, Result};
+use std::io::{Error, Result};
 
 use datalog::atom::Atom;
 use datalog::relation::Relation;
@@ -151,9 +151,12 @@ impl Segment {
             return Err(corrupt("wrong magic; this is not a segment"));
         }
         let version = r.u32()?;
+        // Not damage: an index from another build. `stale`, with the reindex
+        // (`specs/04-storage.md` § Segment format).
         if version != SCHEMA_VERSION {
-            return Err(corrupt(format!(
-                "schema_version {version}, but this build writes {SCHEMA_VERSION}"
+            return Err(crate::stale(format!(
+                "a segment was written for schema_version {version}, but this build reads \
+                 {SCHEMA_VERSION}. run: codeintel index . --rebuild"
             )));
         }
         let n_relations = r.u32()?;
@@ -248,13 +251,7 @@ fn index(n: u32) -> Result<usize> {
 }
 
 fn corrupt(message: impl AsRef<str>) -> Error {
-    Error::new(
-        ErrorKind::InvalidData,
-        format!(
-            "a segment is corrupt: {}. Repair with `rm -rf .codeintel && codeintel index .`",
-            message.as_ref()
-        ),
-    )
+    crate::corrupt(&format!("a segment is corrupt: {}", message.as_ref()))
 }
 
 #[cfg(test)]
@@ -300,6 +297,27 @@ mod tests {
         assert!(seg.push("file", &[100, 101]));
         seg.settle();
         assert_eq!(seg.len(), 1);
+    }
+
+    #[test]
+    fn another_schema_version_is_stale_not_corrupt() {
+        // An index from another build is not damage, and `corrupt`'s repair
+        // is not what it needs (`specs/04-storage.md` § Segment format).
+        let mut segment = Segment::new();
+        segment.push("file", &[0x1000_0001, 0x1000_0002]);
+        let mut bytes = segment.encode().expect("encodes");
+        let body = bytes.len().checked_sub(CHECKSUM).expect("a trailer");
+        bytes
+            .get_mut(4..8)
+            .expect("a header")
+            .copy_from_slice(&(SCHEMA_VERSION + 1).to_le_bytes());
+        let stamp = blake3::hash(bytes.get(..body).unwrap_or_default());
+        bytes
+            .get_mut(body..)
+            .expect("a trailer")
+            .copy_from_slice(stamp.as_bytes());
+        let err = Segment::decode(&bytes).expect_err("another build's segment");
+        assert_eq!(crate::fault(&err), Some(crate::Fault::Stale), "{err}");
     }
 
     #[test]

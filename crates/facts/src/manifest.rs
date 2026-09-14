@@ -228,12 +228,8 @@ impl Manifest {
             return Ok(None);
         }
         let text = std::fs::read_to_string(&path)?;
-        let manifest = serde_json::from_str(&text).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("{MANIFEST} is not readable: {e}. Repair with `rm -rf .codeintel`"),
-            )
-        })?;
+        let manifest = serde_json::from_str(&text)
+            .map_err(|e| crate::corrupt(&format!("{MANIFEST} is not readable: {e}")))?;
         Ok(Some(manifest))
     }
 

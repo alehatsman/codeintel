@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Error, ErrorKind, Result, Write};
+use std::io::{Error, Result, Write};
 use std::path::{Path, PathBuf};
 
 use datalog::atom::{Atom, STR_MIN};
@@ -445,11 +445,8 @@ fn recorded(extent: u64, len: usize, name: &str) -> Result<usize> {
 }
 
 fn corrupt(message: impl AsRef<str>) -> Error {
-    Error::new(
-        ErrorKind::InvalidData,
-        format!(
-            "the string dictionary is corrupt: {}. Repair with `rm -rf .codeintel`",
-            message.as_ref()
-        ),
-    )
+    crate::corrupt(&format!(
+        "the string dictionary is corrupt: {}",
+        message.as_ref()
+    ))
 }

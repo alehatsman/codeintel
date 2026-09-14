@@ -550,6 +550,13 @@ times over `max_result_bytes` while it reported the cap as honoured.
 `content` cannot be the one that shrinks: the 2024-11-05 revision this server
 speaks has no `structuredContent`, and its clients read only `content`.
 
+**An error no status expresses is a JSON-RPC error.** An I/O failure — a full
+disk, a permission error — is `-32603` internal error carrying the message: the
+MCP counterpart of the CLI's exit 2. It is not a tool result saying `corrupt`,
+whose hint is `--rebuild` and would have an agent delete a healthy index.
+`corrupt` and `stale` come only from what `crates/facts` refused
+([04-storage.md](04-storage.md) § Segment format).
+
 ### Response contract
 
 ```json

@@ -775,3 +775,40 @@ fn query_json_fits_max_result_bytes_with_escaping_counted() {
     let kept = body["rows"].as_array().map_or(0, Vec::len);
     assert!((10..2500).contains(&kept), "{kept} rows");
 }
+
+/// An I/O failure is not `corrupt`: that status's repair deletes a healthy
+/// index. MCP answers it as a JSON-RPC error and the CLI exits 2
+/// (`specs/05-surface.md` § MCP).
+#[cfg(unix)]
+#[test]
+fn an_unreadable_segment_is_an_io_error_not_corrupt() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let seg = std::fs::read_dir(dir.path().join(".codeintel/seg"))
+        .expect("segments")
+        .next()
+        .expect("one segment")
+        .expect("entry")
+        .path();
+    std::fs::set_permissions(&seg, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+    if std::fs::read(&seg).is_ok() {
+        // Root reads through mode 000; there is no I/O failure to provoke.
+        return;
+    }
+
+    let out = rpc(
+        dir.path(),
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+            "name":"code_query","arguments":{"query":"?- file(F, _)."}}}),
+        ],
+    );
+    assert_eq!(out[0]["error"]["code"], -32603, "{:?}", out[0]);
+
+    let cli = run(dir.path(), &["query", "?- file(F, _)."]);
+    let stderr = String::from_utf8_lossy(&cli.stderr);
+    assert_eq!(cli.status.code(), Some(2), "{stderr}");
+    assert!(!stderr.contains("status=corrupt"), "{stderr}");
+}

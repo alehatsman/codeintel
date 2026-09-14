@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use anyhow::{Context, Result};
 use datalog::Relation;
 use datalog::atom::Atom;
 use facts::{Manifest, Store};
@@ -69,7 +68,7 @@ impl Census {
     ///
     /// # Errors
     /// A store that exists but cannot be read.
-    pub fn of(store: &Store) -> Result<Self> {
+    pub fn of(store: &Store) -> std::io::Result<Self> {
         let mut census = Self {
             indexed: store.has_index(),
             ..Self::default()
@@ -84,7 +83,7 @@ impl Census {
         }
 
         let manifest = store.manifest();
-        let relations = store.load().context("loading the index")?;
+        let relations = store.load()?;
         for (name, rows) in &relations {
             census.relations.insert(name, rows.len());
         }

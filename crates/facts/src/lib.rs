@@ -18,7 +18,7 @@ pub use schema::{RELATIONS, Rel, SCHEMA_VERSION};
 pub use segment::Segment;
 pub use store::Store;
 
-use std::io::{Result, Write};
+use std::io::{ErrorKind, Result, Write};
 use std::path::Path;
 
 /// Write `bytes` to `path` via a `.tmp` file that is `fsync`ed and renamed.
@@ -69,6 +69,61 @@ pub fn segment_name(bytes: &[u8]) -> SegName {
     SegName::of(bytes)
 }
 
+/// The repair a `corrupt` refusal names.
+pub const REPAIR: &str = "rm -rf .codeintel && codeintel index .";
+
+/// What this crate refused, as opposed to an I/O failure.
+///
+/// Carried inside the `io::Error`, so every signature stays `io::Result`. A
+/// caller asks [`fault`] and maps the two to the statuses of the same names.
+/// An error without one is an I/O failure the status taxonomy does not
+/// express — never `corrupt`, whose repair deletes a healthy index
+/// (`specs/04-storage.md` § Segment format).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fault {
+    /// A segment, the dictionary or the manifest failed validation.
+    Corrupt,
+    /// Written for a `schema_version` this build does not speak.
+    Stale,
+}
+
+/// The refusal inside `error`, or `None` when it is an I/O failure.
+#[must_use]
+pub fn fault(error: &std::io::Error) -> Option<Fault> {
+    error
+        .get_ref()?
+        .downcast_ref::<Refusal>()
+        .map(|refusal| refusal.fault)
+}
+
+#[derive(Debug)]
+struct Refusal {
+    fault: Fault,
+    message: String,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// A [`Fault::Corrupt`] refusal, naming [`REPAIR`].
+pub(crate) fn corrupt(message: &str) -> std::io::Error {
+    refuse(Fault::Corrupt, format!("{message}. Repair with `{REPAIR}`"))
+}
+
+/// A [`Fault::Stale`] refusal.
+pub(crate) fn stale(message: String) -> std::io::Error {
+    refuse(Fault::Stale, message)
+}
+
+fn refuse(fault: Fault, message: String) -> std::io::Error {
+    std::io::Error::new(ErrorKind::InvalidData, Refusal { fault, message })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +141,19 @@ mod tests {
             .map(|e| e.file_name())
             .collect();
         assert_eq!(left.len(), 1, "{left:?}");
+    }
+
+    #[test]
+    fn a_refusal_is_typed_and_an_io_failure_is_not() {
+        assert_eq!(fault(&corrupt("bad")), Some(Fault::Corrupt));
+        assert_eq!(fault(&stale("old".to_string())), Some(Fault::Stale));
+        assert!(corrupt("bad").to_string().contains(REPAIR));
+        for plain in [
+            std::io::Error::from(ErrorKind::PermissionDenied),
+            std::io::Error::new(ErrorKind::InvalidData, "not ours"),
+        ] {
+            assert_eq!(fault(&plain), None, "{plain}");
+        }
     }
 
     #[test]

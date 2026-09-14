@@ -184,7 +184,13 @@ impl Warm {
     /// # Errors
     /// As [`run`].
     pub fn run(&mut self, root: &Path, program: &str, options: &Options) -> Result<Answer> {
-        let mut store = Store::open(root, &extract::fingerprint()).context("opening the index")?;
+        let mut store = match open(root)? {
+            Ok(store) => store,
+            Err(answer) => {
+                self.loaded = None;
+                return Ok(answer);
+            }
+        };
         if !store.has_index() {
             self.loaded = None;
             return Ok(Answer::of(
@@ -209,16 +215,27 @@ impl Warm {
         // Every call refreshes. Warmth skips the load, never the refresh that
         // keeps the answer current.
         let (status, hint, refreshed) = refresh(&mut store, root, options)?;
+        // A manifest that turned corrupt between the two reads: there is
+        // nothing to evaluate against.
+        if !status.answered() {
+            self.loaded = None;
+            return Ok(Answer::of(status, hint.unwrap_or_default()));
+        }
         let current = self
             .loaded
             .take()
             .filter(|l| l.manifest == *store.manifest() && l.rules == options.rules);
-        let mut loaded = match current {
-            Some(loaded) => loaded,
-            None => match Loaded::of(store, &options.rules)? {
+        let mut loaded = if let Some(loaded) = current {
+            loaded
+        } else {
+            let (store, relations) = match load(store, root)? {
                 Ok(loaded) => loaded,
                 Err(answer) => return Ok(answer),
-            },
+            };
+            match Loaded::of(store, relations, &options.rules)? {
+                Ok(loaded) => loaded,
+                Err(answer) => return Ok(answer),
+            }
         };
         let answer = evaluate(&mut loaded, program, options, status, hint, refreshed);
         // The literals this call interned go with it, so the next call is given
@@ -246,16 +263,12 @@ struct Loaded {
 impl Loaded {
     /// Load `store` into a fresh engine with the standard library and `rules`.
     ///
-    /// The inner `Err` is an answer — a corrupt segment, a rule file that does
-    /// not load — and keeps nothing warm.
-    fn of(store: Store, rules: &[PathBuf]) -> Result<Result<Self, Answer>> {
+    /// The inner `Err` is an answer — a rule file that does not load — and
+    /// keeps nothing warm.
+    fn of(store: Store, relations: Relations, rules: &[PathBuf]) -> Result<Result<Self, Answer>> {
         let scip = ScipState::of(store.manifest());
         let langs = indexers(store.manifest());
 
-        let relations = match store.load() {
-            Ok(relations) => relations,
-            Err(e) => return Ok(Err(Answer::of(Status::Corrupt, e.to_string()))),
-        };
         let sites = Sites::of(&relations);
         let (interner, manifest) = store.into_parts();
         let (overlay, literals) = Overlay::new(interner);
@@ -313,6 +326,67 @@ impl Loaded {
             scip,
             langs,
         }))
+    }
+}
+
+/// Base relations by name, as a store loads them.
+type Relations = BTreeMap<&'static str, Relation>;
+
+/// Open the store under `root`, or the answer a refused one deserves.
+fn open(root: &Path) -> Result<Result<Store, Answer>> {
+    match Store::open(root, &extract::fingerprint()) {
+        Ok(store) => Ok(Ok(store)),
+        Err(error) => refused(error, "opening the index").map(Err),
+    }
+}
+
+/// What `crates/facts` refused, as the answer it deserves; an I/O failure, as
+/// the error it is. Only a refusal is `corrupt` or `stale`: a permission error
+/// answered `corrupt` would have an agent delete a healthy index
+/// (`specs/04-storage.md` § Segment format).
+fn refused(error: std::io::Error, doing: &str) -> Result<Answer> {
+    match facts::fault(&error) {
+        Some(fault) => Ok(Answer::of(Status::of_fault(fault), error.to_string())),
+        None => Err(anyhow::Error::new(error).context(doing.to_string())),
+    }
+}
+
+/// Read the segments `store`'s manifest names.
+///
+/// The writer lock is released by now, so a refresh in another process may
+/// have committed and unlinked a segment this manifest still names. A missing
+/// segment re-reads the manifest: moved, load the new one, once; moved again,
+/// `stale`; never moved, `corrupt`, because nothing replaced it
+/// (`specs/04-storage.md` § Concurrency).
+fn load(mut store: Store, root: &Path) -> Result<Result<(Store, Relations), Answer>> {
+    let mut retried = false;
+    loop {
+        let error = match store.load() {
+            Ok(relations) => return Ok(Ok((store, relations))),
+            Err(error) => error,
+        };
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return refused(error, "loading the index").map(Err);
+        }
+        let reopened = match open(root)? {
+            Ok(reopened) => reopened,
+            Err(answer) => return Ok(Err(answer)),
+        };
+        if reopened.manifest() == store.manifest() {
+            return Ok(Err(Answer::of(Status::Corrupt, error.to_string())));
+        }
+        if retried {
+            return Ok(Err(Answer::of(
+                Status::Stale,
+                format!(
+                    "the index moved twice while this answer was loading ({error}). ask again, \
+                     or run: codeintel index {}",
+                    root.display()
+                ),
+            )));
+        }
+        retried = true;
+        store = reopened;
     }
 }
 
@@ -850,7 +924,23 @@ fn refresh(
     if options.no_refresh {
         return Ok((Status::Ok, None, 0));
     }
-    let mut lock = Lock::open(store.dir()).context("opening the writer lock")?;
+    // A read-only checkout cannot create the lock file. That is a reader that
+    // cannot take the lock, and it gets the same answer
+    // (`specs/04-storage.md` § Concurrency).
+    let mut lock = match Lock::open(store.dir()) {
+        Ok(lock) => lock,
+        Err(e) => {
+            return Ok((
+                Status::Stale,
+                Some(format!(
+                    "could not open the writer lock ({e}); this answer is from the index as it \
+                     stands. run: codeintel index {}",
+                    root.display()
+                )),
+                0,
+            ));
+        }
+    };
     let held = lock.try_hold().context("taking the writer lock")?;
     let Ok(held) = held else {
         return Ok((
@@ -869,9 +959,15 @@ fn refresh(
     // copy would commit a manifest that orphans them. Re-read now, and reopen
     // only if it moved: a reopen rebuilds the dictionary map, and the JSON
     // compare is cheap.
-    let current = facts::Manifest::open(store.dir()).context("re-reading the manifest")?;
+    let current = match facts::Manifest::open(store.dir()) {
+        Ok(current) => current,
+        Err(e) => return refused(e, "re-reading the manifest").map(|a| (a.status, a.hint, 0)),
+    };
     if current.as_ref() != Some(store.manifest()) {
-        *store = Store::open(root, &extract::fingerprint()).context("reopening the index")?;
+        *store = match open(root)? {
+            Ok(reopened) => reopened,
+            Err(answer) => return Ok((answer.status, answer.hint, 0)),
+        };
     }
 
     // The SCIP inputs the index was built with, carried forward. Without them
@@ -914,4 +1010,50 @@ fn refresh(
         ));
     }
     Ok((Status::Ok, None, report.indexed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opened(root: &Path) -> Store {
+        Store::open(root, &extract::fingerprint()).expect("opens")
+    }
+
+    fn indexed(source: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("a.rs"), source).expect("write");
+        index::refresh(&mut opened(dir.path()), &Plan::default()).expect("indexes");
+        dir
+    }
+
+    #[test]
+    fn a_segment_a_concurrent_commit_unlinked_is_loaded_from_the_new_manifest() {
+        let dir = indexed("pub fn before() {}\n");
+        // This reader has read the manifest and released the lock.
+        let reader = opened(dir.path());
+        // Another process's refresh commits and unlinks the segment it names.
+        std::fs::write(dir.path().join("a.rs"), "pub fn after_the_edit() {}\n").expect("write");
+        index::refresh(&mut opened(dir.path()), &Plan::default()).expect("refreshes");
+
+        let (store, relations) = load(reader, dir.path())
+            .expect("no I/O error")
+            .expect("loaded after one retry");
+        assert!(relations.contains_key("def"));
+        assert_eq!(store.manifest(), opened(dir.path()).manifest());
+    }
+
+    #[test]
+    fn a_segment_missing_under_an_unmoved_manifest_is_corrupt() {
+        let dir = indexed("pub fn only() {}\n");
+        let reader = opened(dir.path());
+        let seg = reader.manifest().files["a.rs"].seg.to_string();
+        std::fs::remove_file(dir.path().join(".codeintel/seg").join(seg)).expect("removes");
+
+        let answer = load(reader, dir.path())
+            .expect("no I/O error")
+            .map(|_| ())
+            .expect_err("an answer, not a load");
+        assert_eq!(answer.status, Status::Corrupt, "{:?}", answer.hint);
+    }
 }
