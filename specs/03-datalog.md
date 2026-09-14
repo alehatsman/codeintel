@@ -237,7 +237,12 @@ Scope for v1:
   relation sizes — a literal sharing no bound variable goes after one that
   shares one, a constant or an already-bound variable counts as bound,
   filters run as soon as their inputs exist, ties keep written order. Safety
-  is still checked on the program as written (rule 7).
+  is still checked on the program as written (rule 7). "Mirrors" is not a
+  discipline, it is one function: what a literal binds, reads and mentions,
+  and when a term counts as bound, lives in `crates/datalog/src/vars.rs`
+  alone, and the safety check, the planner and the adornment walk all call
+  it. Two copies of that `match` drift the first time a literal kind is
+  added.
 - **`stats.demand` says why `stats.transformed` holds what it holds**:
   `applied`, or the reason the program ran as written — nothing to seed, the
   rewrite failed the safety check, did not stratify with nothing left to back

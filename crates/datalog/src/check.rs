@@ -155,7 +155,7 @@ fn check_rule(rule: &Rule, schema: &mut Schema) -> Result<()> {
     let ctx = Ctx {
         rule: &name,
         vars: &rule.vars,
-        head: term_vars(&rule.head.args),
+        head: crate::vars::term_vars(&rule.head.args),
     };
     let bound = check_body(&rule.body, schema, &ctx, &BTreeSet::new(), &ctx.head)?;
 
@@ -212,34 +212,6 @@ struct Ctx<'a> {
     head: BTreeSet<u16>,
 }
 
-fn term_vars(terms: &[Term]) -> BTreeSet<u16> {
-    terms
-        .iter()
-        .filter_map(|t| if let Term::Var(v) = t { Some(*v) } else { None })
-        .collect()
-}
-
-/// Every variable a literal mentions. For an aggregate assignment, only the
-/// target — the counted term and the goal are *inside*, which is the whole
-/// point of safety rule 4.
-pub(crate) fn literal_vars(lit: &Literal) -> BTreeSet<u16> {
-    match lit {
-        Literal::Pos(p) | Literal::Neg(p) => term_vars(&p.args),
-        Literal::Compare { lhs, rhs, .. } => term_vars(&[*lhs, *rhs]),
-        Literal::Str { subject, .. } => term_vars(&[*subject]),
-        Literal::Between { lo, hi, out, .. } => term_vars(&[*lo, *hi, *out]),
-        Literal::Assign { target, expr, .. } => {
-            let mut out = term_vars(&[*target]);
-            if let Expr::Term(t) = expr {
-                out.extend(term_vars(&[*t]));
-            } else if let Expr::Arith { lhs, rhs, .. } = expr {
-                out.extend(term_vars(&[*lhs, *rhs]));
-            }
-            out
-        }
-    }
-}
-
 /// Walk a body in written order, returning the variables it binds.
 ///
 /// `outer` holds variables already bound by an enclosing body — the aggregate
@@ -255,12 +227,12 @@ fn check_body(
     outer: &BTreeSet<u16>,
     outside: &BTreeSet<u16>,
 ) -> Result<BTreeSet<u16>> {
-    // Once per body, not once per literal. `literal_vars` of an aggregate is
+    // Once per body, not once per literal. `vars::vars` of an aggregate is
     // its target alone, so this set is "used outside" for every aggregate the
     // body holds.
     let mut elsewhere = outside.clone();
     for lit in body {
-        elsewhere.extend(literal_vars(lit));
+        elsewhere.extend(crate::vars::vars(lit));
     }
     let mut bound = outer.clone();
     for lit in body {
