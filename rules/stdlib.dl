@@ -239,8 +239,12 @@ ref_outside(S, F) :- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
 %% entrypoint(S)  a callable nothing calls. INVERTS on name provenance.
 entrypoint(S) :- def(S, _, K, _), callable(K), !calls(_, S).
 
-%% def_lines(S, N)  how many lines S spans. Pick your own threshold.
-def_lines(S, N) :- def_span(S, A, B, _, _), N = B - A.
+%% def_lines(S, N)  lines S spans, first and last counted. Pick a threshold.
+% B - A is the gap between the first and last line, one less than the count.
+% A definition on lines 29..38 spans 10 lines and this reported 9, so the
+% documented `N > 50` silently excluded every 51-line definition and
+% `long_def`'s "more than 80 lines" meant more than 81.
+def_lines(S, N) :- def_span(S, A, B, _, _), H = B - A, N = H + 1.
 
 %% long_def(S)  spans more than 80 lines. The 80 is FIXED -- use def_lines.
 long_def(S) :- def_lines(S, N), N > 80.

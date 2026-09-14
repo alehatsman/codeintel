@@ -15,7 +15,7 @@
 15	A	Which files import the module written as "crate::db::conn"? Bind the importing file to A.	?- import(A, "crate::db::conn", _).
 16	A,B	Which third-party packages does each file use? Bind the file to A and the package name to B.	?- uses_package(A, B).
 17	A	Which types implement "rust-analyzer cargo fixture 0.1.0 store/Store#"? Bind the implementing symbol id to A.	?- implements(A, "rust-analyzer cargo fixture 0.1.0 store/Store#", _).
-18	A,B	Which definitions span more than 8 lines? Bind the symbol id to A and the length to B.	?- def_span(A, S, E, _, _), B = E - S, B > 8.
+18	A,B	Which definitions span more than 8 lines? Bind the symbol id to A and the length to B.	?- def_span(A, S, E, _, _), H = E - S, B = H + 1, B > 8.
 19	A	How many distinct symbols call "rust-analyzer cargo fixture 0.1.0 db/conn/open()."? Bind the count to A.	?- A = count{ C : calls(C, "rust-analyzer cargo fixture 0.1.0 db/conn/open().") }.
 20	A	Which definitions live in a file whose path starts with "src/"? Bind the symbol id to A.	?- def(A, F, _, _), prefix(F, "src/").
 21	A	You have a stack frame pointing at src/store.rs line 23 and no symbol name. Report everything that is transitively affected by the definition at that location. Bind each affected symbol id to A.	?- innermost_at("src/store.rs", 23, S), impact_of(S, A).

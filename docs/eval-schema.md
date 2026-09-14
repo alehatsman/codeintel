@@ -102,7 +102,7 @@ depends(F, G)                       F references something defined in G
 dead_export(S)                      exported, never referenced outside its own file
 ref_outside(S, F)                   S is referenced outside F
 entrypoint(S)                       callable, and nothing calls it
-def_lines(S, N)                     how many lines S spans
+def_lines(S, N)                     lines S spans, first and last counted
 undocumented_export(S)              exported with no doc comment
 uses_package(F, P)                  F references a symbol from package P
 
