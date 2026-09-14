@@ -13,7 +13,7 @@ pub mod store;
 
 pub use intern::{Dict, Interner};
 pub use lock::{Contended, Lock};
-pub use manifest::{FileEntry, Manifest, ScipInput, SegName};
+pub use manifest::{FileEntry, Manifest, NewEntry, ScipInput, SegName};
 pub use schema::{RELATIONS, Rel, SCHEMA_VERSION};
 pub use segment::Segment;
 pub use store::Store;

@@ -134,6 +134,25 @@ fn a_go_tree_indexes_and_names_its_indexer() {
     assert!(summary.contains("skipped"), "{summary}");
 }
 
+/// `status` names the indexer that would reconcile a `scip-stale` Go file.
+/// It printed `rust-analyzer scip .` for every language.
+#[test]
+fn a_scip_stale_go_file_names_scip_go_in_status() {
+    let dir = tree();
+    index(dir.path());
+    let path = dir.path().join("kinds.go");
+    let mut src = std::fs::read_to_string(&path).expect("source");
+    src.push_str("\n// edited after the SCIP index was built\n");
+    std::fs::write(&path, src).expect("writes");
+    index(dir.path());
+
+    let report = String::from_utf8_lossy(&run(dir.path(), &["status"]).stdout).to_string();
+    assert!(report.contains("scip stale:"), "{report}");
+    assert!(report.contains("kinds.go"), "{report}");
+    assert!(report.contains("run: scip-go"), "{report}");
+    assert!(!report.contains("rust-analyzer"), "{report}");
+}
+
 #[test]
 fn an_import_is_the_specifier_as_written() {
     // Never resolved to a path (`specs/01-facts.md` § `import`), and the alias
