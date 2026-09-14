@@ -266,15 +266,11 @@ impl fmt::Display for Report<'_> {
         if census.changed.is_empty() {
             f.write_str("changed since index: none\n")?;
         } else {
-            let mut named: Vec<&str> = census.changed.iter().map(String::as_str).take(5).collect();
-            if census.changed.len() > named.len() {
-                named.push("...");
-            }
             writeln!(
                 f,
                 "changed since index: {} — {}",
                 census.changed.len(),
-                named.join(", ")
+                crate::query::name_list(&census.changed)
             )?;
         }
 
@@ -328,17 +324,10 @@ impl fmt::Display for Report<'_> {
             let stale = crate::query::ScipState::of(manifest).stale;
             if !stale.is_empty() {
                 let named: Vec<&str> = stale.iter().map(String::as_str).take(5).collect();
-                // The indexer of every language the index holds, as `query`'s
-                // hint names them. This line said `rust-analyzer scip .` to a
-                // Go repository. A copy of `query::indexers`, which another
-                // change owns; #48 tracks folding the two.
-                let mut indexers: Vec<&str> = manifest
-                    .files
-                    .values()
-                    .filter_map(|e| extract::lang::by_name(&e.lang).map(|l| l.indexer))
-                    .collect();
-                indexers.sort_unstable();
-                indexers.dedup();
+                // The indexer of every language the index holds, from the same
+                // function `query`'s hint uses. This line once said
+                // `rust-analyzer scip .` to a Go repository.
+                let indexers = crate::query::indexers(manifest);
                 writeln!(
                     f,
                     "scip stale: {} file(s) changed after it was built, so their \
