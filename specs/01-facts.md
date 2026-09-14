@@ -1,7 +1,7 @@
 ---
 id: facts
 status: proposed
-schema_version: 1
+schema_version: 2
 binding: yes
 ---
 # 01 — Fact schema
@@ -676,7 +676,14 @@ ref_outside(S, F):- def(S, F, _, _), ref(S, G, _, _, _, _, _), G != F.
 
 entrypoint(S)    :- def(S, _, K, _), callable(K), !calls(_, S).
 
-long_def(S, N)   :- def_span(S, A, B, _, _), N = B - A, N > 80.
+% Two predicates, not one. The agent eval blamed the single form: three of its
+% four failures were agents reading `long_def(S, N)` as parameterised by N when
+% N was an output and 80 was baked in (docs/plan.md M4). `def_lines` states the
+% length with no threshold; `long_def` is the one opinionated form, so the wrong
+% query is unavailable rather than merely documented.
+def_lines(S, N)  :- def_span(S, A, B, _, _), H = B - A, N = H + 1.
+
+long_def(S)      :- def_lines(S, N), N > 80.
 
 undocumented_export(S) :- exported(S), !def_doc(S, _).
 
@@ -741,7 +748,10 @@ way.
 ?- parent(M, "local src/store.rs Store#"), def(M, _, "method", N), def_sig(M, Sig).
 
 % Functions over 80 lines with no doc comment.
-?- long_def(S, N), !def_doc(S, _), def(S, F, _, Name), at(S, F, L).
+?- long_def(S), !def_doc(S, _), def(S, F, _, Name), at(S, F, L).
+
+% Same question with your own threshold, which is what `def_lines` is for.
+?- def_lines(S, N), N > 50, !def_doc(S, _), def(S, F, _, Name), at(S, F, L).
 
 % Everything implementing a trait, and where.
 ?- implements(S, T, _), def(T, _, "trait", "Handler"), def(S, F, _, N), at(S, F, L).

@@ -149,6 +149,27 @@ mod tests {
     }
 
     #[test]
+    fn the_fact_spec_declares_the_version_this_code_writes() {
+        // `specs/01-facts.md` is the ABI, and its front matter carries the
+        // schema version. It sat at 1 for the whole of v2 — the § Changelog
+        // table in that same file already described v2, so the document
+        // disagreed with itself and with this constant, and nothing noticed.
+        // A version declared in prose and asserted nowhere is one that drifts.
+        let spec = include_str!("../../../specs/01-facts.md");
+        let declared = spec
+            .lines()
+            .find_map(|l| l.strip_prefix("schema_version:"))
+            .map(str::trim)
+            .expect("specs/01-facts.md front matter declares schema_version");
+        assert_eq!(
+            declared,
+            SCHEMA_VERSION.to_string(),
+            "specs/01-facts.md front matter says schema_version: {declared}, \
+             facts::schema::SCHEMA_VERSION is {SCHEMA_VERSION}"
+        );
+    }
+
+    #[test]
     fn the_base_relation_budget_holds() {
         // `specs/00-overview.md` § Surface budget: <= 16, currently 15. This is
         // one of the four numbers CI asserts; growing it is a spec change.
