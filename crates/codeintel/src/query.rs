@@ -17,6 +17,7 @@ use crate::index::{self, Plan};
 use crate::overlay::{Literals, Overlay};
 use crate::render::{Row, Sites};
 use crate::status::Status;
+use crate::wire::Wire;
 use crate::{Regexes, render, schema};
 
 /// The shipped rule library, compiled in.
@@ -74,6 +75,9 @@ pub struct Options {
     /// [`Answer::shadowed`]. A repository that means to replace a stdlib rule
     /// puts it in the program, not in a rule file.
     pub rules: Vec<PathBuf>,
+    /// Where the answer is sent. `max_result_bytes` is measured on it
+    /// (`specs/05-surface.md` § Symbol rendering).
+    pub wire: Wire,
 }
 
 impl Default for Options {
@@ -83,6 +87,7 @@ impl Default for Options {
             no_refresh: false,
             raw: false,
             rules: Vec::new(),
+            wire: Wire::Text,
         }
     }
 }
@@ -342,17 +347,10 @@ fn evaluate(
     };
 
     // One render, one order. Rendering each notation separately and sorting
-    // both would give two arrays whose `i`th rows are different tuples.
+    // both would give two arrays whose `i`th rows are different tuples. The
+    // render cuts at `budget` bytes of printed text, which every wire costs at
+    // least; the wire is measured below.
     let printed = render(&loaded.engine, &result, &loaded.sites, options.raw, budget);
-    let truncated = result.truncated || printed.truncated;
-    // When both caps fire, the printed budget decided which rows are missing,
-    // so it is the one reported. Naming the engine's row cap there advised
-    // `--limit`, which returns the same rows every time (#27).
-    let cap = if printed.truncated {
-        Some("max_result_bytes")
-    } else {
-        result.cap
-    };
 
     // The index's condition first. A refresh that did not finish outranks the
     // SCIP verdict, which is why `verdict` is only asked on an `ok` refresh.
@@ -363,61 +361,115 @@ fn evaluate(
         status = scip_status;
         hint = Some(scip_hint);
     }
-    if truncated {
-        // `--limit` moves `max_result_rows` and nothing else, so offering it
-        // against a byte cap is advice that changes nothing.
-        let cut = match cap {
-            Some("max_result_rows") => format!(
-                "max_result_rows fired at {}; raise it with --limit or narrow the query",
-                options.limit
-            ),
-            // The engine's cap and the printed one are different numbers, and
-            // quoting the wrong one is invariant 5 with extra steps.
-            Some(fired) => {
-                let at = if printed.truncated {
-                    budget
-                } else {
-                    limits.max_result_bytes
-                };
-                format!("{fired} fired at {at} bytes; narrow the query")
-            }
-            None => "a cap fired; narrow the query".to_string(),
+
+    // The answer for one set of kept rows. `byte_cut` is whether
+    // `max_result_bytes` dropped any.
+    let shape = |rows: Vec<Row>, byte_cut: bool| -> Answer {
+        let truncated = result.truncated || byte_cut;
+        // When both caps fire, the byte budget decided which rows are missing,
+        // so it is the one reported. Naming the engine's row cap there advised
+        // `--limit`, which returns the same rows every time (#27).
+        let cap = if byte_cut {
+            Some("max_result_bytes")
+        } else {
+            result.cap
         };
-        // `truncated` and `cap` carry the cut whatever the status says, so a
-        // `stale` or `no-scip` already on the answer keeps the status: it is
-        // the one fact nowhere else in the response (`specs/05-surface.md`
-        // § Status taxonomy).
-        hint = Some(match hint {
-            Some(condition) if status != Status::Ok => format!("{condition}. also: {cut}"),
-            _ => {
-                status = Status::Truncated;
-                cut
+        let mut status = status;
+        let mut hint = hint.clone();
+        if truncated {
+            // `--limit` moves `max_result_rows` and nothing else, so offering
+            // it against a byte cap is advice that changes nothing.
+            let cut = match cap {
+                Some("max_result_rows") => format!(
+                    "max_result_rows fired at {}; raise it with --limit or narrow the query",
+                    options.limit
+                ),
+                // The engine's cap and the host's are different numbers, and
+                // quoting the wrong one is invariant 5 with extra steps.
+                Some(fired) => {
+                    let at = if byte_cut {
+                        budget
+                    } else {
+                        limits.max_result_bytes
+                    };
+                    format!("{fired} fired at {at} bytes; narrow the query")
+                }
+                None => "a cap fired; narrow the query".to_string(),
+            };
+            // `truncated` and `cap` carry the cut whatever the status says, so
+            // a `stale` or `no-scip` already on the answer keeps the status: it
+            // is the one fact nowhere else in the response
+            // (`specs/05-surface.md` § Status taxonomy).
+            hint = Some(match hint {
+                Some(condition) if status != Status::Ok => {
+                    format!("{condition}. also: {cut}")
+                }
+                _ => {
+                    status = Status::Truncated;
+                    cut
+                }
+            });
+        }
+        // `hint` is non-null whenever the status is not `ok` **or** the result
+        // is empty. Zero rows from a valid query is indistinguishable from a
+        // typo, a wrong constant and a path that was never indexed, and that is
+        // the one case the status taxonomy cannot separate on its own
+        // (`specs/05-surface.md` § Response contract).
+        if hint.is_none() && rows.is_empty() {
+            hint = Some(empty_hint(&result, &loaded.relations, &loaded.engine));
+        }
+        Answer {
+            status,
+            columns: result.columns.clone(),
+            rows,
+            truncated,
+            cap,
+            hint,
+            derived: result.stats.derived,
+            elapsed_ms: result.stats.elapsed_ms,
+            refreshed,
+            transformed: result.stats.transformed.clone(),
+            demand: result.stats.demand.clone(),
+            depends: result.stats.depends.clone(),
+            shadowed: result.stats.shadowed.clone(),
+        }
+    };
+
+    let mut answer = shape(printed.rows, printed.truncated);
+    if sent(&mut answer, options) > budget && !answer.rows.is_empty() {
+        // Not every row fits, and a cut only lengthens the rest of the answer
+        // (a status, a hint), so the answer is some shorter prefix. The size
+        // grows with the prefix: bisect for the longest one that fits
+        // (`specs/05-surface.md` § Symbol rendering).
+        let mut rows = std::mem::take(&mut answer.rows);
+        let (mut lo, mut hi) = (0, rows.len().saturating_sub(1));
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            if sent(
+                &mut shape(rows.iter().take(mid).cloned().collect(), true),
+                options,
+            ) <= budget
+            {
+                lo = mid;
+            } else {
+                hi = mid.saturating_sub(1);
             }
-        });
+        }
+        rows.truncate(lo);
+        answer = shape(rows, true);
     }
-    // `hint` is non-null whenever the status is not `ok` **or** the result is
-    // empty. Zero rows from a valid query is indistinguishable from a typo, a
-    // wrong constant and a path that was never indexed, and that is the one
-    // case the status taxonomy cannot separate on its own
-    // (`specs/05-surface.md` § Response contract).
-    if hint.is_none() && printed.rows.is_empty() {
-        hint = Some(empty_hint(&result, &loaded.relations, &loaded.engine));
-    }
-    Answer {
-        status,
-        columns: result.columns.clone(),
-        rows: printed.rows,
-        truncated,
-        cap,
-        hint,
-        derived: result.stats.derived,
-        elapsed_ms: result.stats.elapsed_ms,
-        refreshed,
-        transformed: result.stats.transformed.clone(),
-        demand: result.stats.demand.clone(),
-        depends: result.stats.depends.clone(),
-        shadowed: result.stats.shadowed.clone(),
-    }
+    answer
+}
+
+/// The bytes `answer` costs on the wire `options` names.
+///
+/// Measured with the widest `elapsed_ms` there is, so where a cut lands does
+/// not depend on how fast this run happened to be (invariant 8).
+fn sent(answer: &mut Answer, options: &Options) -> usize {
+    let elapsed = std::mem::replace(&mut answer.elapsed_ms, u64::MAX);
+    let bytes = options.wire.bytes(answer, options.raw);
+    answer.elapsed_ms = elapsed;
+    bytes
 }
 
 /// What this host adds to an engine diagnostic: the verb or the rule that
@@ -862,37 +914,4 @@ fn refresh(
         ));
     }
     Ok((Status::Ok, None, report.indexed))
-}
-
-/// The answer as JSON, in the shape `specs/05-surface.md` § Response contract
-/// specifies.
-#[must_use]
-pub fn to_json(answer: &Answer) -> serde_json::Value {
-    serde_json::json!({
-        "status": answer.status.as_str(),
-        "columns": answer.columns,
-        // The raw atoms, always: a programmatic consumer must never have to
-        // parse the pretty form back apart (`specs/05-surface.md` § Symbol
-        // rendering). `display` is the same rows, in the same order, with
-        // symbols expanded — so `rows[i]` and `display[i]` are one tuple in two
-        // notations.
-        //
-        // Values are carried structurally rather than tab-joined and split back
-        // apart: a doc comment containing a tab would otherwise arrive as more
-        // values than there are columns.
-        "rows": answer.rows.iter().map(|r| &r.raw).collect::<Vec<_>>(),
-        "display": answer.rows.iter().map(|r| &r.display).collect::<Vec<_>>(),
-        "truncated": answer.truncated,
-        "cap": answer.cap,
-        "hint": answer.hint,
-        "stats": {
-            "derived": answer.derived,
-            "elapsed_ms": answer.elapsed_ms,
-            "refreshed": answer.refreshed,
-            "transformed": answer.transformed,
-            "demand": answer.demand,
-            "depends": answer.depends,
-            "shadowed": answer.shadowed,
-        },
-    })
 }

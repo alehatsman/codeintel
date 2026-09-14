@@ -244,11 +244,32 @@ atoms, one value per column, and `display` is the same rows expanded — so a
 programmatic consumer never parses the pretty form. This is presentation only —
 the tuple is unchanged, and `--raw` is what round-trips.
 
-**The byte cap is measured on the printed text**, not on the engine's estimate
+**The byte cap is measured on the bytes sent**, not on the engine's estimate
 over raw atoms. Symbol expansion is what the consumer's context window actually
 pays for, and `crates/datalog` cannot account for it without learning what a
 symbol is (invariant 6). It is applied after the sort, so a truncated answer is
 a stable prefix of the ordered rows.
+
+"The bytes sent" is per surface, and each is measured by encoding the answer
+with the same function that sends it:
+
+| Surface | Measured |
+|---|---|
+| CLI `query`, text | the rows on stdout (the status goes to stderr) |
+| CLI `query --format json` | the whole document: both notations of every row, JSON escaping included |
+| MCP `code_query` | the tool result object: its `content` body escaped into a JSON string, plus `structuredContent` |
+
+An earlier version measured the printed text everywhere. That bounded the text
+surface and nothing else: the JSON document carries two notations per row, and
+an MCP result carried the text *and* both notations again in
+`structuredContent`, several times the budget on a capped answer while
+reporting `max_result_bytes` as honoured. Rendering still cuts at the printed
+text first, which every surface costs at least; the host then keeps the longest
+prefix whose encoding fits, and a cut there sets `truncated` and
+`cap: "max_result_bytes"` like any other. The JSON-RPC envelope around an MCP
+result is not counted — its `id` is the client's own bytes echoed back. The cut
+is measured with `elapsed_ms` at its widest, so which rows survive does not
+depend on how fast the run was (invariant 8).
 
 For that to be true the engine's own cap must not be the one that fires. The
 rendered form is **shorter** than the raw one — a ~68-character `SymId` becomes
@@ -517,6 +538,17 @@ MCP dropped batching in a later revision, and supporting it would be protocol
 surface no client of this tool needs. **`tools/call` names its tool.** A `name`
 other than `code_query` — or none — is `-32602` naming the one tool that exists,
 rather than running `code_query` under whatever name was sent.
+
+**A result carries its rows once.** `content` is the whole answer in the format
+asked for: the rows as text with a `status=` line and any `hint:` line appended,
+or, with `format: "json"`, the document in § Response contract.
+`structuredContent` is that document **without `rows` and `display`** —
+`status`, `columns`, `truncated`, `cap`, `hint`, `stats` — so a consumer
+branches on `status` without parsing prose. It used to be the whole document,
+which sent every row two or three times and put a capped MCP result several
+times over `max_result_bytes` while it reported the cap as honoured.
+`content` cannot be the one that shrinks: the 2024-11-05 revision this server
+speaks has no `structuredContent`, and its clients read only `content`.
 
 ### Response contract
 

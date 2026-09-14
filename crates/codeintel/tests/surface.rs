@@ -683,3 +683,95 @@ fn schema_json_carries_the_counts_structurally() {
             .all(|r| r["head"].as_str().is_some_and(|h| h.contains('(')))
     );
 }
+
+/// A tree of `rows` functions whose doc comments are long and made of the
+/// characters JSON escapes: quote, backslash, tab. Each costs two bytes in a
+/// JSON string, and four once that string is escaped again into an MCP result.
+fn escaping_tree(rows: usize) -> tempfile::TempDir {
+    use std::fmt::Write as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+    let doc = "\"\\\t".repeat(60);
+    let mut source = String::new();
+    for i in 0..rows {
+        writeln!(source, "/// {doc}\npub fn f{i:04}() {{}}").expect("writes to a String");
+    }
+    std::fs::write(dir.path().join("src/lib.rs"), source).expect("write");
+    dir
+}
+
+/// Invariant 9 on the MCP wire: the result object, not the printed text, is
+/// what `max_result_bytes` bounds. Measured on the text alone, a capped answer
+/// went out several times over the budget in both formats (#49).
+#[test]
+fn an_mcp_result_fits_max_result_bytes_as_sent() {
+    let dir = escaping_tree(2500);
+    run(dir.path(), &["index", "."]);
+    let budget = datalog::Limits::default().max_result_bytes;
+    let call = |id: u64, format: &str| {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"code_query",
+            "arguments":{"query":"?- def_doc(S, D).","limit":5000,"format":format}}})
+    };
+    let out = rpc(dir.path(), &[call(1, "text"), call(2, "json")]);
+    assert_eq!(out.len(), 2, "{out:?}");
+
+    for response in &out {
+        let result = &response["result"];
+        let sent = result.to_string().len();
+        assert!(sent <= budget, "{sent} bytes sent against {budget}");
+        let envelope = &result["structuredContent"];
+        assert_eq!(envelope["status"], "truncated", "{envelope}");
+        assert_eq!(envelope["truncated"], true);
+        assert_eq!(envelope["cap"], "max_result_bytes");
+        assert!(
+            envelope.get("rows").is_none() && envelope.get("display").is_none(),
+            "the rows travel once, in content: {envelope}"
+        );
+    }
+
+    // A cut keeps a prefix, not nothing.
+    let text = out[0]["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text");
+    assert!(text.lines().count() > 10, "{text}");
+    let body: serde_json::Value = serde_json::from_str(
+        out[1]["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text"),
+    )
+    .expect("the json body parses");
+    let kept = body["rows"].as_array().map_or(0, Vec::len);
+    assert!((10..2500).contains(&kept), "{kept} rows");
+    assert_eq!(body["display"].as_array().map(Vec::len), Some(kept));
+}
+
+/// The same on the CLI's JSON: both notations of every row, escaped, are what
+/// stdout carries, so they are what the cap measures.
+#[test]
+fn query_json_fits_max_result_bytes_with_escaping_counted() {
+    let dir = escaping_tree(2500);
+    run(dir.path(), &["index", "."]);
+    let budget = datalog::Limits::default().max_result_bytes;
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- def_doc(S, D).",
+            "--limit",
+            "5000",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        out.stdout.len() <= budget,
+        "{} bytes on stdout against {budget}",
+        out.stdout.len()
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(body["truncated"], true, "{body}");
+    assert_eq!(body["cap"], "max_result_bytes");
+    let kept = body["rows"].as_array().map_or(0, Vec::len);
+    assert!((10..2500).contains(&kept), "{kept} rows");
+}

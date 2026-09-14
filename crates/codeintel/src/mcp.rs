@@ -18,9 +18,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::census::Census;
-use crate::query::{self, Options, Warm};
+use crate::query::{Options, Warm};
 use crate::schema::Schema;
 use crate::status::Status;
+use crate::wire::{self, Wire};
 
 /// The MCP revision this server speaks.
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -260,6 +261,8 @@ fn call(
         // agent choosing one over the wire is a capability this tool does not
         // need. `codeintel query --rules` is where that lives.
         rules: Vec::new(),
+        // `max_result_bytes` is measured on the result this call returns.
+        wire: if json { Wire::McpJson } else { Wire::McpText },
     };
     let answer = match warm.run(root, program.unwrap_or_default(), &options) {
         Ok(answer) => answer,
@@ -267,19 +270,7 @@ fn call(
         // result rather than a protocol error: the caller wants the text.
         Err(e) => return Ok(failed(&format!("codeintel: {e:#}"))),
     };
-
-    let text = if json {
-        query::to_json(&answer).to_string()
-    } else {
-        rendered(&answer, options.raw)
-    };
-    Ok(serde_json::json!({
-        "content": [{ "type": "text", "text": text }],
-        // The full contract alongside the text, so a consumer that branches on
-        // `status` never parses prose to find it.
-        "structuredContent": query::to_json(&answer),
-        "isError": !answer.status.answered(),
-    }))
+    Ok(wire::tool_result(&answer, json, options.raw))
 }
 
 /// The catalog, which needs no query and works with no index.
@@ -301,28 +292,6 @@ fn schema(root: &Path, json: bool) -> serde_json::Value {
         }),
         "isError": false,
     })
-}
-
-/// Rows as text, with the status and hint appended.
-///
-/// The status is never omitted: `ok` with zero rows and a missing index must be
-/// distinguishable without reading prose (`specs/00-overview.md` invariant 6),
-/// and here there is no stderr to put it on.
-fn rendered(answer: &query::Answer, raw: bool) -> String {
-    let mut out = String::new();
-    for row in &answer.rows {
-        out.push_str(&row.line(raw));
-        out.push('\n');
-    }
-    out.push_str("status=");
-    out.push_str(answer.status.as_str());
-    out.push('\n');
-    if let Some(hint) = &answer.hint {
-        out.push_str("hint: ");
-        out.push_str(hint);
-        out.push('\n');
-    }
-    out
 }
 
 /// A tool result that is an error, carrying the text the caller needs.
