@@ -748,3 +748,56 @@ fn status_reports_the_scip_staleness_that_query_acts_on() {
     assert!(stderr.contains("status=scip-stale"), "{stderr}");
     assert!(stderr.contains("src/app.rs"), "{stderr}");
 }
+
+/// A better resolution tier must not return fewer rows.
+///
+/// `exported` reaches an inherited-visibility method's visibility through its
+/// owner. In a tier-A-only index a trait-impl method's parent is the
+/// implementing type, because `symbols_of` gives the `impl` block the same
+/// symbol as the type. Anchoring broke exactly that: the type took its SCIP
+/// identity, the `impl` block kept the stale local one, the existence check on
+/// precedence rule 3 then rejected it, and the parent fell through to the
+/// **file** — which has no `visibility` row, so the recursion died.
+///
+/// Adding a SCIP index therefore *removed* answers, with `status: ok` and
+/// nothing to distinguish it from a correct empty. `docs/plan.md` M4 records
+/// the same shape of defect for `within/2` and calls it "a short answer no
+/// status code can report".
+#[test]
+fn anchoring_does_not_shrink_exported() {
+    let dir = tree();
+    index(dir.path());
+    let scip = rows(
+        dir.path(),
+        r#"?- def(S, "src/kinds.rs", _, "handle"), exported(S)."#,
+    );
+
+    // The same tree with no SCIP index at all.
+    let bare = tree();
+    std::fs::remove_file(bare.path().join("index.scip")).expect("remove index.scip");
+    index(bare.path());
+    let tier_a = rows(
+        bare.path(),
+        r#"?- def(S, "src/kinds.rs", _, "handle"), exported(S)."#,
+    );
+
+    assert_eq!(
+        scip.len(),
+        tier_a.len(),
+        "SCIP returned {} exported `handle` methods, tier A alone returned {}. A better \
+         resolution tier must not lose rows.\n  scip:  {scip:?}\n  tierA: {tier_a:?}",
+        scip.len(),
+        tier_a.len()
+    );
+    assert_eq!(scip.len(), 3, "{scip:?}");
+
+    // And the reason: every one of those parents is a definition, not a file.
+    let orphans = rows(
+        dir.path(),
+        r#"?- def(S, "src/kinds.rs", _, "handle"), parent(S, P), !def(P, _, _, _)."#,
+    );
+    assert!(
+        orphans.is_empty(),
+        "a trait-impl method's parent is its type, not the file: {orphans:?}"
+    );
+}

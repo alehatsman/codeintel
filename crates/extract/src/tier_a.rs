@@ -220,7 +220,22 @@ impl Extractor {
         let items = promote(items, &parents);
         let items = inherit_visibility(items, &parents, self.lang);
         let mut symbols = symbols_of(path, &items, &parents);
+        let synthesized = symbols.clone();
         let mut anchored = 0;
+        // What each anchored definition was called before it took its SCIP
+        // identity. `symbols_of` gives a Rust `impl` block the same symbol as
+        // the type it implements, and only the *type* carries a name token for
+        // the join to land on — so anchoring rewrote the type and left the
+        // `impl` block holding a name nothing defines any more. The block is
+        // every trait-impl method's enclosing item, so the parent walk below
+        // stepped over it to the file, and `exported` — which reaches a
+        // method's visibility through its owner — stopped finding one.
+        //
+        // Measured on tests/fixtures/rust before this:
+        //   tier A only   `?- def(S, "src/kinds.rs", _, "handle"), exported(S).` -> 3
+        //   with SCIP     the same query                                         -> 1
+        // Adding a *better* resolution tier removed rows, with `status: ok`.
+        let mut renamed: BTreeMap<&str, Option<&str>> = BTreeMap::new();
         for (i, item) in items.iter().enumerate() {
             if let Some(anchor) = anchors.at(item.name_at.0, item.name_at.1)
                 && item.is_def
@@ -229,6 +244,41 @@ impl Extractor {
             {
                 *slot = Some(anchor.symbol.clone());
                 anchored += 1;
+            }
+        }
+        for (i, before) in synthesized.iter().enumerate() {
+            let (Some(before), Some(Some(after))) = (before.as_deref(), symbols.get(i)) else {
+                continue;
+            };
+            if before == after || !items.get(i).is_some_and(|it| it.is_def) {
+                continue;
+            }
+            // Two definitions sharing one synthesized name and anchoring apart
+            // is an ambiguity, not a rename. `None` poisons the entry so the
+            // rewrite below leaves those items alone rather than picking one.
+            renamed
+                .entry(before)
+                .and_modify(|slot| {
+                    if *slot != Some(after.as_str()) {
+                        *slot = None;
+                    }
+                })
+                .or_insert(Some(after));
+        }
+        if !renamed.is_empty() {
+            let stale: Vec<(usize, String)> = symbols
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !items.get(*i).is_some_and(|it| it.is_def))
+                .filter_map(|(i, sym)| {
+                    let target = renamed.get(sym.as_deref()?)?.as_ref()?;
+                    Some((i, (*target).to_string()))
+                })
+                .collect();
+            for (i, target) in stale {
+                if let Some(slot) = symbols.get_mut(i) {
+                    *slot = Some(target);
+                }
             }
         }
 
