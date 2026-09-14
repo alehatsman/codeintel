@@ -507,7 +507,13 @@ fn query_cmd(
     // Never silent: a repository rule replacing `is_test` changes every answer
     // that reads it, and the caller has to know it happened.
     for head in &answer.shadowed {
-        eprintln!("shadowed: `{head}` from a rule file replaces the stdlib rule");
+        eprintln!("shadowed: `{head}` in the query replaces the stdlib rule");
+    }
+    // Widening is the one a repository actually does — `--rules` is where its
+    // conformance rules live — and it was the silent one. A file that happens
+    // to name `callable/1` changes `calls` and `entrypoint` for this answer.
+    for head in &answer.widened {
+        eprintln!("widened: `{head}` adds clauses to the stdlib rule of that name");
     }
 
     if !answer.status.answered() {

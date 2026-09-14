@@ -122,10 +122,22 @@ pub struct Answer {
     pub demand: String,
     /// Base relations the goal's dependency closure reaches.
     pub depends: Vec<String>,
-    /// Stdlib rules a loaded rule file or the query itself shadowed. Never
-    /// silent: a repository rule quietly replacing `is_test` would change
-    /// every answer that reads it.
+    /// Stdlib rules the query itself shadowed. Never silent: a rule quietly
+    /// replacing `is_test` would change every answer that reads it.
     pub shadowed: Vec<String>,
+    /// Stdlib predicates a `--rules` file added clauses to, as `name/arity`.
+    ///
+    /// Separate from [`Self::shadowed`] because the mechanism is the opposite
+    /// one and only one of them was ever reported. A `--rules` file is
+    /// **additive** — a predicate is the union of its clauses — so a file
+    /// naming `callable/1` does not replace the stdlib's definition, it widens
+    /// it, and every rule reading `callable` changes with it. Measured on
+    /// `tests/fixtures/rust`: a rules file adding three `callable` clauses took
+    /// `?- calls(A, B).` from 3 edges to 15 and `?- entrypoint(S).` from 16 to
+    /// 22, with `shadowed: []` and `status: ok`. Widening is the one a
+    /// repository actually does, since `--rules` is where its conformance rules
+    /// live, and it was the silent one.
+    pub widened: Vec<String>,
 }
 
 impl Answer {
@@ -144,6 +156,7 @@ impl Answer {
             demand: String::new(),
             depends: Vec::new(),
             shadowed: Vec::new(),
+            widened: Vec::new(),
         }
     }
 }
@@ -254,6 +267,10 @@ struct Loaded {
     manifest: facts::Manifest,
     /// The rule files loaded after the standard library.
     rules: Vec<PathBuf>,
+    /// Stdlib predicates those files added clauses to (`Answer::widened`).
+    /// Computed at load, not per query, because it is a property of the rule
+    /// set and the warm engine reuses it.
+    widened: Vec<String>,
     engine: Engine,
     literals: Literals,
     relations: BTreeMap<&'static str, Relation>,
@@ -293,6 +310,13 @@ impl Loaded {
         // A repository's own conformance rules. Additive: a predicate is the
         // union of its clauses, so a file defining `is_test` widens it. Only a
         // rule in the query program shadows a loaded one.
+        //
+        // Additive is the right semantics and it was the unreported one. A file
+        // that names a stdlib predicate changes every rule reading it, and
+        // nothing said so, so the heads are snapshotted here and compared after
+        // each file (`Answer::widened`).
+        let mut defined: BTreeSet<String> = engine.loaded().iter().flatten().cloned().collect();
+        let mut widened: Vec<String> = Vec::new();
         for path in rules {
             let src = match std::fs::read_to_string(path) {
                 Ok(src) => src,
@@ -314,6 +338,18 @@ impl Loaded {
                     ),
                 )));
             }
+            // What this file defined, against everything defined before it.
+            // `defined` grows as files load, so a second rule file widening the
+            // first is reported too, not only a collision with the stdlib.
+            for head in engine.loaded().last().into_iter().flatten() {
+                // `insert` is false for a head something already defined. Three
+                // clauses of one predicate are one widening, not three, so the
+                // report is deduplicated.
+                let entry = format!("{head} ({})", path.display());
+                if !defined.insert(head.clone()) && !widened.contains(&entry) {
+                    widened.push(entry);
+                }
+            }
         }
         // The rules' constants belong to the engine, not to any one call.
         literals.seal();
@@ -321,6 +357,7 @@ impl Loaded {
         Ok(Ok(Self {
             manifest,
             rules: rules.to_vec(),
+            widened,
             engine,
             literals,
             relations,
@@ -523,6 +560,7 @@ fn evaluate(
             demand: result.stats.demand.clone(),
             depends: result.stats.depends.clone(),
             shadowed: result.stats.shadowed.clone(),
+            widened: loaded.widened.clone(),
         }
     };
 

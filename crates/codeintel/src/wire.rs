@@ -80,6 +80,7 @@ pub fn json(answer: &Answer) -> serde_json::Value {
             "demand": answer.demand,
             "depends": answer.depends,
             "shadowed": answer.shadowed,
+            "widened": answer.widened,
         }),
     );
     serde_json::Value::Object(map)

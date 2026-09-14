@@ -1234,3 +1234,104 @@ fn no_timing_travels_in_the_answer() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("elapsed_ms="), "{stderr}");
 }
+
+/// A rule file that adds clauses to a stdlib predicate says so.
+///
+/// `--rules` is additive — a predicate is the union of its clauses — and it is
+/// where a repository keeps its conformance rules, so a collision with a
+/// stdlib name is an accident rather than an intent to replace. Only *shadowing*
+/// was reported, which is the mechanism a rule file cannot use.
+///
+/// The effect is not small. Three clauses naming `callable/1` move every rule
+/// downstream of it, and this answered `status: ok` with `shadowed: []`.
+#[test]
+fn a_rule_file_that_widens_a_stdlib_predicate_is_never_silent() {
+    let dir = tree();
+    index(dir.path());
+
+    let collides = dir.path().join("collides.dl");
+    std::fs::write(
+        &collides,
+        "%% callable(K) -- a conformance file that happens to name a stdlib rule.\n\
+         callable(\"struct\").\ncallable(\"field\").\ncallable(\"constant\").\n",
+    )
+    .expect("write");
+
+    let stats = |args: &[&str]| -> serde_json::Value {
+        let out = run(dir.path(), args);
+        let json: serde_json::Value =
+            serde_json::from_slice(&out.stdout).expect("stdout is one JSON object");
+        json["stats"].clone()
+    };
+
+    let base = run(
+        dir.path(),
+        &[
+            "query",
+            "?- entrypoint(S).",
+            "--no-refresh",
+            "--format",
+            "json",
+        ],
+    );
+    let base: serde_json::Value = serde_json::from_slice(&base.stdout).expect("JSON");
+    let before = base["rows"].as_array().expect("rows").len();
+    assert!(
+        base["stats"]["widened"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "nothing was loaded, so nothing was widened: {base}"
+    );
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- entrypoint(S).",
+            "--no-refresh",
+            "--format",
+            "json",
+            "--rules",
+            &collides.to_string_lossy(),
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    let after = json["rows"].as_array().expect("rows").len();
+    assert!(
+        after > before,
+        "the widening should have changed the answer: {before} -> {after}"
+    );
+
+    let widened = json["stats"]["widened"].as_array().expect("widened");
+    assert_eq!(widened.len(), 1, "one predicate, one entry: {widened:?}");
+    let entry = widened[0].as_str().expect("a string");
+    assert!(entry.starts_with("callable/1 "), "{entry}");
+    assert!(entry.contains("collides.dl"), "{entry}");
+
+    // And on stderr, for the caller who is reading text.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("widened: `callable/1"), "{stderr}");
+
+    // A rule file with a name of its own stays quiet, so this is a signal and
+    // not noise on every conformance run.
+    let clean = dir.path().join("clean.dl");
+    std::fs::write(
+        &clean,
+        "%% my_layering(F, M) -- a rule with a name of its own.\n\
+         my_layering(F, M) :- import(F, M, _).\n",
+    )
+    .expect("write");
+    let stats = stats(&[
+        "query",
+        "?- my_layering(F, M).",
+        "--no-refresh",
+        "--format",
+        "json",
+        "--rules",
+        &clean.to_string_lossy(),
+    ]);
+    assert!(
+        stats["widened"].as_array().is_some_and(Vec::is_empty),
+        "{stats}"
+    );
+}

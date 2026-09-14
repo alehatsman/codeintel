@@ -179,6 +179,19 @@ reported on stderr and in `stats.shadowed` — a repository rule quietly replaci
 `is_test` would change every answer that reads it. A repository that means to
 replace a stdlib rule puts it in the program, not in a rule file.
 
+**Widening is reported too, in `stats.widened`.** Only shadowing was, and
+widening is the one a repository actually does: `--rules` is where its
+conformance rules live, so a collision there is an accident of naming rather
+than an intent to replace. It is not a small effect. On
+`tests/fixtures/rust`, a rules file whose three clauses happen to name
+`callable/1` takes `?- calls(A, B).` from 3 edges to 15 and `?- entrypoint(S).`
+from 16 to 22 — every rule downstream of the collided predicate moves — and
+this reported `shadowed: []` with `status: "ok"`. The two mechanisms stay
+separate fields because they are opposite operations, and a reader has to know
+which one happened: `shadowed` replaced a definition, `widened` added to one.
+Each entry names the predicate and the file, deduplicated per file, and both go
+to stderr as well.
+
 **`--expect-empty` exits 1 if any row comes back.** A conformance check states
 the violation it looks for, so finding none is the passing case. The exit code
 is 1 and not 2 because "your code violates this" and "I could not tell you" are
@@ -655,7 +668,8 @@ whose hint is `--rebuild` and would have an agent delete a healthy index.
   "truncated": false,
   "hint": null,
   "stats": { "derived": 18422, "refreshed": 0, "transformed": ["impact_of"],
-             "demand": "applied", "depends": ["def", "name_ref", "scip_ref"] }
+             "demand": "applied", "depends": ["def", "name_ref", "scip_ref"],
+             "shadowed": [], "widened": [] }
 }
 ```
 
