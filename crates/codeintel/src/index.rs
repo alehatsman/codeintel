@@ -109,6 +109,9 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     let root = store.root().to_path_buf();
     let mut report = Report::default();
     let before = store.manifest().clone();
+    // The second this run started looking — what it may record as when it
+    // looked (specs/04-storage.md § Manifest).
+    let started_at = facts::manifest::now();
 
     store.sweep().context("sweeping what a crashed run left")?;
     let (found, skips) = walk(&root);
@@ -155,6 +158,9 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     // Parsing a large `index.scip` on every auto-refresh would put it on the
     // query path for nothing. Parse it only when a file actually needs
     // re-extracting; a refresh that changes nothing reads no protobuf at all.
+    // By mtime and size alone, not the racy-clean rule: a tree touched in the
+    // indexing second would otherwise decode `index.scip` on every read. A racy
+    // file that did change is re-extracted tier A only below, and `scip-stale`.
     let stale_file = wanted.iter().any(|c| {
         !store
             .manifest()
@@ -194,7 +200,7 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         let known = store.manifest().files.get(&candidate.path);
         if !plan.rebuild
             && !invalidated
-            && known.is_some_and(|e| e.looks_unchanged(candidate.mtime, candidate.size))
+            && known.is_some_and(|e| e.is_clean(candidate.mtime, candidate.size, before.indexed_at))
         {
             report.unchanged += 1;
             continue;
@@ -234,8 +240,9 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
         // only: its positions have moved, so anchoring against the old ones
         // would adopt the wrong identity or none, and a tier-B-only `def`
         // beside the tier-A one is two rows for one definition
-        // (specs/02-extraction.md § The anchor join).
-        let scip_saw = !inputs.is_empty()
+        // (specs/02-extraction.md § The anchor join). With no re-ingest planned
+        // nothing was read, and an index that was not read saw nothing.
+        let scip_saw = reingest
             && (newest_scip.is_some_and(|scip| candidate.mtime <= scip)
                 || (!scip_changed
                     && known.is_some_and(|e| e.scip_hash.as_deref() == Some(hash.as_str()))));
@@ -416,6 +423,12 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
     // test. A store with no index yet commits regardless, so indexing an empty
     // tree still leaves an index (`specs/04-storage.md` § Incremental reindex).
     if !store.has_index() || *store.manifest() != before {
+        // Only a run that looked at every file may say when it looked, like the
+        // fingerprint above; and only one committing anyway, so a read that
+        // changed nothing still writes nothing (specs/04-storage.md § Manifest).
+        if plan.langs.is_empty() && report.stale.is_empty() {
+            store.manifest_mut().indexed_at = started_at;
+        }
         store.commit().context("committing the index")?;
     }
     report.elapsed_ms = started.elapsed().as_millis();

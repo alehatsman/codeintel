@@ -198,18 +198,9 @@ impl Warm {
                 format!("run: codeintel index {}", root.display()),
             ));
         }
-        if store.manifest().is_stale_schema() {
+        if let Some(hint) = stale_schema(store.manifest(), root) {
             self.loaded = None;
-            return Ok(Answer::of(
-                Status::Stale,
-                format!(
-                    "this index was written for schema_version {}, this build speaks {}. run: \
-                     codeintel index {} --rebuild",
-                    store.manifest().schema_version,
-                    facts::SCHEMA_VERSION,
-                    root.display()
-                ),
-            ));
+            return Ok(Answer::of(Status::Stale, hint));
         }
 
         // Every call refreshes. Warmth skips the load, never the refresh that
@@ -327,6 +318,21 @@ impl Loaded {
             langs,
         }))
     }
+}
+
+/// The hint for an index written by a build that speaks another schema, or
+/// `None`. `status` asks the same question (`specs/05-surface.md` § `status`).
+#[must_use]
+pub fn stale_schema(manifest: &facts::Manifest, root: &Path) -> Option<String> {
+    manifest.is_stale_schema().then(|| {
+        format!(
+            "this index was written for schema_version {}, this build speaks {}. run: codeintel \
+             index {} --rebuild",
+            manifest.schema_version,
+            facts::SCHEMA_VERSION,
+            root.display()
+        )
+    })
 }
 
 /// Base relations by name, as a store loads them.

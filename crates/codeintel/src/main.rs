@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use codeintel::Status;
 use codeintel::census::{Census, Report};
 use codeintel::index::{self, Plan};
 use codeintel::query::{self, Options};
@@ -216,8 +217,23 @@ fn counted(
 /// Index freshness and per-language counts. `--format json` is the bug-report
 /// artifact for a tool with no telemetry.
 fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
-    let (store, root) = open(path)?;
-    let census = Census::of(&store)?.with_unsupported(&root);
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("{} does not exist", path.display()))?;
+    // `query`'s checks, in `query`'s order (`specs/05-surface.md` § `status`).
+    let store = match Store::open(&root, &extract::fingerprint()) {
+        Ok(store) => store,
+        Err(e) => return refusal(e, format),
+    };
+    if store.has_index()
+        && let Some(hint) = query::stale_schema(store.manifest(), &root)
+    {
+        return Ok(verdict(Status::Stale, &hint, format));
+    }
+    let census = match Census::of(&store) {
+        Ok(census) => census.with_tree(&root, store.manifest()),
+        Err(e) => return refusal(e, format),
+    };
     let report = Report {
         census: &census,
         manifest: store.manifest(),
@@ -229,6 +245,31 @@ fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
     // A missing index is a fact about this directory, not a failure of the
     // command that reported it.
     Ok(ExitCode::SUCCESS)
+}
+
+/// A `status` verdict with no counts behind it: the store would not load, or
+/// was written for another schema. Exits as `query` would.
+fn verdict(status: Status, hint: &str, format: Format) -> ExitCode {
+    match format {
+        Format::Text => print!("status: {status}\nhint: {hint}\n"),
+        Format::Json => println!(
+            "{}",
+            serde_json::json!({ "status": status.as_str(), "indexed": true, "hint": hint })
+        ),
+    }
+    if status.answered() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
+    }
+}
+
+/// What the store refused, as a verdict; an I/O failure, as the error it is.
+fn refusal(error: std::io::Error, format: Format) -> Result<ExitCode> {
+    match facts::fault(&error) {
+        Some(fault) => Ok(verdict(Status::of_fault(fault), &error.to_string(), format)),
+        None => Err(anyhow::Error::new(error).context("opening the index")),
+    }
 }
 
 /// The one MCP tool, over JSON-RPC on stdin and stdout.

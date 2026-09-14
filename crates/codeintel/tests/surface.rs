@@ -812,3 +812,86 @@ fn an_unreadable_segment_is_an_io_error_not_corrupt() {
     assert_eq!(cli.status.code(), Some(2), "{stderr}");
     assert!(!stderr.contains("status=corrupt"), "{stderr}");
 }
+
+#[test]
+fn status_notices_a_file_added_after_the_index() {
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    std::fs::write(dir.path().join("src/added.rs"), "pub fn added() {}\n").expect("write");
+
+    let text = stdout(dir.path(), &["status"]);
+    assert!(text.starts_with("status: stale"), "{text}");
+    assert!(text.contains("src/added.rs"), "{text}");
+}
+
+fn write_at(path: &Path, text: &str, mtime: std::time::SystemTime) {
+    std::fs::write(path, text).expect("write");
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("open")
+        .set_modified(mtime)
+        .expect("set mtime");
+}
+
+/// An edit in the second a refresh read the file, at the same length, leaves
+/// mtime and size as recorded. The racy-clean rule hashes it anyway
+/// (`specs/04-storage.md` § Manifest).
+#[test]
+fn a_same_second_same_length_edit_is_seen() {
+    let dir = tree();
+    let file = dir.path().join("src/racy.rs");
+    // A future mtime stands in for "the second the refresh read it": it is at
+    // or past `indexed_at`, which is what makes the file suspect.
+    let second = std::time::SystemTime::now() + std::time::Duration::from_secs(3_600);
+    write_at(&file, "pub fn alpha() {}\n", second);
+    run(dir.path(), &["index", "."]);
+    write_at(&file, "pub fn omega() {}\n", second);
+
+    let text = stdout(dir.path(), &["status"]);
+    assert!(text.starts_with("status: stale"), "{text}");
+    assert!(text.contains("src/racy.rs"), "{text}");
+
+    let rows = stdout(dir.path(), &["query", r#"?- def(_, "src/racy.rs", _, N)."#]);
+    assert!(rows.contains("omega"), "{rows}");
+    assert!(!rows.contains("alpha"), "{rows}");
+}
+
+#[test]
+fn status_reports_another_schema_as_stale_without_counts() {
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let path = dir.path().join(".codeintel/manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("JSON");
+    json["schema_version"] = 999.into();
+    std::fs::write(&path, json.to_string()).expect("writes");
+
+    let out = run(dir.path(), &["status"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.starts_with("status: stale"), "{text}");
+    assert!(text.contains("schema_version 999"), "{text}");
+}
+
+#[test]
+fn status_reports_a_store_that_will_not_load_as_corrupt() {
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let seg = std::fs::read_dir(dir.path().join(".codeintel/seg"))
+        .expect("segments")
+        .next()
+        .expect("one segment")
+        .expect("entry")
+        .path();
+    let mut bytes = std::fs::read(&seg).expect("reads");
+    if let Some(byte) = bytes.first_mut() {
+        *byte ^= 0xff;
+    }
+    std::fs::write(&seg, bytes).expect("writes");
+
+    let out = run(dir.path(), &["status", "--format", "json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(json["status"], "corrupt", "{json}");
+}

@@ -137,6 +137,7 @@ deliberately deferred.
   "dict_bin_len": 40213884,
   "dict_idx_len": 2011240,
   "dict_generation": 3,
+  "indexed_at": 1757000000,
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
       "mtime": 1757000000, "size": 40218811, "documents": 812,
@@ -153,8 +154,32 @@ deliberately deferred.
 }
 ```
 
-`hash` is content, `mtime`+`size` is the fast path. A file is unchanged iff
-mtime and size both match; otherwise hash before deciding to re-extract.
+`hash` is content, `mtime`+`size` is the fast path. A file is unchanged without
+hashing iff mtime and size both match **and its mtime is before `indexed_at`**;
+otherwise hash before deciding to re-extract.
+
+**`indexed_at` is the second the last refresh that observed every file
+started** — git's racy-clean rule. mtime has one-second resolution, so an edit
+landing in the same second the refresh read the file, at the same length, leaves
+mtime and size exactly as recorded. The fast path alone would never re-read it,
+and that is the agent's own edit-then-ask loop. A file with `mtime >=
+indexed_at` may have changed after it was read, so it is hashed. It is the
+refresh's *start*, not its commit: a file modified between the read and the
+commit has an mtime at or past the start and stays suspect, where a commit
+timestamp could fall in the next second and clear it. Only a run that walked
+every language and finished records it, like the fingerprint: a `--lang` run or
+one `max_refresh_ms` stopped did not look at every file. A manifest written
+before the field existed reads `0`, and clears nothing until the next commit.
+
+**A racy file costs a hash per refresh, never a write.** The suspects are the
+files touched in or after the second the last committing refresh started —
+normally the file just edited. A refresh that hashes them and finds them
+unchanged writes nothing, so a read stays a read (§ Incremental reindex), and
+`indexed_at` moves on at the next commit. Nor do they force a SCIP re-ingest:
+that decision stays on mtime and size, because a tree checked out and indexed
+within one second would otherwise decode `index.scip` on every read. A racy
+file that did change is re-extracted tier A only and reported `scip-stale` —
+with no re-ingest, the index was not read, and it saw nothing.
 
 **`scip_hash` is the content the SCIP inputs last saw.** At ingest it becomes
 `hash` when the file was not newer than the newest input, or when `hash`
