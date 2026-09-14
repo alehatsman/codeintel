@@ -302,21 +302,22 @@ fn schema(root: &Path, json: bool) -> Result<serde_json::Value, (i64, String)> {
         }
     };
     let schema = Schema { census: &census };
-    // The catalog travels once, in `content`, in the format asked for — what
-    // `codeintel schema` prints in that format. `structuredContent` is the
-    // status alone, as for a query (`specs/05-surface.md` § MCP).
+    // `content` carries the catalog in the format asked for — what
+    // `codeintel schema` prints in that format. `structuredContent` carries
+    // the same catalog, always as JSON, so a client that only reads one field
+    // still gets the whole thing (`specs/05-surface.md` § MCP).
+    let structured = wire::schema_json(&schema, &census, root);
     let body = if json {
-        wire::schema_json(&schema, &census, root).to_string()
+        structured.to_string()
     } else {
         schema.to_string()
     };
     // `no-index` with no index, and still not an error: the catalog was
     // delivered, and it is the call a session makes before indexing anything
     // (`specs/05-surface.md` § `schema`).
-    let (status, hint) = wire::schema_status(&census, root);
     Ok(serde_json::json!({
         "content": [{ "type": "text", "text": body }],
-        "structuredContent": { "status": status.as_str(), "hint": hint },
+        "structuredContent": structured,
         "isError": false,
     }))
 }

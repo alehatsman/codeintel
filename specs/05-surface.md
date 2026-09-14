@@ -580,25 +580,46 @@ surface no client of this tool needs. **`tools/call` names its tool.** A `name`
 other than `code_query` — or none — is `-32602` naming the one tool that exists,
 rather than running `code_query` under whatever name was sent.
 
-**A result carries its rows once.** `content` is the whole answer in the format
-asked for: the rows as text with a `status=` line and any `hint:` line appended,
-or, with `format: "json"`, the document in § Response contract.
-`structuredContent` is that document **without `rows` and `display`** —
-`status`, `columns`, `truncated`, `cap`, `hint`, `stats` — so a consumer
-branches on `status` without parsing prose. It used to be the whole document,
-which sent every row two or three times and put a capped MCP result several
-times over `max_result_bytes` while it reported the cap as honoured.
-`content` cannot be the one that shrinks: the 2024-11-05 revision this server
-speaks has no `structuredContent`, and its clients read only `content`.
+**`content` and `structuredContent` carry the same answer, not a split of it.**
+`content` is the whole answer in the format asked for: the rows as text with a
+`status=` line and any `hint:` line appended, or, with `format: "json"`, the
+document in § Response contract. `structuredContent` is that same document —
+`status`, `columns`, `rows`, `display`, `truncated`, `cap`, `hint`, `stats` —
+always as JSON, regardless of what `format` asked for in `content`. This was
+not the original design: a first version sent `structuredContent` as the
+envelope alone (everything but `rows`/`display`), reasoned from the 2024-11-05
+spec text, which does not define `structuredContent` at all, on the theory that
+a client speaking that revision reads only `content`. That reasoning was
+never tested against a real client. It was: Claude Code (confirmed against
+`anthropics/claude-code#55677`, `#64316`, and duplicates) shows the model
+`structuredContent` and **drops `content` entirely** whenever
+`structuredContent` is present in the result, independent of the negotiated
+`protocolVersion` — the MCP spec added `structuredContent` in 2025-06-18 with
+no precedence rule between the two fields, and in practice clients branch on
+field presence, not on the version they negotiated. A server that keeps the
+real answer only in `content` is invisible to that client. `structuredContent`
+must therefore be self-sufficient on its own, exactly as `content` is — the
+"rows travel once" design is retired. This is the shape the official Go MCP SDK
+already produces for `dex` (`go-sdk`'s `AddTool` marshals the handler's output
+into `structuredContent` and copies that same JSON into `content` as one text
+block), which is why dex never hit this failure and codeintel's hand-rolled
+transport did.
 
-**The catalog travels once too.** `schema: true` puts the catalog in `content`
-in the format asked for — the text `codeintel schema` prints, or, with
-`format: "json"`, the document `codeintel schema --format json` prints — and
-`structuredContent` is `{ "status", "hint" }` — `ok`, or `no-index` with the
-indexing hint when there is nothing to count — and `isError` is false either
-way, because the catalog was delivered (§ `schema`). It used to repeat the whole
-text in `structuredContent.schema`: ~5.7 KB twice, on the call every session
-starts with.
+**The budget still bounds the whole result, not just `content`.** Doubling what
+`structuredContent` carries does not double-count against `max_result_bytes`:
+the cap is measured on the tool result object as actually serialized
+(`crate::wire::Wire::bytes`), so a heavier `structuredContent` simply leaves
+less headroom for rows before a cut, the same as any other field would
+(§ Truncation, above).
+
+**The catalog travels the same way.** `schema: true` puts the catalog in
+`content` in the format asked for — the text `codeintel schema` prints, or,
+with `format: "json"`, the document `codeintel schema --format json`
+prints — and `structuredContent` carries that same JSON document (the
+`codeintel schema --format json` shape) always, whatever `format` was asked
+for in `content`, so a client that only reads `structuredContent` still gets
+the full catalog rather than a bare `{status, hint}`. `isError` is false
+whenever the catalog was delivered, including `no-index` (§ `schema`).
 
 **Both surfaces print one answer.** A ground goal that holds prints `true` in
 an MCP text result exactly as on the CLI; one function writes the rows for

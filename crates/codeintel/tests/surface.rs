@@ -733,7 +733,10 @@ fn escaping_tree(rows: usize) -> tempfile::TempDir {
 
 /// Invariant 9 on the MCP wire: the result object, not the printed text, is
 /// what `max_result_bytes` bounds. Measured on the text alone, a capped answer
-/// went out several times over the budget in both formats (#49).
+/// went out several times over the budget in both formats (#49). Since
+/// `structuredContent` was made self-sufficient (`specs/05-surface.md` §
+/// MCP — a client that reads only `content` or only `structuredContent` must
+/// see the same answer), the cap has to hold with both fields carrying rows.
 #[test]
 fn an_mcp_result_fits_max_result_bytes_as_sent() {
     let dir = escaping_tree(2500);
@@ -751,14 +754,20 @@ fn an_mcp_result_fits_max_result_bytes_as_sent() {
         let result = &response["result"];
         let sent = result.to_string().len();
         assert!(sent <= budget, "{sent} bytes sent against {budget}");
-        let envelope = &result["structuredContent"];
-        assert_eq!(envelope["status"], "truncated", "{envelope}");
-        assert_eq!(envelope["truncated"], true);
-        assert_eq!(envelope["cap"], "max_result_bytes");
+        let structured = &result["structuredContent"];
+        assert_eq!(structured["status"], "truncated", "{structured}");
+        assert_eq!(structured["truncated"], true);
+        assert_eq!(structured["cap"], "max_result_bytes");
+        // A client reading only `structuredContent` (Claude Code drops
+        // `content` whenever `structuredContent` is present — confirmed
+        // against `anthropics/claude-code#55677`) still gets rows, not a
+        // bare status.
+        let kept = structured["rows"].as_array().map_or(0, Vec::len);
         assert!(
-            envelope.get("rows").is_none() && envelope.get("display").is_none(),
-            "the rows travel once, in content: {envelope}"
+            (10..2500).contains(&kept),
+            "{kept} rows in structuredContent"
         );
+        assert_eq!(structured["display"].as_array().map(Vec::len), Some(kept));
     }
 
     // A cut keeps a prefix, not nothing.
@@ -775,6 +784,12 @@ fn an_mcp_result_fits_max_result_bytes_as_sent() {
     let kept = body["rows"].as_array().map_or(0, Vec::len);
     assert!((10..2500).contains(&kept), "{kept} rows");
     assert_eq!(body["display"].as_array().map(Vec::len), Some(kept));
+    // `content` and `structuredContent` agree on exactly which rows survived
+    // the cut — they are the same document, not two independent cuts.
+    assert_eq!(
+        out[1]["result"]["structuredContent"]["rows"], body["rows"],
+        "content and structuredContent must cut to the same rows"
+    );
 }
 
 /// One answer, one text: a ground goal that holds prints `true` in an MCP
@@ -804,9 +819,14 @@ fn an_mcp_ground_goal_prints_true_like_the_cli() {
     assert!(text(1).starts_with("status=ok\n"), "{}", text(1));
 }
 
-/// The catalog travels once over MCP, in the format asked for (#51).
+/// The catalog reaches a client whichever field it reads. `content` carries it
+/// in the format asked for; `structuredContent` carries the same catalog as
+/// JSON always, so a client that only reads `structuredContent` (Claude Code
+/// drops `content` whenever `structuredContent` is present — confirmed
+/// against `anthropics/claude-code#55677`) still gets the whole thing, not a
+/// bare `{status, hint}` (#51, revised).
 #[test]
-fn the_mcp_schema_is_sent_once_in_the_format_asked_for() {
+fn the_mcp_schema_reaches_content_and_structured_content_alike() {
     let dir = tempfile::tempdir().expect("tempdir");
     let call = |id: u64, format: &str| {
         serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
@@ -815,10 +835,15 @@ fn the_mcp_schema_is_sent_once_in_the_format_asked_for() {
     let out = rpc(dir.path(), &[call(1, "text"), call(2, "json")]);
     assert_eq!(out.len(), 2, "{out:?}");
     for response in &out {
-        let envelope = &response["result"]["structuredContent"];
+        let structured = &response["result"]["structuredContent"];
         // No index in this tempdir: the status says so (#52).
-        assert_eq!(envelope["status"], "no-index", "{envelope}");
-        assert!(envelope.get("schema").is_none(), "sent twice: {envelope}");
+        assert_eq!(structured["status"], "no-index", "{structured}");
+        assert!(structured["relations"].is_array(), "{structured}");
+        assert!(
+            structured["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("innermost_at"))
+        );
     }
     let text = out[0]["result"]["content"][0]["text"]
         .as_str()
@@ -832,6 +857,8 @@ fn the_mcp_schema_is_sent_once_in_the_format_asked_for() {
     .expect("the json catalog parses");
     assert!(doc["relations"].is_array(), "{doc}");
     assert_eq!(doc["text"].as_str(), Some(text));
+    // content (json format) and structuredContent are the same document.
+    assert_eq!(out[1]["result"]["structuredContent"], doc);
 }
 
 /// The same on the CLI's JSON: both notations of every row, escaped, are what
