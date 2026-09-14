@@ -1,0 +1,20 @@
+---
+description: build the release binary
+
+# `-p codeintel`: the workspace has four members and only one of them produces a
+# binary. The other three come along as dependencies of it; naming the package
+# keeps the build to what `install.yml` is about to copy.
+#
+# `--locked`: the same contract `tasks/bench.yml` builds under. A release binary
+# that resolved a different dependency set than the gate checked is not the
+# thing the gate passed.
+
+steps:
+  - name: cargo build --release
+    shell: cargo build --locked --release -p codeintel
+    # No modifier on purpose. A bare step's exit code is its whole contract, and
+    # `changed_when: false` here would be a lie: a release build rewrites
+    # `target/` every run.
+    #
+    # Nine tree-sitter grammars are C, compiled from source on a cold `target/`.
+    timeout: 30m

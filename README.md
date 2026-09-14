@@ -28,6 +28,34 @@ codeintel query '?- innermost_at("src/store.rs", 142, S), impact_of(S, C),
                     def(C, F, _, N), at(C, F, L), !is_test(F).'
 ```
 
+## Install
+
+Built from source, native to the machine that runs it. Needs a Rust toolchain
+(`rust-toolchain.toml` pins it) and nothing else — no build of the repository
+you point it at, no language server.
+
+```sh
+provision apply tasks/install.yml                    # -> ~/.local/bin/codeintel
+provision apply tasks/install.yml --prop dest=/usr/local/bin/codeintel
+```
+
+`tasks/build.yml` is the build alone, if you only want the binary in
+`target/release/`. Both are idempotent: a second `install` run reports `ok` and
+copies nothing.
+
+Without [provision](https://github.com/alehatsman/provision), the same two
+steps by hand:
+
+```sh
+cargo build --locked --release -p codeintel
+mkdir -p ~/.local/bin
+install -m 0755 target/release/codeintel ~/.local/bin/
+```
+
+To serve it to an agent, point the agent's MCP config at `codeintel mcp
+--path /your/repo`. Registering it is the agent's configuration, not this
+repository's.
+
 ## Why
 
 An agent arriving at an unfamiliar repo has ripgrep (lexical) and its own model

@@ -1,0 +1,36 @@
+---
+description: copy the release binary onto PATH
+
+# Deliberately not `cargo install`: that rebuilds into its own target dir and
+# would double the build time for a binary the build task has already produced.
+#
+# This puts `codeintel` on PATH and stops. Registering `codeintel mcp` with an
+# agent is the agent's configuration, not this repository's.
+
+props:
+  dest:
+    type: string
+    default: "~/.local/bin/codeintel"
+    description: Where the binary lands. `~` expands.
+
+steps:
+  # `use`, not a second copy of `build.yml`'s step. One step list, one place to
+  # change the build flags.
+  - name: build
+    use: ./build.yml
+
+  - name: Ensure the destination directory exists
+    file:
+      path: "{{ props.dest | dirname }}"
+      state: dir
+
+  # `../`: a `file` step's `src` resolves against the file that names it, which
+  # is this one, in `tasks/`. Only a step's default *cwd* follows the invocation
+  # directory — and that is why this is a `file` step rather than a `cp`: it
+  # reports `ok` when the binary on PATH already matches.
+  - name: Copy the binary into place
+    file:
+      path: "{{ props.dest }}"
+      src: ../target/release/codeintel
+      state: file
+      mode: "0755"
