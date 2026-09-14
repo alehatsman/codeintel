@@ -499,6 +499,11 @@ fn query_cmd(
             }
         }
     }
+    // How long it took is the one thing that is not a function of the repo state
+    // and the query, so it does not travel in the answer (invariant 8). It goes
+    // here, on stderr, on every format: a human debugging a slow query wants it,
+    // and stderr is already not part of what a consumer diffs.
+    eprintln!("elapsed_ms={}", answer.elapsed_ms);
     // Never silent: a repository rule replacing `is_test` changes every answer
     // that reads it, and the caller has to know it happened.
     for head in &answer.shadowed {

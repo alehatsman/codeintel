@@ -1148,3 +1148,89 @@ fn a_closed_pipe_is_not_a_panic() {
         );
     }
 }
+
+/// The same repo state and the same query produce byte-identical output
+/// (`specs/00-overview.md` invariant 8).
+///
+/// This ran for a long time without being asserted end to end, and it was
+/// false: `stats.elapsed_ms` travelled in the JSON body, so forty runs of one
+/// query over one unchanged tree produced three distinct payloads. The engine
+/// had already noticed — `query::sent` measured the byte cap with `elapsed_ms`
+/// pinned at `u64::MAX` so the *cut point* would not move — but the field was
+/// still serialized, so the bytes around a stable cut were not stable.
+///
+/// Text and JSON both, because they are separate render paths.
+#[test]
+fn the_same_query_over_the_same_tree_is_byte_identical() {
+    let dir = tree();
+    index(dir.path());
+
+    for args in [
+        &[
+            "query",
+            r#"?- def(S, F, "function", N)."#,
+            "--no-refresh",
+            "--format",
+            "json",
+        ][..],
+        &[
+            "query",
+            "?- within(C, P).",
+            "--no-refresh",
+            "--format",
+            "json",
+        ][..],
+        &["query", "?- within(C, P).", "--no-refresh"][..],
+        &["schema", "--format", "json"][..],
+    ] {
+        let first = run(dir.path(), args);
+        assert!(
+            first.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&first.stderr)
+        );
+        for i in 1..24 {
+            let again = run(dir.path(), args);
+            assert_eq!(
+                String::from_utf8_lossy(&first.stdout),
+                String::from_utf8_lossy(&again.stdout),
+                "run {i} of {args:?} differs from run 0"
+            );
+        }
+    }
+}
+
+/// No timing travels in the answer, on any surface.
+///
+/// The byte-identical test above cannot catch this on its own: the fixture is
+/// small enough that `elapsed_ms` is 0 on every run, so the field could return
+/// tomorrow and that test would stay green. It only showed up on a real tree,
+/// where forty runs of one query gave three distinct payloads. So this names
+/// the field.
+#[test]
+fn no_timing_travels_in_the_answer() {
+    let dir = tree();
+    index(dir.path());
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- def(S, F, "function", N)."#,
+            "--no-refresh",
+            "--format",
+            "json",
+        ],
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    let stats = body.get("stats").and_then(serde_json::Value::as_object);
+    let stats = stats.expect("stats is an object");
+    assert!(
+        !stats.contains_key("elapsed_ms"),
+        "elapsed_ms is back in the response; it cannot be a function of the repo \
+         state and the query, so it breaks invariant 8: {stats:?}"
+    );
+    // The diagnostic is not lost, it moved to where nothing diffs it.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("elapsed_ms="), "{stderr}");
+}

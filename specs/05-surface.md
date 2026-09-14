@@ -270,8 +270,8 @@ text first, which every surface costs at least; the host then keeps the longest
 prefix whose encoding fits, and a cut there sets `truncated` and
 `cap: "max_result_bytes"` like any other. The JSON-RPC envelope around an MCP
 result is not counted — its `id` is the client's own bytes echoed back. The cut
-is measured with `elapsed_ms` at its widest, so which rows survive does not
-depend on how fast the run was (invariant 8).
+carries no timing, so which rows survive does not depend on how fast the run
+was (invariant 8).
 
 **The budget bounds the whole answer, not only its rows.** Dropping rows cannot
 shrink an answer whose envelope alone is over budget, and the one part of an
@@ -642,7 +642,7 @@ whose hint is `--rebuild` and would have an agent delete a healthy index.
   "rows": [["handle_read", "src/api/handler.rs", 42]],
   "truncated": false,
   "hint": null,
-  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": 0, "transformed": ["impact_of"],
+  "stats": { "derived": 18422, "refreshed": 0, "transformed": ["impact_of"],
              "demand": "applied", "depends": ["def", "name_ref", "scip_ref"] }
 }
 ```

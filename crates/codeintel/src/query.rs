@@ -554,13 +554,14 @@ fn evaluate(
 
 /// The bytes `answer` costs on the wire `options` names.
 ///
-/// Measured with the widest `elapsed_ms` there is, so where a cut lands does
-/// not depend on how fast this run happened to be (invariant 8).
+/// This used to measure with `elapsed_ms` pinned at `u64::MAX`, so that where
+/// a cut landed did not depend on how fast the run was. That guarded the
+/// second-order effect of a non-deterministic field while the field itself was
+/// still serialized into the answer, so the cut point was stable and the bytes
+/// around it were not. `elapsed_ms` no longer travels in the response
+/// (`wire::json`), and the workaround goes with it.
 fn sent(answer: &mut Answer, options: &Options) -> usize {
-    let elapsed = std::mem::replace(&mut answer.elapsed_ms, u64::MAX);
-    let bytes = options.wire.bytes(answer, options.raw);
-    answer.elapsed_ms = elapsed;
-    bytes
+    options.wire.bytes(answer, options.raw)
 }
 
 /// What a hint cut to fit `max_result_bytes` ends with.
