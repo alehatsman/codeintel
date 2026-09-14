@@ -11,6 +11,7 @@ use codeintel::census::{Census, Report};
 use codeintel::index::{self, Plan};
 use codeintel::query::{self, Options};
 use codeintel::schema::{self, Schema};
+use codeintel::wire::{self, Wire};
 use facts::{Lock, Store};
 
 /// Query structural facts about a source tree with Datalog.
@@ -144,6 +145,10 @@ fn run() -> Result<ExitCode> {
                 no_refresh,
                 raw,
                 rules,
+                wire: match format {
+                    Format::Text => Wire::Text,
+                    Format::Json => Wire::Json,
+                },
             },
             expect_empty,
         ),
@@ -435,7 +440,7 @@ fn query_cmd(
     let answer = query::run(path, &source, options)?;
 
     match format {
-        Format::Json => println!("{}", query::to_json(&answer)),
+        Format::Json => println!("{}", wire::json(&answer)),
         Format::Text => {
             // A ground goal has no columns: truth is one empty row and
             // falsehood is none (`specs/03-datalog.md` § Evaluation). Printed

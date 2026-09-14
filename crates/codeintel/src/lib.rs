@@ -19,6 +19,7 @@ pub mod regexes;
 pub mod render;
 pub mod schema;
 pub mod status;
+pub mod wire;
 
 pub use index::{Plan, Report};
 pub use load::load_facts;
@@ -26,3 +27,4 @@ pub use query::{Answer, Options, Warm};
 pub use regexes::Regexes;
 pub use render::{Rendered, Row, Sites, render, render_row};
 pub use status::Status;
+pub use wire::Wire;
