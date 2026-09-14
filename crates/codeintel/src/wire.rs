@@ -41,41 +41,28 @@ impl Wire {
     }
 }
 
-/// Everything about an answer except its rows: what a consumer branches on.
-#[must_use]
-pub fn envelope(answer: &Answer) -> serde_json::Value {
-    object(answer, false)
-}
-
 /// The full JSON answer, in the shape `specs/05-surface.md` § Response contract
-/// specifies: the envelope plus the rows in both notations.
+/// specifies: `status`, `columns`, the rows in both notations, `truncated`,
+/// `cap`, `hint`, `stats`. This is what `content` carries in JSON format, and
+/// what `structuredContent` carries always — the two are the same document
+/// (`specs/05-surface.md` § MCP).
 #[must_use]
 pub fn json(answer: &Answer) -> serde_json::Value {
-    object(answer, true)
-}
-
-/// One object, keys in the contract's order whether or not the rows are in it.
-/// With `serde_json`'s `preserve_order` that is the printed order; without it
-/// the keys sort, exactly as the `json!` literal this replaced did.
-fn object(answer: &Answer, with_rows: bool) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("status".into(), answer.status.as_str().into());
     map.insert("columns".into(), serde_json::json!(answer.columns));
-    if with_rows {
-        // The raw atoms, always: a programmatic consumer must never have to
-        // parse the pretty form back apart (`specs/05-surface.md` § Symbol
-        // rendering). `display` is the same rows, in the same order, with
-        // symbols expanded — so `rows[i]` and `display[i]` are one tuple in two
-        // notations.
-        //
-        // Values are carried structurally rather than tab-joined and split back
-        // apart: a doc comment containing a tab would otherwise arrive as more
-        // values than there are columns.
-        let raw: Vec<&Vec<String>> = answer.rows.iter().map(|r| &r.raw).collect();
-        let display: Vec<&Vec<String>> = answer.rows.iter().map(|r| &r.display).collect();
-        map.insert("rows".into(), serde_json::json!(raw));
-        map.insert("display".into(), serde_json::json!(display));
-    }
+    // The raw atoms, always: a programmatic consumer must never have to parse
+    // the pretty form back apart (`specs/05-surface.md` § Symbol rendering).
+    // `display` is the same rows, in the same order, with symbols expanded —
+    // so `rows[i]` and `display[i]` are one tuple in two notations.
+    //
+    // Values are carried structurally rather than tab-joined and split back
+    // apart: a doc comment containing a tab would otherwise arrive as more
+    // values than there are columns.
+    let raw: Vec<&Vec<String>> = answer.rows.iter().map(|r| &r.raw).collect();
+    let display: Vec<&Vec<String>> = answer.rows.iter().map(|r| &r.display).collect();
+    map.insert("rows".into(), serde_json::json!(raw));
+    map.insert("display".into(), serde_json::json!(display));
     map.insert("truncated".into(), answer.truncated.into());
     map.insert("cap".into(), serde_json::json!(answer.cap));
     map.insert("hint".into(), serde_json::json!(answer.hint));
@@ -206,12 +193,11 @@ fn counted(
 
 /// One `code_query` result.
 ///
-/// The rows travel **once**, in `content`, in the notation asked for.
-/// `structuredContent` is the envelope alone, so a consumer branches on
-/// `status` without parsing prose, and the answer is not paid for twice.
-/// `content` has to be the complete answer: the 2024-11-05 revision this
-/// server speaks has no `structuredContent`, and a client of it reads only
-/// `content`.
+/// `content` carries the answer in the notation asked for: text, or the JSON
+/// document. `structuredContent` carries the same JSON document always,
+/// regardless of what `content`'s format is — not a smaller envelope. A
+/// client that reads only one of the two fields still gets the whole answer
+/// (`specs/05-surface.md` § MCP).
 #[must_use]
 pub fn tool_result(answer: &Answer, json_format: bool, raw: bool) -> serde_json::Value {
     let body = if json_format {
@@ -221,7 +207,7 @@ pub fn tool_result(answer: &Answer, json_format: bool, raw: bool) -> serde_json:
     };
     serde_json::json!({
         "content": [{ "type": "text", "text": body }],
-        "structuredContent": envelope(answer),
+        "structuredContent": json(answer),
         "isError": !answer.status.answered(),
     })
 }
