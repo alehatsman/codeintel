@@ -938,24 +938,31 @@ impl ScipState {
         if self.stale.is_empty() {
             return None;
         }
-        let mut named: Vec<&str> = self.stale.iter().map(String::as_str).take(5).collect();
-        if self.stale.len() > named.len() {
-            named.push("...");
-        }
         Some((
             Status::ScipStale,
             format!(
                 "{} file(s) changed after the SCIP index was built, so their `name_ref` rows are \
                  fresh and their `scip_ref` rows are not: {}. {commands}",
                 self.stale.len(),
-                named.join(", ")
+                name_list(&self.stale)
             ),
         ))
     }
 }
 
+/// The first five of `names`, comma-joined, with `...` when there are more.
+/// A hint names files so the reader can act, not so it can list them all.
+pub(crate) fn name_list<'a>(names: impl IntoIterator<Item = &'a String>) -> String {
+    let mut names = names.into_iter();
+    let mut out: Vec<&str> = names.by_ref().take(5).map(String::as_str).collect();
+    if names.next().is_some() {
+        out.push("...");
+    }
+    out.join(", ")
+}
+
 /// The indexer command for every language the index holds files in.
-fn indexers(manifest: &facts::Manifest) -> Vec<&'static str> {
+pub(crate) fn indexers(manifest: &facts::Manifest) -> Vec<&'static str> {
     let mut out: Vec<&'static str> = manifest
         .files
         .values()
@@ -1049,17 +1056,13 @@ fn refresh(
     drop(held);
 
     if report.is_stale() {
-        let mut named: Vec<&str> = report.stale.iter().map(String::as_str).take(5).collect();
-        if report.stale.len() > named.len() {
-            named.push("...");
-        }
         return Ok((
             Status::Stale,
             Some(format!(
                 "auto-refresh ran out of its {MAX_REFRESH_MS} ms budget with {} file(s) left: \
                  {}. run: codeintel index {}",
                 report.stale.len(),
-                named.join(", "),
+                name_list(&report.stale),
                 root.display()
             )),
             report.indexed,
