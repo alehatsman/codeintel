@@ -7,13 +7,14 @@
 //! "python: 1,204 files, 11 defs" is visibly absurd to a human in one second
 //! where `status: ok` is not.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use anyhow::{Context, Result};
 use datalog::Relation;
 use datalog::atom::Atom;
 use facts::{Manifest, Store};
+
+use crate::status::Status;
 
 /// One language's share of the index.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -52,7 +53,8 @@ pub struct Census {
     pub kinds: BTreeMap<String, usize>,
     /// `scip_ref` rows per `Role`. Tier A emits no role.
     pub roles: BTreeMap<String, usize>,
-    /// Files whose `mtime`/`size` no longer match the manifest.
+    /// Files added, removed or changed since the index, by the refresh's own
+    /// rule. Filled by [`Self::with_tree`], which walks.
     pub changed: Vec<String>,
     /// Extensions found in the tree with no grammar, and how many files each.
     ///
@@ -69,7 +71,7 @@ impl Census {
     ///
     /// # Errors
     /// A store that exists but cannot be read.
-    pub fn of(store: &Store) -> Result<Self> {
+    pub fn of(store: &Store) -> std::io::Result<Self> {
         let mut census = Self {
             indexed: store.has_index(),
             ..Self::default()
@@ -84,7 +86,7 @@ impl Census {
         }
 
         let manifest = store.manifest();
-        let relations = store.load().context("loading the index")?;
+        let relations = store.load()?;
         for (name, rows) in &relations {
             census.relations.insert(name, rows.len());
         }
@@ -138,26 +140,29 @@ impl Census {
             }
         }
 
-        census.changed = changed_files(store.root(), manifest);
         Ok(census)
     }
 
-    /// Walk the tree and record the extensions no grammar covers.
+    /// Walk the tree: record the extensions no grammar covers, and the files
+    /// added, removed or changed since `manifest` was written.
     ///
     /// Separate from [`Self::of`] because it costs a full gitignore-aware
-    /// traversal: `schema` does not need it and `status` does.
+    /// traversal: `schema` does not need it and `status` does. The walk is the
+    /// one a refresh does, so a file it would pick up — a new one included —
+    /// is a file `status` reports.
     ///
     /// With no index the walk is skipped. There is nothing to report an
     /// unindexed extension *against* — the answer is three lines of `no-index`
     /// — and the guard lives here rather than at the call site so a second
     /// caller cannot forget it.
     #[must_use]
-    pub fn with_unsupported(mut self, root: &std::path::Path) -> Self {
+    pub fn with_tree(mut self, root: &std::path::Path, manifest: &Manifest) -> Self {
         if !self.indexed {
             return self;
         }
-        let (_, skips) = extract::walk::walk(root);
+        let (found, skips) = extract::walk::walk(root);
         self.unsupported = skips.unsupported;
+        self.changed = changed_files(root, manifest, &found);
         self
     }
 
@@ -204,15 +209,19 @@ pub struct Report<'a> {
 }
 
 impl Report<'_> {
-    /// The one-word verdict, shared by both formats so they cannot disagree.
+    /// The verdict, shared by both formats so they cannot disagree, and made
+    /// by `query`'s checks in `query`'s order (`specs/05-surface.md`
+    /// § `status`). A store that will not load never gets here.
     #[must_use]
-    pub fn status(&self) -> &'static str {
+    pub fn status(&self) -> Status {
         if !self.census.indexed {
-            "no-index"
-        } else if self.census.changed.is_empty() {
-            "ok"
+            Status::NoIndex
+        } else if self.manifest.is_stale_schema() || !self.census.changed.is_empty() {
+            Status::Stale
+        } else if !crate::query::ScipState::of(self.manifest).stale.is_empty() {
+            Status::ScipStale
         } else {
-            "stale"
+            Status::Ok
         }
     }
 }
@@ -357,7 +366,7 @@ impl Report<'_> {
     pub fn json(&self) -> serde_json::Value {
         let (census, manifest) = (self.census, self.manifest);
         serde_json::json!({
-        "status": self.status(),
+        "status": self.status().as_str(),
         "indexed": census.indexed,
         "roots": manifest.roots,
         "writer_version": manifest.writer_version,
@@ -393,24 +402,46 @@ impl Report<'_> {
     }
 }
 
-/// Files the manifest lists whose `mtime` or `size` no longer match — what an
-/// auto-refreshing `query` would re-extract, and what makes an answer stale.
-fn changed_files(root: &std::path::Path, manifest: &Manifest) -> Vec<String> {
+/// Files added, removed or changed since the index — what an auto-refreshing
+/// `query` would extract or drop, and what makes an answer stale.
+///
+/// Changed by the refresh's own rule ([`facts::FileEntry::is_clean`]): a file
+/// touched at or past `indexed_at` is hashed, so a same-second, same-length
+/// edit is seen, and a touched file with the same bytes is not reported.
+fn changed_files(
+    root: &std::path::Path,
+    manifest: &Manifest,
+    found: &[extract::walk::Candidate],
+) -> Vec<String> {
     let mut out = Vec::new();
-    for (path, entry) in &manifest.files {
-        let Ok(meta) = std::fs::metadata(root.join(path)) else {
-            // Gone is changed: its facts are still answering queries.
-            out.push(path.clone());
+    let mut walked = BTreeSet::new();
+    for candidate in found {
+        walked.insert(candidate.path.as_str());
+        let Some(entry) = manifest.files.get(&candidate.path) else {
+            out.push(candidate.path.clone());
             continue;
         };
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs());
-        if !entry.looks_unchanged(mtime, meta.len()) {
+        if entry.is_clean(candidate.mtime, candidate.size, manifest.indexed_at) {
+            continue;
+        }
+        let same = std::fs::read(&candidate.abs)
+            .is_ok_and(|bytes| facts::content_hash(&bytes) == entry.hash);
+        if !same {
+            out.push(candidate.path.clone());
+        }
+    }
+    for (path, entry) in &manifest.files {
+        // Gone is changed: its facts are still answering queries. A file only
+        // SCIP covers is never walked, so it is gone only when it is not there.
+        let gone = if entry.tiers == ["scip"] {
+            !root.join(path).exists()
+        } else {
+            !walked.contains(path.as_str())
+        };
+        if gone {
             out.push(path.clone());
         }
     }
+    out.sort();
     out
 }

@@ -38,6 +38,9 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 /// JSON-RPC's code for parameters that do not fit the method.
 const INVALID_PARAMS: i64 = -32602;
+/// JSON-RPC's code for a failure no status expresses: an I/O error
+/// (`specs/05-surface.md` § MCP).
+const INTERNAL_ERROR: i64 = -32603;
 
 /// The longest line read into memory. A program is a few hundred bytes; this
 /// bounds what one line can cost, not what a query can say.
@@ -141,7 +144,7 @@ fn respond(root: &Path, warm: &mut Warm, line: &[u8]) -> Option<serde_json::Valu
         "tools/list" => ok(&id, &serde_json::json!({ "tools": [tool()] })),
         "tools/call" => match call(root, warm, &params) {
             Ok(result) => ok(&id, &result),
-            Err(message) => error(&id, INVALID_PARAMS, &message),
+            Err((code, message)) => error(&id, code, &message),
         },
         "ping" => ok(&id, &serde_json::json!({})),
         other => error(&id, METHOD_NOT_FOUND, &format!("no method `{other}`")),
@@ -207,15 +210,21 @@ fn call(
     root: &Path,
     warm: &mut Warm,
     params: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, (i64, String)> {
     // Any other name ran `code_query` anyway, which answers a question the
     // caller did not ask under a name that does not exist.
     match params.get("name").and_then(serde_json::Value::as_str) {
         Some(TOOL) => {}
-        Some(other) => return Err(format!("no tool `{other}`; the one tool is `{TOOL}`")),
+        Some(other) => {
+            return Err((
+                INVALID_PARAMS,
+                format!("no tool `{other}`; the one tool is `{TOOL}`"),
+            ));
+        }
         None => {
-            return Err(format!(
-                "a tools/call needs a `name`; the one tool is `{TOOL}`"
+            return Err((
+                INVALID_PARAMS,
+                format!("a tools/call needs a `name`; the one tool is `{TOOL}`"),
             ));
         }
     }
@@ -228,20 +237,24 @@ fn call(
 
     match (program, wants_schema) {
         (Some(_), true) => {
-            return Err("give `query` or `schema`, not both".to_string());
+            return Err((
+                INVALID_PARAMS,
+                "give `query` or `schema`, not both".to_string(),
+            ));
         }
         (None, false) => {
-            return Err(
+            return Err((
+                INVALID_PARAMS,
                 "give `query` (a Datalog program ending in a `?-` goal) or `schema: true`"
                     .to_string(),
-            );
+            ));
         }
         _ => {}
     }
 
     let json = arguments.get("format").and_then(serde_json::Value::as_str) == Some("json");
     if wants_schema {
-        return Ok(schema(root, json));
+        return schema(root, json);
     }
 
     let options = Options {
@@ -266,32 +279,38 @@ fn call(
     };
     let answer = match warm.run(root, program.unwrap_or_default(), &options) {
         Ok(answer) => answer,
-        // An I/O failure the status taxonomy cannot express. Still a tool
-        // result rather than a protocol error: the caller wants the text.
-        Err(e) => return Ok(failed(&format!("codeintel: {e:#}"))),
+        // An I/O failure the status taxonomy cannot express: a JSON-RPC error,
+        // as the CLI exits 2. A tool result needs a status, and the only
+        // candidate, `corrupt`, tells the agent to delete a healthy index.
+        Err(e) => return Err((INTERNAL_ERROR, format!("codeintel: {e:#}"))),
     };
     Ok(wire::tool_result(&answer, json, options.raw))
 }
 
 /// The catalog, which needs no query and works with no index.
-fn schema(root: &Path, json: bool) -> serde_json::Value {
+fn schema(root: &Path, json: bool) -> Result<serde_json::Value, (i64, String)> {
     let census = match facts::Store::open(root, &extract::fingerprint())
-        .map_err(|e| e.to_string())
-        .and_then(|store| Census::of(&store).map_err(|e| e.to_string()))
+        .and_then(|store| Census::of(&store))
     {
         Ok(census) => census,
-        Err(e) => return failed(&format!("codeintel: {e}")),
+        Err(e) => {
+            let text = format!("codeintel: {e}");
+            return match facts::fault(&e) {
+                Some(fault) => Ok(failed(Status::of_fault(fault), &text)),
+                None => Err((INTERNAL_ERROR, text)),
+            };
+        }
     };
     let schema = Schema { census: &census };
     let text = schema.to_string();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": serde_json::json!({
             "status": Status::Ok.as_str(),
             "schema": if json { serde_json::Value::String(text.clone()) } else { serde_json::Value::Null },
         }),
         "isError": false,
-    })
+    }))
 }
 
 /// A tool result that is an error, carrying the text the caller needs.
@@ -299,10 +318,10 @@ fn schema(root: &Path, json: bool) -> serde_json::Value {
 /// `structuredContent` is present here too: the promise is that a consumer
 /// never parses prose to find the status, and an error path is exactly where
 /// it would otherwise have to.
-fn failed(text: &str) -> serde_json::Value {
+fn failed(status: Status, text: &str) -> serde_json::Value {
     serde_json::json!({
         "content": [{ "type": "text", "text": text }],
-        "structuredContent": { "status": Status::Corrupt.as_str(), "hint": text },
+        "structuredContent": { "status": status.as_str(), "hint": text },
         "isError": true,
     })
 }

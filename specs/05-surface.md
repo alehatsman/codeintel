@@ -438,10 +438,17 @@ Index freshness, per-tier. Reports the counts a user needs to trust or distrust
 an answer: files indexed, files changed since index, SCIP tool/coverage/
 staleness/ambiguous columns, anchor rate, unsupported languages, fact counts per relation.
 
-`status: ok` when nothing has changed since the index was written, `stale` when
-something has, `no-index` when there is nothing here. A missing index **exits
+The verdict uses the checks `query` uses, in this order: `no-index` when there
+is nothing here; `stale` when the index was written for another
+`schema_version`; `corrupt` when the store will not load; `stale` when a file
+was added, removed or changed since the index — changed by the racy-clean rule
+of [04-storage.md](04-storage.md) § Manifest, so a same-second, same-length edit
+is hashed and seen; `scip-stale` when an indexed file holds bytes the SCIP
+inputs did not see; `ok` otherwise. `no-index`, `stale` and `scip-stale` **exit
 0**: "there is no index in this directory" is an answer, not a failure of the
-command that reported it.
+command that reported it. `corrupt` exits 2, as it does for `query`. A schema
+mismatch or a store that will not load prints the status and its hint and no
+counts, because there are none it could read.
 
 The unsupported-extension count costs a full walk, which is why it lives here
 and not on every query. It is printed biggest-first, because the number that
@@ -549,6 +556,13 @@ which sent every row two or three times and put a capped MCP result several
 times over `max_result_bytes` while it reported the cap as honoured.
 `content` cannot be the one that shrinks: the 2024-11-05 revision this server
 speaks has no `structuredContent`, and its clients read only `content`.
+
+**An error no status expresses is a JSON-RPC error.** An I/O failure — a full
+disk, a permission error — is `-32603` internal error carrying the message: the
+MCP counterpart of the CLI's exit 2. It is not a tool result saying `corrupt`,
+whose hint is `--rebuild` and would have an agent delete a healthy index.
+`corrupt` and `stale` come only from what `crates/facts` refused
+([04-storage.md](04-storage.md) § Segment format).
 
 ### Response contract
 

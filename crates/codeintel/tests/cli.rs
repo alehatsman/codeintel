@@ -1067,3 +1067,26 @@ fn a_quoted_integer_in_a_derived_rule_is_named_in_the_hint() {
     assert!(!stderr.contains("did you mean"), "{stderr}");
     drop(rows);
 }
+
+/// A read-only checkout cannot open the writer lock. That is a reader that
+/// cannot take it, and it answers from the index as it stands
+/// (`specs/04-storage.md` § Concurrency).
+#[cfg(unix)]
+#[test]
+fn a_lock_that_cannot_be_opened_answers_stale_from_the_index_as_it_stands() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tree();
+    index(dir.path());
+    let lock = dir.path().join(".codeintel/lock");
+    std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    if std::fs::OpenOptions::new().write(true).open(&lock).is_ok() {
+        // Root writes through mode 0444; there is no failure to provoke.
+        return;
+    }
+
+    let (rows, stderr) = query(dir.path(), r#"?- def(S, F, "function", N)."#);
+    assert!(stderr.contains("status=stale"), "{stderr}");
+    assert!(stderr.contains("writer lock"), "{stderr}");
+    assert!(!rows.is_empty(), "the index as it stands still answers");
+}

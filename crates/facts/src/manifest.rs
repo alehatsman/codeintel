@@ -36,6 +36,12 @@ pub struct Manifest {
     pub dict_idx_len: u64,
     /// Incremented by `--rebuild`, which renumbers every atom.
     pub dict_generation: u64,
+    /// The second the last committing refresh that observed every file
+    /// started. A file whose mtime is at or past it may have changed after
+    /// that refresh read it (`specs/04-storage.md` § Manifest). Zero in a
+    /// manifest written before the field existed, which clears nothing.
+    #[serde(default)]
+    pub indexed_at: u64,
     /// SCIP inputs ingested, empty until M3.
     #[serde(default)]
     pub scip: Vec<ScipInput>,
@@ -117,6 +123,18 @@ impl FileEntry {
     #[must_use]
     pub fn looks_unchanged(&self, mtime: u64, size: u64) -> bool {
         self.mtime == mtime && self.size == size
+    }
+
+    /// True when the file can be trusted unchanged without hashing it: `mtime`
+    /// and `size` match, and `mtime` is before `indexed_at`.
+    ///
+    /// mtime has one-second resolution, so an edit in the second a refresh
+    /// read the file, at the same length, leaves both halves as recorded. A
+    /// file touched at or past `indexed_at` is never cleared here — git's
+    /// racy-clean rule (`specs/04-storage.md` § Manifest).
+    #[must_use]
+    pub fn is_clean(&self, mtime: u64, size: u64, indexed_at: u64) -> bool {
+        self.looks_unchanged(mtime, size) && mtime < indexed_at
     }
 
     /// True when the SCIP inputs, the newest of which was written at
@@ -210,6 +228,7 @@ impl Manifest {
             dict_bin_len: 0,
             dict_idx_len: 0,
             dict_generation: 0,
+            indexed_at: 0,
             scip: Vec::new(),
             scip_collisions: 0,
             files: BTreeMap::new(),
@@ -228,12 +247,8 @@ impl Manifest {
             return Ok(None);
         }
         let text = std::fs::read_to_string(&path)?;
-        let manifest = serde_json::from_str(&text).map_err(|e| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("{MANIFEST} is not readable: {e}. Repair with `rm -rf .codeintel`"),
-            )
-        })?;
+        let manifest = serde_json::from_str(&text)
+            .map_err(|e| crate::corrupt(&format!("{MANIFEST} is not readable: {e}")))?;
         Ok(Some(manifest))
     }
 
@@ -354,6 +369,26 @@ mod tests {
         assert!(entry.looks_unchanged(10, 20));
         assert!(!entry.looks_unchanged(11, 20));
         assert!(!entry.looks_unchanged(10, 21));
+    }
+
+    #[test]
+    fn a_file_touched_in_or_after_the_indexing_second_is_never_clean() {
+        let entry = FileEntry {
+            seg: SegName::default(),
+            mtime: 10,
+            size: 20,
+            hash: String::new(),
+            lang: "rust".to_string(),
+            scip_hash: None,
+            tiers: Vec::new(),
+        };
+        assert!(entry.is_clean(10, 20, 11));
+        assert!(!entry.is_clean(10, 20, 10), "the indexing second itself");
+        assert!(
+            !entry.is_clean(10, 20, 0),
+            "a manifest from before indexed_at"
+        );
+        assert!(!entry.is_clean(10, 21, 50));
     }
 
     #[test]

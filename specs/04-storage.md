@@ -96,6 +96,14 @@ The relation table (id → name, arity) lives in `crates/facts` as a compile-tim
 constant, not in the file. Schema changes bump `schema_ver`; a mismatch on open
 is `status: "stale"` with the reindex command, never a silent read.
 
+**A refusal is typed, and an I/O failure is not a refusal.** `crates/facts`
+marks what it refuses: a segment whose `schema_ver` this build does not speak is
+*stale*; a failed checksum, magic, relation table, dictionary or manifest is
+*corrupt*. The host maps those two to `stale` and `corrupt`, and nothing else
+maps to either: a full disk or a permission error is an error the taxonomy does
+not express, never `corrupt`, whose repair hint would have an agent delete a
+healthy index.
+
 Endianness is fixed little-endian and the loader validates alignment. An index
 is not portable across architectures with different `u32` alignment
 requirements — it is a cache, so this is stated, not solved.
@@ -129,6 +137,7 @@ deliberately deferred.
   "dict_bin_len": 40213884,
   "dict_idx_len": 2011240,
   "dict_generation": 3,
+  "indexed_at": 1757000000,
   "scip": [
     { "path": "index.scip", "tool": "scip-typescript 0.4.0",
       "mtime": 1757000000, "size": 40218811, "documents": 812,
@@ -145,8 +154,32 @@ deliberately deferred.
 }
 ```
 
-`hash` is content, `mtime`+`size` is the fast path. A file is unchanged iff
-mtime and size both match; otherwise hash before deciding to re-extract.
+`hash` is content, `mtime`+`size` is the fast path. A file is unchanged without
+hashing iff mtime and size both match **and its mtime is before `indexed_at`**;
+otherwise hash before deciding to re-extract.
+
+**`indexed_at` is the second the last refresh that observed every file
+started** — git's racy-clean rule. mtime has one-second resolution, so an edit
+landing in the same second the refresh read the file, at the same length, leaves
+mtime and size exactly as recorded. The fast path alone would never re-read it,
+and that is the agent's own edit-then-ask loop. A file with `mtime >=
+indexed_at` may have changed after it was read, so it is hashed. It is the
+refresh's *start*, not its commit: a file modified between the read and the
+commit has an mtime at or past the start and stays suspect, where a commit
+timestamp could fall in the next second and clear it. Only a run that walked
+every language and finished records it, like the fingerprint: a `--lang` run or
+one `max_refresh_ms` stopped did not look at every file. A manifest written
+before the field existed reads `0`, and clears nothing until the next commit.
+
+**A racy file costs a hash per refresh, never a write.** The suspects are the
+files touched in or after the second the last committing refresh started —
+normally the file just edited. A refresh that hashes them and finds them
+unchanged writes nothing, so a read stays a read (§ Incremental reindex), and
+`indexed_at` moves on at the next commit. Nor do they force a SCIP re-ingest:
+that decision stays on mtime and size, because a tree checked out and indexed
+within one second would otherwise decode `index.scip` on every read. A racy
+file that did change is re-extracted tier A only and reported `scip-stale` —
+with no re-ingest, the index was not read, and it saw nothing.
 
 **`scip_hash` is the content the SCIP inputs last saw.** At ingest it becomes
 `hash` when the file was not newer than the newest input, or when `hash`
@@ -307,9 +340,12 @@ about the past for those files, and the agent must be able to see that.
   manifest rename leaves the old manifest naming files that all still exist,
   plus orphans — `.tmp` files and segments no manifest names — which the next
   writer removes under the lock before it writes anything.
-- Readers `mmap` segments named by the manifest they loaded. A concurrent
-  reindex may unlink those segments; the mapping stays valid on POSIX until the
-  reader closes it.
+- Readers read the segments named by the manifest they loaded, after
+  releasing the lock. A concurrent refresh may commit and unlink those segments
+  in between. **A named segment that is not there is a race until shown
+  otherwise:** the reader re-reads the manifest and, if it moved, loads the new
+  one — once. If it moved again the answer is `stale`. If it never moved, the
+  manifest names a segment nothing replaced, and that is `corrupt`.
 - Two concurrent writers are undefined behaviour. Take an advisory lock on
   `.codeintel/lock` (`flock`, `LOCK_EX | LOCK_NB`) and fail rather than racing.
   **`query`'s auto-refresh is a writer and takes the same lock** — an MCP server
@@ -325,7 +361,9 @@ about the past for those files, and the agent must be able to see that.
   from a copy another writer has already replaced.
 - A **reader** that cannot take the lock does not fail. It reads the current
   manifest and returns `status: "stale"`. `locked` is for a second writer;
-  telling a reader "locked" is not actionable.
+  telling a reader "locked" is not actionable. A reader that cannot open the
+  lock file at all — a read-only checkout — is the same case: the answer comes
+  from the index as it stands, `stale`, with the reason.
 - Every segment carries a body checksum, validated on open, and `n_rows` is
   bounds-checked against the file length. A truncated or zero-filled segment
   returns `status: "corrupt"` with hint `rm -rf .codeintel && codeintel index .`

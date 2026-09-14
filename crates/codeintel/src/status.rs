@@ -107,6 +107,16 @@ impl Status {
             datalog::Status::InvalidQuery | _ => Self::InvalidQuery,
         }
     }
+
+    /// The status a refusal from `crates/facts` maps to. An I/O failure has
+    /// none (`specs/04-storage.md` § Segment format).
+    #[must_use]
+    pub const fn of_fault(fault: facts::Fault) -> Self {
+        match fault {
+            facts::Fault::Corrupt => Self::Corrupt,
+            facts::Fault::Stale => Self::Stale,
+        }
+    }
 }
 
 impl fmt::Display for Status {
