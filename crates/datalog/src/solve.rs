@@ -18,6 +18,7 @@ use crate::limits::Limits;
 use crate::matcher::Matcher;
 use crate::relation::Relation;
 use crate::symbols::Symbols;
+use crate::vars;
 
 /// A variable binding environment, indexed by [`Term::Var`].
 pub type Env = Vec<Option<Atom>>;
@@ -114,7 +115,7 @@ impl Solver<'_> {
             if let Some(slot) = taken.get_mut(at) {
                 *slot = true;
             }
-            bind_all(lit, &mut bound);
+            vars::binds(lit, &mut bound);
             order.push(at);
         }
 
@@ -135,7 +136,7 @@ impl Solver<'_> {
                 *slot = true;
             }
             if let Some(lit) = body.get(pick) {
-                bind_all(lit, &mut bound);
+                vars::binds(lit, &mut bound);
             }
             order.push(pick);
         }
@@ -166,7 +167,7 @@ impl Solver<'_> {
                 let cols: Vec<String> = columns.iter().map(ToString::to_string).collect();
                 out.push(format!("{i}#{}", cols.join(",")));
             }
-            bind_all(lit, &mut bound);
+            vars::binds(lit, &mut bound);
         }
         out.join(", ")
     }
@@ -188,11 +189,7 @@ impl Solver<'_> {
         let k = pred
             .args
             .iter()
-            .filter(|t| match t {
-                Term::Const(_) => true,
-                Term::Var(v) => bound.contains(v),
-                Term::Wildcard => false,
-            })
+            .filter(|t| vars::is_bound(**t, bound))
             .count()
             .min(31);
         (disconnected(&pred.args, bound), rows >> k)
@@ -681,12 +678,12 @@ fn required_bindings(body: &[Literal]) -> Vec<BTreeSet<u16>> {
             continue;
         };
         let mut inside = BTreeSet::new();
-        goal_vars(goal, &mut inside);
+        vars::goal_vars(goal, &mut inside);
         let mut outside = BTreeSet::new();
         for (j, other) in body.iter().enumerate() {
             if j != i {
-                bind_all(other, &mut outside);
-                filter_vars(other, &mut outside);
+                vars::binds(other, &mut outside);
+                vars::reads(other, &mut outside);
             }
         }
         if let Some(slot) = out.get_mut(i) {
@@ -694,51 +691,6 @@ fn required_bindings(body: &[Literal]) -> Vec<BTreeSet<u16>> {
         }
     }
     out
-}
-
-/// Every variable an aggregate's goal mentions.
-pub(crate) fn goal_vars(goal: &[Literal], out: &mut BTreeSet<u16>) {
-    for lit in goal {
-        bind_all(lit, out);
-        filter_vars(lit, out);
-        if let Literal::Assign {
-            expr: Expr::Count { goal: inner, .. },
-            ..
-        } = lit
-        {
-            goal_vars(inner, out);
-        }
-    }
-}
-
-/// Variables a literal reads but does not bind.
-fn filter_vars(lit: &Literal, out: &mut BTreeSet<u16>) {
-    let mut add = |t: &Term| {
-        if let Term::Var(v) = t {
-            out.insert(*v);
-        }
-    };
-    match lit {
-        Literal::Neg(p) => p.args.iter().for_each(add),
-        Literal::Compare { lhs, rhs, .. } => {
-            add(lhs);
-            add(rhs);
-        }
-        Literal::Str { subject, .. } => add(subject),
-        Literal::Between { lo, hi, .. } => {
-            add(lo);
-            add(hi);
-        }
-        Literal::Assign { expr, .. } => match expr {
-            Expr::Term(t) => add(t),
-            Expr::Arith { lhs, rhs, .. } => {
-                add(lhs);
-                add(rhs);
-            }
-            Expr::Count { .. } => {}
-        },
-        Literal::Pos(_) => {}
-    }
 }
 
 /// True when something is bound and a relation literal shares none of it:
@@ -752,11 +704,7 @@ pub(crate) fn disconnected(args: &[Term], bound: &BTreeSet<u16>) -> bool {
 
 /// True when every input a literal needs is already bound.
 pub(crate) fn runnable(lit: &Literal, bound: &BTreeSet<u16>) -> bool {
-    let has = |t: &Term| match t {
-        Term::Const(_) => true,
-        Term::Var(v) => bound.contains(v),
-        Term::Wildcard => false,
-    };
+    let has = |t: &Term| vars::is_bound(*t, bound);
     match lit {
         Literal::Pos(_) => true,
         Literal::Neg(p) => p.args.iter().all(|t| matches!(t, Term::Wildcard) || has(t)),
@@ -781,11 +729,7 @@ fn indexed_columns(lit: &Literal, bound: &BTreeSet<u16>) -> Vec<usize> {
         Literal::Pos(p) | Literal::Neg(p) => &p.args,
         _ => return Vec::new(),
     };
-    let is_bound = |t: &Term| match t {
-        Term::Const(_) => true,
-        Term::Var(v) => bound.contains(v),
-        Term::Wildcard => false,
-    };
+    let is_bound = |t: &Term| vars::is_bound(*t, bound);
     if args.first().is_some_and(is_bound) {
         return Vec::new();
     }
@@ -795,19 +739,4 @@ fn indexed_columns(lit: &Literal, bound: &BTreeSet<u16>) -> Vec<usize> {
         .filter(|(_, t)| is_bound(t))
         .map(|(c, _)| c)
         .collect()
-}
-
-/// Every variable a literal binds once it has run.
-fn bind_all(lit: &Literal, bound: &mut BTreeSet<u16>) {
-    let mut add = |t: &Term| {
-        if let Term::Var(v) = t {
-            bound.insert(*v);
-        }
-    };
-    match lit {
-        Literal::Pos(p) => p.args.iter().for_each(add),
-        Literal::Between { out, .. } => add(out),
-        Literal::Assign { target, .. } => add(target),
-        Literal::Neg(_) | Literal::Compare { .. } | Literal::Str { .. } => {}
-    }
 }

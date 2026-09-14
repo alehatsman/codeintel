@@ -38,6 +38,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use crate::ast::{Expr, Literal, Pred, Program, Query, Rule};
 use crate::atom::Term;
+use crate::vars;
 
 /// Separator between a predicate and its adornment. Not a legal identifier
 /// character, so a generated name can never collide with a user's.
@@ -134,7 +135,7 @@ impl Xform<'_> {
                 continue;
             };
             let rewritten = self.rewrite(lit, &bound, &body, &query.vars, query.span);
-            bind(lit, &mut bound);
+            vars::binds(lit, &mut bound);
             body.push(rewritten);
         }
         Query {
@@ -294,7 +295,7 @@ impl Xform<'_> {
                     continue;
                 };
                 let rewritten = self.rewrite(lit, &bound, &body, &rule.vars, rule.span);
-                bind(lit, &mut bound);
+                vars::binds(lit, &mut bound);
                 body.push(rewritten);
             }
             self.out.push(Rule {
@@ -333,7 +334,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
     // literal that binds it outside, or the rewrite fails `check` and is
     // dropped. `runnable` alone does not know this — it trusts the written
     // order the checker already approved.
-    let mentioned: Vec<BTreeSet<u16>> = body.iter().map(crate::check::literal_vars).collect();
+    let mentioned: Vec<BTreeSet<u16>> = body.iter().map(vars::vars).collect();
     let waits_on: Vec<BTreeSet<u16>> = body
         .iter()
         .enumerate()
@@ -346,7 +347,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
                 return BTreeSet::new();
             };
             let mut inner = BTreeSet::new();
-            crate::solve::goal_vars(goal, &mut inner);
+            vars::goal_vars(goal, &mut inner);
             let elsewhere: BTreeSet<u16> = mentioned
                 .iter()
                 .enumerate()
@@ -379,11 +380,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
                     !crate::solve::disconnected(&p.args, &bound),
                     p.args
                         .iter()
-                        .filter(|t| match t {
-                            Term::Const(_) => true,
-                            Term::Var(v) => bound.contains(v),
-                            Term::Wildcard => false,
-                        })
+                        .filter(|t| vars::is_bound(**t, &bound))
                         .count(),
                 ),
                 Literal::Assign {
@@ -401,7 +398,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
             *slot = true;
         }
         if let Some(lit) = body.get(pick) {
-            bind(lit, &mut bound);
+            vars::binds(lit, &mut bound);
         }
         out.push(pick);
     }
@@ -417,13 +414,7 @@ fn order(body: &[Literal], initially: &BTreeSet<u16>) -> Vec<usize> {
 
 /// The bound/free pattern of a literal's arguments under `bound`.
 fn adorn(args: &[Term], bound: &BTreeSet<u16>) -> Vec<bool> {
-    args.iter()
-        .map(|t| match t {
-            Term::Const(_) => true,
-            Term::Var(v) => bound.contains(v),
-            Term::Wildcard => false,
-        })
-        .collect()
+    args.iter().map(|t| vars::is_bound(*t, bound)).collect()
 }
 
 /// The arguments at bound positions, in order.
@@ -447,19 +438,4 @@ fn adorned_name(name: &str, adornment: &[bool]) -> String {
 
 fn magic_name(name: &str, adornment: &[bool]) -> String {
     format!("{MAGIC}{}", adorned_name(name, adornment))
-}
-
-/// Variables a literal binds once it has run. Mirrors the planner's rule.
-fn bind(lit: &Literal, bound: &mut BTreeSet<u16>) {
-    let mut add = |t: &Term| {
-        if let Term::Var(v) = t {
-            bound.insert(*v);
-        }
-    };
-    match lit {
-        Literal::Pos(p) => p.args.iter().for_each(add),
-        Literal::Between { out, .. } => add(out),
-        Literal::Assign { target, .. } => add(target),
-        Literal::Neg(_) | Literal::Compare { .. } | Literal::Str { .. } => {}
-    }
 }
