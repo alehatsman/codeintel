@@ -271,6 +271,21 @@ result is not counted — its `id` is the client's own bytes echoed back. The cu
 is measured with `elapsed_ms` at its widest, so which rows survive does not
 depend on how fast the run was (invariant 8).
 
+**The budget bounds the whole answer, not only its rows.** Dropping rows cannot
+shrink an answer whose envelope alone is over budget, and the one part of an
+envelope that grows without the caller's help is the `hint`. So after the row
+cut, every answer on every surface — a diagnostic and a `no-index` included —
+is measured again, and if it is still over, the hint is cut to the longest
+prefix that fits, on a character boundary, ending in
+` ... [hint cut to fit max_result_bytes]`. `status`, `truncated` and `cap` are
+never cut: a consumer branches on them and an answer without them is not an
+answer (invariant 6). Nothing else is cut either. `columns` echoes the goal the
+caller wrote and `stats` is bounded by the rule set, so an answer still over
+budget after its hint is cut is one whose own query text paid for it. A hint
+cut does not set `truncated`, which means rows were dropped; the marker in the
+hint says what was cut. On the CLI text surface the hint goes to stderr and is
+not counted, so it is never cut there.
+
 For that to be true the engine's own cap must not be the one that fires. The
 rendered form is **shorter** than the raw one — a ~68-character `SymId` becomes
 `name path:line` — so an engine holding the printed budget would truncate rows
@@ -556,6 +571,18 @@ which sent every row two or three times and put a capped MCP result several
 times over `max_result_bytes` while it reported the cap as honoured.
 `content` cannot be the one that shrinks: the 2024-11-05 revision this server
 speaks has no `structuredContent`, and its clients read only `content`.
+
+**The catalog travels once too.** `schema: true` puts the catalog in `content`
+in the format asked for — the text `codeintel schema` prints, or, with
+`format: "json"`, the document `codeintel schema --format json` prints — and
+`structuredContent` is `{ "status": "ok" }`. It used to repeat the whole text
+in `structuredContent.schema`: ~5.7 KB twice, on the call every session starts
+with.
+
+**Both surfaces print one answer.** A ground goal that holds prints `true` in
+an MCP text result exactly as on the CLI; one function writes the rows for
+both, so the two cannot drift again. The MCP result printed a blank line — the
+answer nobody can see, which the CLI had already stopped printing.
 
 **An error no status expresses is a JSON-RPC error.** An I/O failure — a full
 disk, a permission error — is `-32603` internal error carrying the message: the

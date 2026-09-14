@@ -302,13 +302,17 @@ fn schema(root: &Path, json: bool) -> Result<serde_json::Value, (i64, String)> {
         }
     };
     let schema = Schema { census: &census };
-    let text = schema.to_string();
+    // The catalog travels once, in `content`, in the format asked for — what
+    // `codeintel schema` prints in that format. `structuredContent` is the
+    // status alone, as for a query (`specs/05-surface.md` § MCP).
+    let body = if json {
+        wire::schema_json(&schema, &census).to_string()
+    } else {
+        schema.to_string()
+    };
     Ok(serde_json::json!({
-        "content": [{ "type": "text", "text": text }],
-        "structuredContent": serde_json::json!({
-            "status": Status::Ok.as_str(),
-            "schema": if json { serde_json::Value::String(text.clone()) } else { serde_json::Value::Null },
-        }),
+        "content": [{ "type": "text", "text": body }],
+        "structuredContent": { "status": Status::Ok.as_str() },
         "isError": false,
     }))
 }

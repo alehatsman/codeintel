@@ -746,6 +746,62 @@ fn an_mcp_result_fits_max_result_bytes_as_sent() {
     assert_eq!(body["display"].as_array().map(Vec::len), Some(kept));
 }
 
+/// One answer, one text: a ground goal that holds prints `true` in an MCP
+/// result exactly as on the CLI, not a blank line nobody can see (#51).
+#[test]
+fn an_mcp_ground_goal_prints_true_like_the_cli() {
+    let dir = escaping_tree(3);
+    run(dir.path(), &["index", "."]);
+    let call = |id: u64, goal: &str| {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"code_query","arguments":{"query":goal}}})
+    };
+    let out = rpc(
+        dir.path(),
+        &[
+            call(1, "?- def(_, _, _, _)."),
+            call(2, r#"?- def(_, _, _, "no_such_name_anywhere")."#),
+        ],
+    );
+    let text = |i: usize| {
+        out[i]["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text")
+            .to_string()
+    };
+    assert!(text(0).starts_with("true\nstatus=ok\n"), "{}", text(0));
+    assert!(text(1).starts_with("status=ok\n"), "{}", text(1));
+}
+
+/// The catalog travels once over MCP, in the format asked for (#51).
+#[test]
+fn the_mcp_schema_is_sent_once_in_the_format_asked_for() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let call = |id: u64, format: &str| {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"code_query","arguments":{"schema":true,"format":format}}})
+    };
+    let out = rpc(dir.path(), &[call(1, "text"), call(2, "json")]);
+    assert_eq!(out.len(), 2, "{out:?}");
+    for response in &out {
+        let envelope = &response["result"]["structuredContent"];
+        assert_eq!(envelope["status"], "ok", "{envelope}");
+        assert!(envelope.get("schema").is_none(), "sent twice: {envelope}");
+    }
+    let text = out[0]["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text");
+    assert!(text.contains("innermost_at"), "{text}");
+    let doc: serde_json::Value = serde_json::from_str(
+        out[1]["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text"),
+    )
+    .expect("the json catalog parses");
+    assert!(doc["relations"].is_array(), "{doc}");
+    assert_eq!(doc["text"].as_str(), Some(text));
+}
+
 /// The same on the CLI's JSON: both notations of every row, escaped, are what
 /// stdout carries, so they are what the cap measures.
 #[test]

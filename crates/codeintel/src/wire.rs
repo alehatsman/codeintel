@@ -32,7 +32,7 @@ impl Wire {
     #[must_use]
     pub fn bytes(self, answer: &Answer, raw: bool) -> usize {
         match self {
-            Self::Text => answer.rows.iter().map(|r| r.line(raw).len() + 1).sum(),
+            Self::Text => body(answer, raw).len(),
             Self::Json => json(answer).to_string().len() + 1,
             Self::McpText | Self::McpJson => tool_result(answer, self == Self::McpJson, raw)
                 .to_string()
@@ -101,11 +101,7 @@ fn object(answer: &Answer, with_rows: bool) -> serde_json::Value {
 /// and in an MCP result there is no stderr to put it on.
 #[must_use]
 pub fn text(answer: &Answer, raw: bool) -> String {
-    let mut out = String::new();
-    for row in &answer.rows {
-        out.push_str(&row.line(raw));
-        out.push('\n');
-    }
+    let mut out = body(answer, raw);
     out.push_str("status=");
     out.push_str(answer.status.as_str());
     out.push('\n');
@@ -115,6 +111,76 @@ pub fn text(answer: &Answer, raw: bool) -> String {
         out.push('\n');
     }
     out
+}
+
+/// The rows as stdout carries them: one per line, or `true` for a ground goal
+/// that holds.
+///
+/// A ground goal has no columns: truth is one empty row and falsehood is none
+/// (`specs/03-datalog.md` § Evaluation). Printed literally that is a bare
+/// newline versus nothing — an answer no one can see. The CLI and an MCP text
+/// result both print through here, so they print the same answer
+/// (`specs/05-surface.md` § MCP).
+#[must_use]
+pub fn body(answer: &Answer, raw: bool) -> String {
+    if answer.columns.is_empty() && !answer.rows.is_empty() {
+        return "true\n".to_string();
+    }
+    let mut out = String::new();
+    for row in &answer.rows {
+        out.push_str(&row.line(raw));
+        out.push('\n');
+    }
+    out
+}
+
+/// The catalog as one JSON document: what `codeintel schema --format json`
+/// prints and what an MCP `schema: true` call with `format: "json"` carries.
+///
+/// The counts go in structurally as well as inside `text`. The whole argument
+/// for the text form is that a value at 0 is a value not to query — and a
+/// consumer that has to regex prose to learn that is the same defect `query`
+/// has when `display` is the only thing on offer.
+#[must_use]
+pub fn schema_json(
+    catalog: &crate::schema::Schema<'_>,
+    census: &crate::census::Census,
+) -> serde_json::Value {
+    serde_json::json!({
+        "text": catalog.to_string(),
+        "indexed": census.indexed,
+        "rules": crate::schema::rules(crate::schema::STDLIB)
+            .iter()
+            .map(|r| serde_json::json!({ "head": r.head, "doc": r.doc }))
+            .collect::<Vec<_>>(),
+        "relations": facts::RELATIONS
+            .iter()
+            .map(|rel| serde_json::json!({
+                "name": rel.name,
+                "args": crate::schema::signature(rel.name).0,
+                "rows": census.rows(rel.name),
+            }))
+            .collect::<Vec<_>>(),
+        "kinds": counted(extract::lang::KINDS, &census.kinds),
+        "roles": counted(extract::lang::ROLES, &census.roles),
+    })
+}
+
+/// A closed vocabulary with this index's count against each value, zeros
+/// included — a value at 0 is a value not to query.
+fn counted(
+    vocabulary: &[&str],
+    counts: &std::collections::BTreeMap<String, usize>,
+) -> serde_json::Value {
+    serde_json::Value::Object(
+        vocabulary
+            .iter()
+            .map(|name| {
+                let n = counts.get(*name).copied().unwrap_or(0);
+                ((*name).to_string(), serde_json::json!(n))
+            })
+            .collect(),
+    )
 }
 
 /// One `code_query` result.

@@ -11,7 +11,7 @@ use codeintel::Status;
 use codeintel::census::{Census, Report};
 use codeintel::index::{self, Plan};
 use codeintel::query::{self, Options};
-use codeintel::schema::{self, Schema};
+use codeintel::schema::Schema;
 use codeintel::wire::{self, Wire};
 use facts::{Lock, Store};
 
@@ -168,50 +168,9 @@ fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
     let schema = Schema { census: &census };
     match format {
         Format::Text => print!("{schema}"),
-        // The counts go in structurally as well as inside `text`. The whole
-        // argument for the text form is that a value at 0 is a value not to
-        // query — and a consumer that has to regex prose to learn that is the
-        // same defect `query` has when `display` is the only thing on offer.
-        Format::Json => println!(
-            "{}",
-            serde_json::json!({
-                "text": schema.to_string(),
-                "indexed": census.indexed,
-                "rules": schema::rules(schema::STDLIB)
-                    .iter()
-                    .map(|r| serde_json::json!({ "head": r.head, "doc": r.doc }))
-                    .collect::<Vec<_>>(),
-                "relations": facts::RELATIONS
-                    .iter()
-                    .map(|rel| serde_json::json!({
-                        "name": rel.name,
-                        "args": schema::signature(rel.name).0,
-                        "rows": census.rows(rel.name),
-                    }))
-                    .collect::<Vec<_>>(),
-                "kinds": counted(extract::lang::KINDS, &census.kinds),
-                "roles": counted(extract::lang::ROLES, &census.roles),
-            })
-        ),
+        Format::Json => println!("{}", wire::schema_json(&schema, &census)),
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// A closed vocabulary with this index's count against each value, zeros
-/// included — a value at 0 is a value not to query.
-fn counted(
-    vocabulary: &[&str],
-    counts: &std::collections::BTreeMap<String, usize>,
-) -> serde_json::Value {
-    serde_json::Value::Object(
-        vocabulary
-            .iter()
-            .map(|name| {
-                let n = counts.get(*name).copied().unwrap_or(0);
-                ((*name).to_string(), serde_json::json!(n))
-            })
-            .collect(),
-    )
 }
 
 /// Index freshness and per-language counts. `--format json` is the bug-report
@@ -483,17 +442,9 @@ fn query_cmd(
     match format {
         Format::Json => println!("{}", wire::json(&answer)),
         Format::Text => {
-            // A ground goal has no columns: truth is one empty row and
-            // falsehood is none (`specs/03-datalog.md` § Evaluation). Printed
-            // literally that is a bare newline versus nothing — an answer no
-            // one can see. Say it.
-            if answer.columns.is_empty() && !answer.rows.is_empty() {
-                println!("true");
-            } else {
-                for row in &answer.rows {
-                    println!("{}", row.line(options.raw));
-                }
-            }
+            // The same rows an MCP result carries, `true` for a ground goal
+            // included: one function writes both (`specs/05-surface.md` § MCP).
+            print!("{}", wire::body(&answer, options.raw));
             // The status goes to stderr so that stdout is exactly the rows —
             // but it is never omitted, because `ok` with zero rows and a
             // missing index must be distinguishable without reading prose.
