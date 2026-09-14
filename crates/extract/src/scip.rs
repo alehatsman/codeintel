@@ -164,16 +164,24 @@ pub struct Ingest {
     /// not a thing SCIP states — but the set of symbols it defines is, exactly,
     /// so the complement needs no guess.
     pub externs: BTreeMap<String, (String, String, String)>,
-    /// Symbols this index defines in more than one document.
+    /// Symbols the anchor join refuses: defined in more than one document,
+    /// or defined at a position another symbol is also defined at.
     ///
     /// rust-analyzer keys symbols by package, not by cargo target, so
     /// `crate/` and `main().` are each defined once per binary, test and
     /// example target. One `SymId` with two definitions breaks every rule
     /// that assumes one `def` per symbol — `at/3` cross-multiplies,
     /// `innermost_at` answers from the wrong file — so the anchor join
-    /// refuses them and tier A keeps its own identity
-    /// (`specs/02-extraction.md` § The anchor join).
+    /// refuses them and tier A keeps its own identity. Two symbols at one
+    /// name token are the same problem from the other side: an anchor holds
+    /// one identity, and taking the last one read made the answer depend on
+    /// input order (`specs/02-extraction.md` § The anchor join).
     pub collisions: BTreeSet<String>,
+    /// Every symbol the join will emit a `def` for: defined by some document
+    /// and not in [`Self::collisions`]. The set parent precedence rules 1 and
+    /// 2 check against (`specs/02-extraction.md` § Parent precedence), computed
+    /// once here and once more after a merge, never per file.
+    pub known: BTreeSet<String>,
     /// Documents skipped, with the reason. Never silent: an approximate column
     /// breaks every edit built on it, so a document we cannot place exactly is
     /// dropped and reported (`specs/02-extraction.md` § Position normalization).
@@ -226,36 +234,52 @@ impl Ingest {
         for info in &index.external_symbols {
             package_of(&info.symbol, &mut candidates);
         }
-        let defined: BTreeSet<&str> = out
-            .docs
-            .values()
-            .flat_map(|d| d.defs.iter().map(|def| def.symbol.as_str()))
-            .collect();
-        out.externs = candidates
-            .into_iter()
-            .filter(|(symbol, _)| !defined.contains(symbol.as_str()))
-            .collect();
-        out.recount_collisions();
+        out.externs = candidates;
+        out.recount();
         out
     }
 
-    /// Recompute [`Self::collisions`] from the documents held now. Called
-    /// after every merge of indexes, since a collision can span two.
-    pub fn recount_collisions(&mut self) {
+    /// Recompute what depends on the whole set of documents held now:
+    /// [`Self::collisions`], [`Self::known`] and [`Self::externs`]. Called once
+    /// per ingest and once after every merge of indexes — a collision can span
+    /// two inputs, and a symbol one input only references may be defined by
+    /// the other (`specs/02-extraction.md` § Acquisition).
+    pub fn recount(&mut self) {
         let mut documents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        let mut collisions = BTreeSet::new();
         for (path, doc) in &self.docs {
+            // Two symbols defined at one name token: neither can be the
+            // anchor there, so both are refused. The same symbol twice at one
+            // position is one definition.
+            let mut at: BTreeMap<(u32, u32), &str> = BTreeMap::new();
             for def in &doc.defs {
                 documents
                     .entry(def.symbol.as_str())
                     .or_default()
                     .insert(path.as_str());
+                if let Some(other) = at.insert((def.line, def.col), def.symbol.as_str())
+                    && other != def.symbol
+                {
+                    collisions.insert(other.to_string());
+                    collisions.insert(def.symbol.clone());
+                }
             }
         }
-        self.collisions = documents
-            .into_iter()
-            .filter(|(_, in_docs)| in_docs.len() > 1)
-            .map(|(symbol, _)| symbol.to_string())
+        collisions.extend(
+            documents
+                .iter()
+                .filter(|(_, in_docs)| in_docs.len() > 1)
+                .map(|(symbol, _)| (*symbol).to_string()),
+        );
+        self.known = documents
+            .keys()
+            .filter(|symbol| !collisions.contains(**symbol))
+            .map(|symbol| (*symbol).to_string())
             .collect();
+        self.collisions = collisions;
+        // Not defined by any document is a statement about the whole merge.
+        self.externs
+            .retain(|symbol, _| !documents.contains_key(symbol.as_str()));
     }
 
     fn document(
@@ -441,7 +465,18 @@ fn name_of(info: &SymbolInformation) -> String {
     if !info.display_name.is_empty() {
         return info.display_name.clone();
     }
-    scip::symbol::parse_symbol(&info.symbol)
+    descriptor_name(&info.symbol)
+}
+
+/// The name of a symbol's final descriptor, `""` only for a string that is
+/// not a SCIP symbol.
+///
+/// Also what names a definition occurrence the indexer wrote no
+/// `SymbolInformation` for at all, which is not the same gap as an empty
+/// `display_name` and was left as `""` (#47).
+#[must_use]
+pub fn descriptor_name(symbol: &str) -> String {
+    scip::symbol::parse_symbol(symbol)
         .ok()
         .and_then(|parsed| parsed.descriptors.last().map(|d| d.name.clone()))
         .unwrap_or_default()

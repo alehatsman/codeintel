@@ -360,6 +360,14 @@ one index they are not always unique across *documents* — rust-analyzer keys b
 package, not cargo target, so `crate/` and `main().` are defined once per
 binary, test and example — and § The anchor join says what happens then.
 
+Three sets are **recomputed over the merge**, never summed from the inputs:
+the collisions (a symbol two inputs each define once is a collision), the
+symbols the join may adopt (§ Parent precedence), and `extern`. "Not defined
+by any document" is a statement about the whole merge: a symbol `a.scip`
+only references and `b.scip` defines is a definition, and reading it as
+`extern` because `a.scip` alone could not see its definition made one symbol
+both `def` and `extern` (#47).
+
 ### Ingest
 
 From `scip.proto` (field names verbatim):
@@ -369,7 +377,7 @@ From `scip.proto` (field names verbatim):
 | `Document.relative_path`, `.language` | `file(F, Lang)` — `Lang` lowercased from the `Language` enum |
 | `Occurrence` with `symbol_roles & Definition` | a definition site; `symbol` → `SymId` |
 | `SymbolInformation.kind` | `Kind`, via the mapping table below |
-| `SymbolInformation.display_name`, else the name of the symbol's final descriptor | `Name`. `scip-python` writes no `display_name` for a parameter, an attribute or a module; the descriptor grammar is mandatory and the name is written in it, so reading it is not a guess. The kind is not read the same way: a `.` descriptor is a field, a variable or a constant, and the suffix does not say which |
+| `SymbolInformation.display_name`, else the name of the symbol's final descriptor | `Name`. `scip-python` writes no `display_name` for a parameter, an attribute or a module; the descriptor grammar is mandatory and the name is written in it, so reading it is not a guess. A definition occurrence with no `SymbolInformation` at all is named the same way, from its own symbol string; it is never `""` (#47). The kind is not read the same way: a `.` descriptor is a field, a variable or a constant, and the suffix does not say which |
 | symbol-string descriptor prefix, else `SymbolInformation.enclosing_symbol` | `parent(S, Owner)` — replaces tier A's row, see § Parent precedence |
 | `SymbolInformation.documentation[]` | `def_doc` (if tier A did not supply one) |
 | `SymbolInformation.signature_documentation.text` | `def_sig` (if tier A did not supply one) |
@@ -483,7 +491,13 @@ the **semantic owner**, resolved by a fixed order
    is the parent. Preferred because the descriptor grammar is mandatory, so
    every indexer supplies it. The existence check is not optional: a Go method
    truncates to a type the index may not define, and a `parent` pointing at a
-   symbol nothing defines is worse than no row at all.
+   symbol nothing defines is worse than no row at all. "Has" means **the join
+   will emit a `def` for it**: the set is every symbol the index defines, less
+   the ones the join refuses (§ The anchor join: defined in two documents, or
+   two symbols at one position). A refused symbol keeps no `def` row under
+   that name, so an owner check that counted it produced exactly the dangling
+   `parent` the check exists to prevent. The set is computed once per ingest
+   and once more after a merge, not per file.
 2. Else `SymbolInformation.enclosing_symbol`, which is how SCIP `local` symbols
    get an owner — subject to the same existence check.
 3. Else tier A's answer — a resolved `@owner` where the language captured one
@@ -566,6 +580,15 @@ keeps its tier-A `local` symbol, and `status` reports how many were refused.
 Their `scip_ref` rows stay — they are facts — and join to nothing. Rekeying
 them by document, or matching by name instead, would be the extractor deciding
 what the indexer did not (invariant 1); the fix belongs upstream.
+
+**Two symbols defined at one identifier position are refused the same way.**
+An anchor is keyed by the position of the name token, so a position can carry
+one identity; a second symbol there is either the indexer describing one
+declaration twice or a document two inputs both describe, and picking the
+last one read made `--scip a --scip b` and `--scip b --scip a` adopt different
+identities from the same files. Both symbols are refused, counted with the
+collisions, and excluded from the set rule 1 checks against. The same symbol
+occurring twice at one position is one definition and is not a conflict.
 
 **A file the SCIP inputs did not see is not joined** ([04-storage.md](04-storage.md)
 § Manifest, `scip_hash`): tier B emits nothing for it, and it is extracted as
