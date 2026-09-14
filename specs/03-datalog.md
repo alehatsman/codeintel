@@ -147,6 +147,23 @@ topological order; within a stratum, semi-naive to fixpoint.
 
 This rejects `p(X) :- q(X), !p(X).` and accepts everything in `stdlib.dl`.
 
+**A stratum is a level, not a strongly connected component.** Stratification
+requires only that a predicate be evaluated strictly after anything it negates,
+so two predicates that do not negate each other share a stratum however many
+there are. A component's level is the longest negative-edge path reaching it: a
+positive dependency needs the same level or lower, a negative one strictly
+lower.
+
+This is stated because the first implementation gave every component its own
+stratum. That is a valid evaluation order and the most wasteful one, and it
+quietly turned `max_strata` into a cap on how many derived predicates a program
+may hold. `stdlib.dl` spent 39 of 64 on its own, and `--rules` — the documented
+home for a repository's conformance rules ([05-surface.md](05-surface.md)) —
+spent one more per rule, so **26 independent conformance rules made every query
+fail at planning**, including queries that touched none of them. `max_strata`
+had already been raised 32 → 64 once for a version of the same reason; the
+number was never what was wrong.
+
 ---
 
 ## Engine
@@ -423,9 +440,16 @@ A rewrite over the limit is dropped and the program as written runs: the
 rewrite is a performance step, and may not turn a query within budget into a
 rejected one.
 
-`max_strata` was 32 in an earlier draft. `rules/stdlib.dl` stratifies into 37,
+`max_strata` was 32 in an earlier draft. `rules/stdlib.dl` stratified into 37,
 so that default rejected every query against the shipped standard library: the
 limit had been set against an imagined rule set rather than the real one.
+
+Raising it to 64 treated the symptom. What made the stdlib 37 strata deep was
+one stratum per strongly connected component — see § Stratification — so the
+figure measured predicate *count*, not negation depth, and any repository with
+enough conformance rules hit the same wall from the other side. With levels,
+`max_strata` measures what its name says, and 64 is a depth no real program
+approaches.
 
 **`max_regex_steps` is gone with the hand-rolled matcher.** A step budget is
 what a backtracker needs to bound catastrophic patterns; `regex` is linear-time

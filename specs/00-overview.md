@@ -124,13 +124,29 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 - **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
   Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
 - **Base relations: ≤ 16.** Currently 15 ([01-facts.md](01-facts.md)).
-- **`codeintel schema` output: ≤ 5,700 characters, with the rule list
-  complete.** This is the budget that binds, and it is the only one that is
-  measured rather than declared. Every rule must appear in `schema` with its
-  signature and a one-line doc, so the rule list pays for itself in the one
-  currency that matters: whether an agent can read the whole vocabulary before
-  it starts working. Flags do not cost a verb, but a flag needing a paragraph
-  here spends this.
+- **`codeintel schema` output: ≤ 10,000 characters, with the rule list
+  complete.** Every rule must appear in `schema` with its signature and a
+  one-line doc, so the rule list pays for itself in the one currency that
+  matters: whether an agent can read the whole vocabulary before it starts
+  working. Flags do not cost a verb, but a flag needing a paragraph here spends
+  this.
+
+  **This budget was 5,700 and did not bind.** It called itself "the only one
+  that is measured rather than declared", and the measurement was taken against
+  `tests/fixtures/rust` — twelve files of one language. `schema` embeds live
+  per-kind and per-language counts, so its length scales with the index it
+  describes: the same binary renders 5,688 characters there and **5,788 on this
+  repository**, over a ceiling CI reported green on every commit. A number
+  measured only on the smallest possible input is declared, not measured, and
+  this one had been wearing the other word.
+
+  10,000 is therefore **headroom, not a budget**: it catches a change that
+  doubles this text and nothing subtler. Restoring a ceiling that binds means
+  measuring a realistic index and cutting copy until it fits — the copy is what
+  gives, because the rule list must stay complete — and that work is not done
+  here. Until it is, the statement in [05-surface.md](05-surface.md) § `schema`
+  is what binds a human reviewer, and the number below binds nothing but a
+  runaway.
 
   **There is deliberately no cap on the number of rules.** There was one — 24,
   then 40 — and it was wrong twice, in the same way both times. It shipped at 24

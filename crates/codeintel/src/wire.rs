@@ -68,14 +68,19 @@ pub fn json(answer: &Answer) -> serde_json::Value {
     map.insert("hint".into(), serde_json::json!(answer.hint));
     map.insert(
         "stats".into(),
+        // No `elapsed_ms`. It is the one field that cannot be a function of the
+        // repo state and the query, and invariant 8 says the same repo state and
+        // the same query produce byte-identical output. The CLI prints it on
+        // stderr, beside `status=`, where a human debugging a slow query wants
+        // it and no consumer is diffing.
         serde_json::json!({
             "derived": answer.derived,
-            "elapsed_ms": answer.elapsed_ms,
             "refreshed": answer.refreshed,
             "transformed": answer.transformed,
             "demand": answer.demand,
             "depends": answer.depends,
             "shadowed": answer.shadowed,
+            "widened": answer.widened,
         }),
     );
     serde_json::Value::Object(map)

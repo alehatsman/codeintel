@@ -1090,3 +1090,248 @@ fn a_lock_that_cannot_be_opened_answers_stale_from_the_index_as_it_stands() {
     assert!(stderr.contains("writer lock"), "{stderr}");
     assert!(!rows.is_empty(), "the index as it stands still answers");
 }
+
+/// A reader that closes the pipe is not a failure of this command.
+///
+/// `codeintel query ... | head` is the most ordinary thing a caller does with
+/// row output, and the `print!` family answers EPIPE by panicking — so the tool
+/// printed a Rust backtrace at the one moment it had done nothing wrong.
+///
+/// The output has to exceed the pipe buffer (64 KiB on macOS, 64 KiB on Linux)
+/// or the write completes into the buffer and EPIPE never fires. The fixture is
+/// far too small for that, so this generates a tree big enough that the write
+/// is still in progress when `head` exits.
+#[cfg(unix)]
+#[test]
+fn a_closed_pipe_is_not_a_panic() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).expect("mkdir");
+    // ~4,000 definitions with long names: comfortably past any pipe buffer.
+    let mut body = String::new();
+    for i in 0..4_000 {
+        use std::fmt::Write as _;
+        writeln!(
+            body,
+            "pub fn a_function_with_a_deliberately_long_name_{i:05}() -> u32 {{ {i} }}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    std::fs::write(src.join("lib.rs"), body).expect("write");
+    let out = run(dir.path(), &["index", "."]);
+    assert!(out.status.success(), "{:?}", out.status);
+
+    for args in [
+        r#"query|?- def(S, F, "function", N).|--no-refresh"#,
+        r#"query|?- def(S, F, "function", N).|--no-refresh|--format|json"#,
+    ] {
+        let args: Vec<&str> = args.split('|').collect();
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', r"'\''")))
+            .collect();
+        let script = format!("{} {} | head -1", binary(), quoted.join(" "));
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .current_dir(dir.path())
+            .output()
+            .expect("sh runs");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("panicked at"),
+            "a closed pipe panicked: {script}\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("Broken pipe"),
+            "a closed pipe was reported as an error: {script}\n{stderr}"
+        );
+    }
+}
+
+/// The same repo state and the same query produce byte-identical output
+/// (`specs/00-overview.md` invariant 8).
+///
+/// This ran for a long time without being asserted end to end, and it was
+/// false: `stats.elapsed_ms` travelled in the JSON body, so forty runs of one
+/// query over one unchanged tree produced three distinct payloads. The engine
+/// had already noticed — `query::sent` measured the byte cap with `elapsed_ms`
+/// pinned at `u64::MAX` so the *cut point* would not move — but the field was
+/// still serialized, so the bytes around a stable cut were not stable.
+///
+/// Text and JSON both, because they are separate render paths.
+#[test]
+fn the_same_query_over_the_same_tree_is_byte_identical() {
+    let dir = tree();
+    index(dir.path());
+
+    for args in [
+        &[
+            "query",
+            r#"?- def(S, F, "function", N)."#,
+            "--no-refresh",
+            "--format",
+            "json",
+        ][..],
+        &[
+            "query",
+            "?- within(C, P).",
+            "--no-refresh",
+            "--format",
+            "json",
+        ][..],
+        &["query", "?- within(C, P).", "--no-refresh"][..],
+        &["schema", "--format", "json"][..],
+    ] {
+        let first = run(dir.path(), args);
+        assert!(
+            first.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&first.stderr)
+        );
+        for i in 1..24 {
+            let again = run(dir.path(), args);
+            assert_eq!(
+                String::from_utf8_lossy(&first.stdout),
+                String::from_utf8_lossy(&again.stdout),
+                "run {i} of {args:?} differs from run 0"
+            );
+        }
+    }
+}
+
+/// No timing travels in the answer, on any surface.
+///
+/// The byte-identical test above cannot catch this on its own: the fixture is
+/// small enough that `elapsed_ms` is 0 on every run, so the field could return
+/// tomorrow and that test would stay green. It only showed up on a real tree,
+/// where forty runs of one query gave three distinct payloads. So this names
+/// the field.
+#[test]
+fn no_timing_travels_in_the_answer() {
+    let dir = tree();
+    index(dir.path());
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            r#"?- def(S, F, "function", N)."#,
+            "--no-refresh",
+            "--format",
+            "json",
+        ],
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    let stats = body.get("stats").and_then(serde_json::Value::as_object);
+    let stats = stats.expect("stats is an object");
+    assert!(
+        !stats.contains_key("elapsed_ms"),
+        "elapsed_ms is back in the response; it cannot be a function of the repo \
+         state and the query, so it breaks invariant 8: {stats:?}"
+    );
+    // The diagnostic is not lost, it moved to where nothing diffs it.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("elapsed_ms="), "{stderr}");
+}
+
+/// A rule file that adds clauses to a stdlib predicate says so.
+///
+/// `--rules` is additive — a predicate is the union of its clauses — and it is
+/// where a repository keeps its conformance rules, so a collision with a
+/// stdlib name is an accident rather than an intent to replace. Only *shadowing*
+/// was reported, which is the mechanism a rule file cannot use.
+///
+/// The effect is not small. Three clauses naming `callable/1` move every rule
+/// downstream of it, and this answered `status: ok` with `shadowed: []`.
+#[test]
+fn a_rule_file_that_widens_a_stdlib_predicate_is_never_silent() {
+    let dir = tree();
+    index(dir.path());
+
+    let collides = dir.path().join("collides.dl");
+    std::fs::write(
+        &collides,
+        "%% callable(K) -- a conformance file that happens to name a stdlib rule.\n\
+         callable(\"struct\").\ncallable(\"field\").\ncallable(\"constant\").\n",
+    )
+    .expect("write");
+
+    let stats = |args: &[&str]| -> serde_json::Value {
+        let out = run(dir.path(), args);
+        let json: serde_json::Value =
+            serde_json::from_slice(&out.stdout).expect("stdout is one JSON object");
+        json["stats"].clone()
+    };
+
+    let base = run(
+        dir.path(),
+        &[
+            "query",
+            "?- entrypoint(S).",
+            "--no-refresh",
+            "--format",
+            "json",
+        ],
+    );
+    let base: serde_json::Value = serde_json::from_slice(&base.stdout).expect("JSON");
+    let before = base["rows"].as_array().expect("rows").len();
+    assert!(
+        base["stats"]["widened"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "nothing was loaded, so nothing was widened: {base}"
+    );
+
+    let out = run(
+        dir.path(),
+        &[
+            "query",
+            "?- entrypoint(S).",
+            "--no-refresh",
+            "--format",
+            "json",
+            "--rules",
+            &collides.to_string_lossy(),
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    let after = json["rows"].as_array().expect("rows").len();
+    assert!(
+        after > before,
+        "the widening should have changed the answer: {before} -> {after}"
+    );
+
+    let widened = json["stats"]["widened"].as_array().expect("widened");
+    assert_eq!(widened.len(), 1, "one predicate, one entry: {widened:?}");
+    let entry = widened[0].as_str().expect("a string");
+    assert!(entry.starts_with("callable/1 "), "{entry}");
+    assert!(entry.contains("collides.dl"), "{entry}");
+
+    // And on stderr, for the caller who is reading text.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("widened: `callable/1"), "{stderr}");
+
+    // A rule file with a name of its own stays quiet, so this is a signal and
+    // not noise on every conformance run.
+    let clean = dir.path().join("clean.dl");
+    std::fs::write(
+        &clean,
+        "%% my_layering(F, M) -- a rule with a name of its own.\n\
+         my_layering(F, M) :- import(F, M, _).\n",
+    )
+    .expect("write");
+    let stats = stats(&[
+        "query",
+        "?- my_layering(F, M).",
+        "--no-refresh",
+        "--format",
+        "json",
+        "--rules",
+        &clean.to_string_lossy(),
+    ]);
+    assert!(
+        stats["widened"].as_array().is_some_and(Vec::is_empty),
+        "{stats}"
+    );
+}

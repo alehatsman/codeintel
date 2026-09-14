@@ -341,3 +341,29 @@ fn the_negation_backoff_keeps_what_it_can() {
         fell_back.stats.transformed
     );
 }
+
+/// A repository's conformance rules do not spend the stratum budget.
+///
+/// `--rules` is the documented home for them, and each independent rule used to
+/// cost one stratum on top of the standard library's own. The library spent 39
+/// of `max_strata`'s 64, so **26 conformance rules made every query fail at
+/// planning** — including queries touching none of them. The limit had already
+/// been raised 32 -> 64 once for the same reason.
+#[test]
+fn a_hundred_conformance_rules_do_not_exhaust_max_strata() {
+    let mut engine = store_fixture();
+    let mut extra = String::new();
+    for i in 0..100 {
+        use std::fmt::Write as _;
+        writeln!(
+            extra,
+            "%% conf{i}(S) -- an independent conformance rule.\n\
+             conf{i}(S) :- def(S, F, \"function\", N)."
+        )
+        .expect("writing to a String cannot fail");
+    }
+    engine.load_rules(&extra).expect("the rules load");
+    engine
+        .query("?- conf0(S).", &Limits::default())
+        .expect("a query touching one of them still plans");
+}

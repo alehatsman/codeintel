@@ -179,6 +179,19 @@ reported on stderr and in `stats.shadowed` — a repository rule quietly replaci
 `is_test` would change every answer that reads it. A repository that means to
 replace a stdlib rule puts it in the program, not in a rule file.
 
+**Widening is reported too, in `stats.widened`.** Only shadowing was, and
+widening is the one a repository actually does: `--rules` is where its
+conformance rules live, so a collision there is an accident of naming rather
+than an intent to replace. It is not a small effect. On
+`tests/fixtures/rust`, a rules file whose three clauses happen to name
+`callable/1` takes `?- calls(A, B).` from 3 edges to 15 and `?- entrypoint(S).`
+from 16 to 22 — every rule downstream of the collided predicate moves — and
+this reported `shadowed: []` with `status: "ok"`. The two mechanisms stay
+separate fields because they are opposite operations, and a reader has to know
+which one happened: `shadowed` replaced a definition, `widened` added to one.
+Each entry names the predicate and the file, deduplicated per file, and both go
+to stderr as well.
+
 **`--expect-empty` exits 1 if any row comes back.** A conformance check states
 the violation it looks for, so finding none is the passing case. The exit code
 is 1 and not 2 because "your code violates this" and "I could not tell you" are
@@ -270,8 +283,8 @@ text first, which every surface costs at least; the host then keeps the longest
 prefix whose encoding fits, and a cut there sets `truncated` and
 `cap: "max_result_bytes"` like any other. The JSON-RPC envelope around an MCP
 result is not counted — its `id` is the client's own bytes echoed back. The cut
-is measured with `elapsed_ms` at its widest, so which rows survive does not
-depend on how fast the run was (invariant 8).
+carries no timing, so which rows survive does not depend on how fast the run
+was (invariant 8).
 
 **The budget bounds the whole answer, not only its rows.** Dropping rows cannot
 shrink an answer whose envelope alone is over budget, and the one part of an
@@ -605,6 +618,18 @@ into `structuredContent` and copies that same JSON into `content` as one text
 block), which is why dex never hit this failure and codeintel's hand-rolled
 transport did.
 
+**An argument the tool does not have is refused.** `code_query` takes `query`,
+`schema`, `limit`, `format` and `raw`, and nothing else; the input schema says
+`additionalProperties: false` and the handler enforces it, because a hand-rolled
+transport cannot rely on the client validating. Unknown arguments used to be
+ignored, and the one a caller reaches for first is `path` — the CLI takes
+`--path`, nothing in the tool description says the repository is fixed, so an
+agent generalises. A server started in one repository and asked for
+`path: "<another repository>"` answered from its own tree with `status: "ok"`:
+a well-formed, confident answer about the wrong codebase, which is exactly the
+failure invariant 6 exists to prevent. The repository is the server's working
+directory, one server per repository, and the refusal says so.
+
 **The budget still bounds the whole result, not just `content`.** Doubling what
 `structuredContent` carries does not double-count against `max_result_bytes`:
 the cap is measured on the tool result object as actually serialized
@@ -642,8 +667,9 @@ whose hint is `--rebuild` and would have an agent delete a healthy index.
   "rows": [["handle_read", "src/api/handler.rs", 42]],
   "truncated": false,
   "hint": null,
-  "stats": { "derived": 18422, "elapsed_ms": 7, "refreshed": 0, "transformed": ["impact_of"],
-             "demand": "applied", "depends": ["def", "name_ref", "scip_ref"] }
+  "stats": { "derived": 18422, "refreshed": 0, "transformed": ["impact_of"],
+             "demand": "applied", "depends": ["def", "name_ref", "scip_ref"],
+             "shadowed": [], "widened": [] }
 }
 ```
 

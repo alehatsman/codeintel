@@ -66,6 +66,9 @@ pub struct Engine {
     base: Db,
     rules: Vec<Rule>,
     regexes: Option<Box<dyn Regexes>>,
+    /// Heads defined by each `load_rules` call, in call order. See
+    /// [`Engine::loaded`].
+    loaded: Vec<Vec<String>>,
 }
 
 impl core::fmt::Debug for Engine {
@@ -87,6 +90,7 @@ impl Engine {
             base: Db::new(),
             rules: Vec::new(),
             regexes: None,
+            loaded: Vec::new(),
         }
     }
 
@@ -140,8 +144,29 @@ impl Engine {
         combined.rules.extend(program.rules.iter().cloned());
         check(&combined, self.base_arities())?;
         stratify(&combined)?;
+        self.loaded.push(
+            program
+                .rules
+                .iter()
+                .map(|r| format!("{}/{}", r.head.name, r.head.args.len()))
+                .collect(),
+        );
         self.rules.extend(program.rules);
         Ok(())
+    }
+
+    /// The predicates each [`Self::load_rules`] call defined, one entry per
+    /// call, in call order.
+    ///
+    /// A host that loads more than one source needs this to tell a *new*
+    /// predicate from one it widened. `load_rules` is additive — a predicate is
+    /// the union of its clauses — so a second source naming an existing head
+    /// does not replace it, and every rule reading that head changes with it.
+    /// A before/after diff of the whole rule set cannot see that: a widened
+    /// head is in both snapshots.
+    #[must_use]
+    pub fn loaded(&self) -> &[Vec<String>] {
+        &self.loaded
     }
 
     /// How many rules are loaded.
