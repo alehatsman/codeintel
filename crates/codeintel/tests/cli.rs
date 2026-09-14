@@ -1090,3 +1090,61 @@ fn a_lock_that_cannot_be_opened_answers_stale_from_the_index_as_it_stands() {
     assert!(stderr.contains("writer lock"), "{stderr}");
     assert!(!rows.is_empty(), "the index as it stands still answers");
 }
+
+/// A reader that closes the pipe is not a failure of this command.
+///
+/// `codeintel query ... | head` is the most ordinary thing a caller does with
+/// row output, and the `print!` family answers EPIPE by panicking — so the tool
+/// printed a Rust backtrace at the one moment it had done nothing wrong.
+///
+/// The output has to exceed the pipe buffer (64 KiB on macOS, 64 KiB on Linux)
+/// or the write completes into the buffer and EPIPE never fires. The fixture is
+/// far too small for that, so this generates a tree big enough that the write
+/// is still in progress when `head` exits.
+#[cfg(unix)]
+#[test]
+fn a_closed_pipe_is_not_a_panic() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).expect("mkdir");
+    // ~4,000 definitions with long names: comfortably past any pipe buffer.
+    let mut body = String::new();
+    for i in 0..4_000 {
+        use std::fmt::Write as _;
+        writeln!(
+            body,
+            "pub fn a_function_with_a_deliberately_long_name_{i:05}() -> u32 {{ {i} }}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    std::fs::write(src.join("lib.rs"), body).expect("write");
+    let out = run(dir.path(), &["index", "."]);
+    assert!(out.status.success(), "{:?}", out.status);
+
+    for args in [
+        r#"query|?- def(S, F, "function", N).|--no-refresh"#,
+        r#"query|?- def(S, F, "function", N).|--no-refresh|--format|json"#,
+    ] {
+        let args: Vec<&str> = args.split('|').collect();
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', r"'\''")))
+            .collect();
+        let script = format!("{} {} | head -1", binary(), quoted.join(" "));
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .current_dir(dir.path())
+            .output()
+            .expect("sh runs");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("panicked at"),
+            "a closed pipe panicked: {script}\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("Broken pipe"),
+            "a closed pipe was reported as an error: {script}\n{stderr}"
+        );
+    }
+}

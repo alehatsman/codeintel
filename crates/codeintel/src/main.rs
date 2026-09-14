@@ -110,6 +110,12 @@ enum Format {
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
+        // A closed pipe is the reader deciding it has enough, not a failure of
+        // this command. `codeintel query ... | head` is the most ordinary thing
+        // a caller does with row output, and `print!` answers EPIPE by
+        // panicking — so the tool printed a backtrace at the one moment it had
+        // done nothing wrong.
+        Err(e) if broken_pipe(&e) => ExitCode::SUCCESS,
         // 2, not 1: 1 is `--expect-empty`'s "ran and found a violation", and
         // CI must not read "could not run" as that (`specs/05-surface.md`
         // § Status taxonomy).
@@ -118,6 +124,33 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Whether anything in this error's chain is a closed pipe.
+fn broken_pipe(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+    })
+}
+
+/// Write to stdout, handing a write failure back as a value.
+///
+/// Every stdout write in this file goes through here. The `print!` family
+/// panics when the write fails, and the failure that actually happens is a
+/// downstream `head` or `less` closing the pipe.
+fn out(text: &str) -> Result<()> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(text.as_bytes())?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// [`out`], with the newline `println!` would have added.
+fn outln(text: &str) -> Result<()> {
+    out(&format!("{text}\n"))
 }
 
 fn run() -> Result<ExitCode> {
@@ -182,14 +215,14 @@ fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
         Format::Text => {
             // stdout is the catalog the size budget measures; the status goes
             // where `query` puts it.
-            print!("{schema}");
+            out(&schema.to_string())?;
             let (status, hint) = wire::schema_status(&census, &root);
             eprintln!("status={status}");
             if let Some(hint) = hint {
                 eprintln!("hint: {hint}");
             }
         }
-        Format::Json => println!("{}", wire::schema_json(&schema, &census, &root)),
+        Format::Json => outln(&wire::schema_json(&schema, &census, &root).to_string())?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -219,8 +252,8 @@ fn status_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
         manifest: store.manifest(),
     };
     match format {
-        Format::Text => print!("{report}"),
-        Format::Json => println!("{}", report.json()),
+        Format::Text => out(&report.to_string())?,
+        Format::Json => outln(&report.json().to_string())?,
     }
     // A missing index is a fact about this directory, not a failure of the
     // command that reported it.
@@ -452,11 +485,11 @@ fn query_cmd(
     let answer = query::run(path, &source, options)?;
 
     match format {
-        Format::Json => println!("{}", wire::json(&answer)),
+        Format::Json => outln(&wire::json(&answer).to_string())?,
         Format::Text => {
             // The same rows an MCP result carries, `true` for a ground goal
             // included: one function writes both (`specs/05-surface.md` § MCP).
-            print!("{}", wire::body(&answer, options.raw));
+            out(&wire::body(&answer, options.raw))?;
             // The status goes to stderr so that stdout is exactly the rows —
             // but it is never omitted, because `ok` with zero rows and a
             // missing index must be distinguishable without reading prose.
