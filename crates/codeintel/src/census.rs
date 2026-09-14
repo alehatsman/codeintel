@@ -328,17 +328,29 @@ impl fmt::Display for Report<'_> {
             let stale = crate::query::ScipState::of(manifest).stale;
             if !stale.is_empty() {
                 let named: Vec<&str> = stale.iter().map(String::as_str).take(5).collect();
+                // The indexer of every language the index holds, as `query`'s
+                // hint names them. This line said `rust-analyzer scip .` to a
+                // Go repository. A copy of `query::indexers`, which another
+                // change owns; #48 tracks folding the two.
+                let mut indexers: Vec<&str> = manifest
+                    .files
+                    .values()
+                    .filter_map(|e| extract::lang::by_name(&e.lang).map(|l| l.indexer))
+                    .collect();
+                indexers.sort_unstable();
+                indexers.dedup();
                 writeln!(
                     f,
                     "scip stale: {} file(s) changed after it was built, so their \
-                     `scip_ref` rows are not — {}{}. run: rust-analyzer scip .",
+                     `scip_ref` rows are not — {}{}. run: {}",
                     stale.len(),
                     named.join(", "),
                     if stale.len() > named.len() {
                         ", …"
                     } else {
                         ""
-                    }
+                    },
+                    indexers.join(" && ")
                 )?;
             }
         }

@@ -240,6 +240,9 @@ repository can ship. An unchecked `"/home/x/.ssh/id_ed25519"` or `"../../src/mai
 survives `Path::join` as a path outside the index, and the first refresh that
 retires that entry — a file the tree no longer has is enough — deletes it. A
 manifest naming any other shape is `corrupt`, never read and never followed.
+Only `Store::put` names a segment, from the bytes it writes; a caller hands it
+every other field (`NewEntry`), so no placeholder name exists to be written and
+`SegName` has no value that fails its own check.
 
 **`dict_bin_len` / `dict_idx_len` bound what a reader may trust.** The manifest
 names segments but does not name dictionary extents, so a reader that loads a

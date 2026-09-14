@@ -15,7 +15,7 @@ use datalog::atom::Atom;
 use datalog::relation::Relation;
 
 use crate::intern::Interner;
-use crate::manifest::{FileEntry, Manifest, SegName};
+use crate::manifest::{Manifest, NewEntry, SegName};
 use crate::schema::{self, Rel};
 use crate::segment::Segment;
 
@@ -155,15 +155,15 @@ impl Store {
 
     /// Write one file's facts and record it in the manifest.
     ///
-    /// `entry.seg` is set here, from the segment's bytes. A previous segment
-    /// for `path` is left in place until [`Self::commit`]: the manifest on
-    /// disk still names it.
+    /// The segment is named here, from its bytes, and `entry` recorded under
+    /// that name. A previous segment for `path` is left in place until
+    /// [`Self::commit`]: the manifest on disk still names it.
     ///
     /// # Errors
     /// I/O failure, or a segment too large to encode.
-    pub fn put(&mut self, path: &str, segment: &mut Segment, mut entry: FileEntry) -> Result<()> {
+    pub fn put(&mut self, path: &str, segment: &mut Segment, entry: NewEntry) -> Result<()> {
         let bytes = segment.encode()?;
-        entry.seg = crate::segment_name(&bytes);
+        let entry = entry.named(crate::segment_name(&bytes));
         let dir = self.dir.join(SEG);
         std::fs::create_dir_all(&dir)?;
         crate::atomic_write(&dir.join(&entry.seg), &bytes)?;
@@ -285,9 +285,8 @@ mod tests {
     use super::*;
     use crate::intern::Dict;
 
-    fn entry(_path: &str) -> FileEntry {
-        FileEntry {
-            seg: SegName::default(),
+    fn entry(_path: &str) -> NewEntry {
+        NewEntry {
             mtime: 1,
             size: 2,
             hash: "blake3:00".to_string(),

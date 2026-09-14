@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use extract::scip::Ingest;
 use extract::walk::{Candidate, Skips};
 use extract::{Anchors, Counts, Extractor, tier_b, walk};
-use facts::{FileEntry, ScipInput, Store};
+use facts::{NewEntry, ScipInput, Store};
 
 /// The SCIP index `index` reads when `--scip` is not given.
 pub const DEFAULT_SCIP: &str = "index.scip";
@@ -213,12 +213,13 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             continue;
         };
         let hash = facts::content_hash(&bytes);
-        if !plan.rebuild && !invalidated && known.is_some_and(|e| e.hash == hash) {
+        if !plan.rebuild
+            && !invalidated
+            && let Some(same) = known.filter(|e| e.hash == hash)
+        {
             // Touched but not changed: refresh the fast-path fields so the next
             // run does not hash it again.
-            let mut entry = known
-                .cloned()
-                .unwrap_or_else(|| new_entry(&candidate, &hash));
+            let mut entry = same.clone();
             entry.mtime = candidate.mtime;
             entry.size = candidate.size;
             store
@@ -357,9 +358,8 @@ pub fn refresh(store: &mut Store, plan: &Plan) -> Result<Report> {
             .put(
                 path,
                 &mut segment,
-                FileEntry {
-                    seg: facts::SegName::default(), // `put` names it from the bytes
-                    mtime: mtime_of(&meta),
+                NewEntry {
+                    mtime: walk::mtime_of(&meta),
                     size: meta.len(),
                     hash: String::new(),
                     lang: doc.lang.clone(),
@@ -516,7 +516,7 @@ fn stat_scip(root: &Path, paths: &[PathBuf]) -> Vec<ScipInput> {
             Some(ScipInput {
                 path: path.display().to_string().replace('\\', "/"),
                 tool: String::new(),
-                mtime: mtime_of(&meta),
+                mtime: walk::mtime_of(&meta),
                 size: meta.len(),
                 documents: 0,
                 ambiguous: 0,
@@ -591,13 +591,6 @@ fn absolute(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn mtime_of(meta: &std::fs::Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs())
-}
-
 fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
     into.refs += counts.refs;
     into.resolved += counts.resolved;
@@ -605,9 +598,8 @@ fn add(into: &mut tier_b::Counts, counts: tier_b::Counts) {
     into.collided += counts.collided;
 }
 
-fn new_entry(candidate: &Candidate, hash: &str) -> FileEntry {
-    FileEntry {
-        seg: facts::SegName::default(), // `put` names it from the bytes
+fn new_entry(candidate: &Candidate, hash: &str) -> NewEntry {
+    NewEntry {
         mtime: candidate.mtime,
         size: candidate.size,
         hash: hash.to_string(),

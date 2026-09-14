@@ -96,7 +96,7 @@ impl ScipInput {
 /// One indexed file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
-    /// Segment file name inside `seg/`.
+    /// Segment file name inside `seg/`, named by [`crate::Store::put`].
     pub seg: SegName,
     /// Source mtime in seconds since the epoch.
     pub mtime: u64,
@@ -152,6 +152,52 @@ impl FileEntry {
     }
 }
 
+/// A file's manifest record before its segment is written: every
+/// [`FileEntry`] field but `seg`.
+///
+/// A segment is named by the hash of its encoded bytes, so only
+/// [`crate::Store::put`] can name it. Callers built a `FileEntry` with a
+/// placeholder name for `put` to overwrite, which gave [`SegName`] a default
+/// value its own check refuses (`specs/04-storage.md` § Manifest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewEntry {
+    /// Source mtime in seconds since the epoch.
+    pub mtime: u64,
+    /// Source length in bytes.
+    pub size: u64,
+    /// `blake3:<hex>` over the source bytes.
+    pub hash: String,
+    /// Its language, as in `file(F, Lang)`.
+    pub lang: String,
+    /// Which tiers contributed: `ts`, `scip`.
+    pub tiers: Vec<String>,
+    /// As [`FileEntry::scip_hash`].
+    pub scip_hash: Option<String>,
+}
+
+impl NewEntry {
+    /// The record, under the name its segment was written as.
+    pub(crate) fn named(self, seg: SegName) -> FileEntry {
+        let Self {
+            mtime,
+            size,
+            hash,
+            lang,
+            tiers,
+            scip_hash,
+        } = self;
+        FileEntry {
+            seg,
+            mtime,
+            size,
+            hash,
+            lang,
+            tiers,
+            scip_hash,
+        }
+    }
+}
+
 /// A segment file name: 64 lowercase hex digits and `.bin`, the shape
 /// [`crate::segment_name`] produces and the only one that parses.
 ///
@@ -160,7 +206,7 @@ impl FileEntry {
 /// A bare `String` there let `"/home/x/.ssh/id_ed25519"` or `"../../main.rs"`
 /// through `Path::join` and into `remove_file` (`specs/04-storage.md`
 /// § Manifest).
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct SegName(String);
 
@@ -173,8 +219,7 @@ impl SegName {
         Self(format!("{}.bin", blake3::hash(bytes).to_hex()))
     }
 
-    /// The name as written in the manifest. Empty for the [`Default`]
-    /// placeholder, which [`crate::Store::put`] replaces.
+    /// The name as written in the manifest.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -358,7 +403,7 @@ mod tests {
     #[test]
     fn the_fast_path_needs_both_halves() {
         let entry = FileEntry {
-            seg: SegName::default(),
+            seg: seg_name(),
             mtime: 10,
             size: 20,
             hash: String::new(),
@@ -374,7 +419,7 @@ mod tests {
     #[test]
     fn a_file_touched_in_or_after_the_indexing_second_is_never_clean() {
         let entry = FileEntry {
-            seg: SegName::default(),
+            seg: seg_name(),
             mtime: 10,
             size: 20,
             hash: String::new(),
@@ -394,7 +439,7 @@ mod tests {
     #[test]
     fn scip_staleness_is_by_content_when_recorded_and_by_mtime_otherwise() {
         let mut entry = FileEntry {
-            seg: SegName::default(),
+            seg: seg_name(),
             mtime: 10,
             size: 20,
             hash: "blake3:aa".to_string(),
