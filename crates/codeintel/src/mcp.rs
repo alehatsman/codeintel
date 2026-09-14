@@ -306,13 +306,17 @@ fn schema(root: &Path, json: bool) -> Result<serde_json::Value, (i64, String)> {
     // `codeintel schema` prints in that format. `structuredContent` is the
     // status alone, as for a query (`specs/05-surface.md` § MCP).
     let body = if json {
-        wire::schema_json(&schema, &census).to_string()
+        wire::schema_json(&schema, &census, root).to_string()
     } else {
         schema.to_string()
     };
+    // `no-index` with no index, and still not an error: the catalog was
+    // delivered, and it is the call a session makes before indexing anything
+    // (`specs/05-surface.md` § `schema`).
+    let (status, hint) = wire::schema_status(&census, root);
     Ok(serde_json::json!({
         "content": [{ "type": "text", "text": body }],
-        "structuredContent": { "status": Status::Ok.as_str() },
+        "structuredContent": { "status": status.as_str(), "hint": hint },
         "isError": false,
     }))
 }

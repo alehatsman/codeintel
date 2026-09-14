@@ -181,6 +181,21 @@ fn schema_with_no_index_says_so_rather_than_reading_as_an_inventory() {
     // The catalogue is still there: an agent can learn the system before
     // indexing anything.
     assert!(text.contains("innermost_at"), "{text}");
+
+    // And a consumer can branch on it without reading the text (#52): the
+    // status on stderr, exit 0 because the catalog is the complete answer
+    // (`specs/05-surface.md` § `schema`).
+    let out = run(dir.path(), &["schema"]);
+    assert!(out.status.success(), "{:?}", out.status);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("status=no-index"), "{stderr}");
+    assert!(stderr.contains("hint: run: codeintel index"), "{stderr}");
+
+    let out = run(dir.path(), &["schema", "--format", "json"]);
+    assert!(out.status.success(), "{:?}", out.status);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(json["status"], "no-index", "{json}");
+    assert!(json["hint"].is_string(), "{json}");
 }
 
 #[test]
@@ -513,6 +528,20 @@ fn the_mcp_schema_call_works_with_no_index() {
         .expect("text");
     assert!(text.contains("innermost_at"), "{text}");
     assert!(text.contains("THERE IS NO INDEX HERE"), "{text}");
+    // The status is structural, not only a sentence in the text (#52), and the
+    // call is still no error: the catalog was delivered.
+    let result = &out[0]["result"];
+    assert_eq!(
+        result["structuredContent"]["status"], "no-index",
+        "{result}"
+    );
+    assert!(
+        result["structuredContent"]["hint"]
+            .as_str()
+            .is_some_and(|h| h.starts_with("run: codeintel index")),
+        "{result}"
+    );
+    assert_eq!(result["isError"], false, "{result}");
 
     // Both modes at once names the two rather than silently picking one.
     assert!(out[1]["error"]["message"].is_string(), "{:?}", out[1]);
@@ -654,6 +683,8 @@ fn schema_json_carries_the_counts_structurally() {
             .is_some_and(|t| t.contains("RELATIONS"))
     );
     assert_eq!(json["indexed"], true);
+    assert_eq!(json["status"], "ok", "{json}");
+    assert!(json["hint"].is_null(), "{json}");
 
     // Every relation, with its argument names and its row count.
     let relations = json["relations"].as_array().expect("relations");
@@ -785,7 +816,8 @@ fn the_mcp_schema_is_sent_once_in_the_format_asked_for() {
     assert_eq!(out.len(), 2, "{out:?}");
     for response in &out {
         let envelope = &response["result"]["structuredContent"];
-        assert_eq!(envelope["status"], "ok", "{envelope}");
+        // No index in this tempdir: the status says so (#52).
+        assert_eq!(envelope["status"], "no-index", "{envelope}");
         assert!(envelope.get("schema").is_none(), "sent twice: {envelope}");
     }
     let text = out[0]["result"]["content"][0]["text"]
