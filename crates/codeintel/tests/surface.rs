@@ -279,7 +279,14 @@ fn status_with_no_index_is_an_answer_not_a_failure() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("status: no-index"), "{text}");
-    assert!(text.contains("run: codeintel index ."), "{text}");
+    // The root the caller named. This asserted a literal `codeintel index .`,
+    // which is the wrong directory whenever `status` was given a path — it
+    // sent the reader to index wherever they happened to be standing.
+    let root = dir.path().canonicalize().expect("canonical");
+    assert!(
+        text.contains(&format!("run: codeintel index {}", root.display())),
+        "{text}"
+    );
 }
 
 #[test]
@@ -364,6 +371,39 @@ fn status_with_no_index_does_not_walk_the_tree() {
             .is_some_and(serde_json::Map::is_empty),
         "{json}"
     );
+}
+
+#[test]
+fn every_status_verdict_carries_its_remedy_on_both_formats() {
+    // `specs/00-overview.md` invariant 6: a degradation is a status "with an
+    // actionable hint", and `docs/plan.md` M4 states it as `hint` non-null
+    // whenever `status != "ok"`. `status --format json` carried no `hint` key
+    // at all — and it is the format M4 calls "the bug-report artifact for a
+    // tool with no telemetry", so the consumer that cannot read prose was the
+    // one left with a verdict and no remedy. The sibling assertion for
+    // `schema --format json` existed; this one did not.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = stdout(dir.path(), &["status", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_str(&out).expect("JSON");
+    assert_eq!(json["status"], "no-index");
+    let hint = json["hint"].as_str().expect("a non-ok status has a hint");
+    assert!(hint.contains("codeintel index"), "{hint}");
+    // The root the caller named, not the directory they are standing in.
+    let root = dir.path().canonicalize().expect("canonical");
+    assert!(hint.contains(&root.display().to_string()), "{hint}");
+
+    // The text form says the same thing.
+    let text = stdout(dir.path(), &["status"]);
+    assert!(text.contains("status: no-index"), "{text}");
+    assert!(text.contains(&root.display().to_string()), "{text}");
+
+    // `ok` is the only verdict with no hint.
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+    let out = stdout(dir.path(), &["status", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_str(&out).expect("JSON");
+    assert_eq!(json["status"], "ok", "{json}");
+    assert!(json["hint"].is_null(), "{json}");
 }
 
 /// One JSON-RPC exchange per line, in; the responses, out.

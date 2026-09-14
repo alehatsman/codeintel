@@ -224,13 +224,69 @@ impl Report<'_> {
             Status::Ok
         }
     }
+
+    /// What to do about [`Self::status`]. `None` only when the verdict is `ok`.
+    ///
+    /// `specs/00-overview.md` invariant 6 says a degradation is "a status ...
+    /// each with an actionable hint", and `docs/plan.md` M4 states it as a
+    /// done-when: `hint` is non-null whenever `status != "ok"`. `status
+    /// --format json` had **no `hint` field at all** — the text form printed
+    /// `run: codeintel index .` and the JSON, which M4 calls "the bug-report
+    /// artifact for a tool with no telemetry", carried the verdict and no
+    /// remedy. The one consumer that cannot read prose was the one left
+    /// without it.
+    ///
+    /// The root comes from the manifest rather than being written `.`, because
+    /// `codeintel status ../elsewhere` told the reader to index the directory
+    /// they were standing in.
+    #[must_use]
+    pub fn hint(&self) -> Option<String> {
+        let root = self
+            .manifest
+            .roots
+            .first()
+            .map_or_else(|| ".".to_string(), Clone::clone);
+        match self.status() {
+            Status::Ok => None,
+            Status::NoIndex => Some(format!("run: codeintel index {root}")),
+            Status::Stale => Some(
+                crate::query::stale_schema(self.manifest, std::path::Path::new(&root))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{} file(s) changed since the index: {}. run: codeintel index {root}",
+                            self.census.changed.len(),
+                            self.census.changed.join(", ")
+                        )
+                    }),
+            ),
+            Status::ScipStale => {
+                let scip = crate::query::ScipState::of(self.manifest);
+                Some(format!(
+                    "{} file(s) changed after the SCIP index was built, so their `scip_ref` rows \
+                     are not fresh: {}. run: {}",
+                    scip.stale.len(),
+                    scip.stale.join(", "),
+                    crate::query::indexers(self.manifest).join(" && ")
+                ))
+            }
+            // Every other verdict reaches `status` through `verdict()`, which
+            // carries the store's own message. Naming them rather than a
+            // catch-all so a new status has to decide what it tells the reader.
+            other => Some(format!(
+                "{other}: run: codeintel index {root} --rebuild, or rm -rf .codeintel and reindex"
+            )),
+        }
+    }
 }
 
 impl fmt::Display for Report<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (census, manifest) = (self.census, self.manifest);
         if !census.indexed {
-            return f.write_str("status: no-index\nrun: codeintel index .\n");
+            // The root the caller named, not the directory they are standing
+            // in: `codeintel status ../elsewhere` told them to index here.
+            let hint = self.hint().unwrap_or_default();
+            return writeln!(f, "status: no-index\n{hint}");
         }
         writeln!(f, "status: {}", self.status())?;
         writeln!(f, "root: {}", manifest.roots.join(", "))?;
@@ -368,6 +424,8 @@ impl Report<'_> {
         let (census, manifest) = (self.census, self.manifest);
         serde_json::json!({
         "status": self.status().as_str(),
+        // Non-null whenever the status is not `ok` (`Self::hint`).
+        "hint": self.hint(),
         "indexed": census.indexed,
         "roots": manifest.roots,
         "writer_version": manifest.writer_version,
