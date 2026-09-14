@@ -184,6 +184,17 @@ impl Warm {
     /// # Errors
     /// As [`run`].
     pub fn run(&mut self, root: &Path, program: &str, options: &Options) -> Result<Answer> {
+        let mut answer = self.answer(root, program, options)?;
+        // Every answer, a diagnostic and `no-index` included: the budget bounds
+        // what is sent, not only its rows (`specs/05-surface.md` § Symbol
+        // rendering).
+        fit_hint(&mut answer, Limits::default().max_result_bytes, |a| {
+            sent(a, options)
+        });
+        Ok(answer)
+    }
+
+    fn answer(&mut self, root: &Path, program: &str, options: &Options) -> Result<Answer> {
         let mut store = match open(root)? {
             Ok(store) => store,
             Err(answer) => {
@@ -550,6 +561,45 @@ fn sent(answer: &mut Answer, options: &Options) -> usize {
     let bytes = options.wire.bytes(answer, options.raw);
     answer.elapsed_ms = elapsed;
     bytes
+}
+
+/// What a hint cut to fit `max_result_bytes` ends with.
+const HINT_CUT: &str = " ... [hint cut to fit max_result_bytes]";
+
+/// Cut the hint to the longest prefix, on a character boundary, with which
+/// `answer` fits `budget` as `measure` counts it.
+///
+/// Rows are cut first, in [`evaluate`]; this is for an answer whose envelope
+/// is over budget on its own. Only the hint is cut: `status`, `truncated` and
+/// `cap` are what a consumer branches on, `columns` echoes the caller's own
+/// goal, and `stats` is bounded by the rule set (`specs/05-surface.md`
+/// § Symbol rendering).
+fn fit_hint(answer: &mut Answer, budget: usize, mut measure: impl FnMut(&mut Answer) -> usize) {
+    if measure(answer) <= budget {
+        return;
+    }
+    let Some(full) = answer.hint.take() else {
+        return;
+    };
+    let cut = |n: usize| {
+        let mut n = n.min(full.len());
+        while !full.is_char_boundary(n) {
+            n = n.saturating_sub(1);
+        }
+        format!("{}{HINT_CUT}", full.get(..n).unwrap_or_default())
+    };
+    // The size grows with the prefix: bisect for the longest one that fits.
+    let (mut lo, mut hi) = (0, full.len());
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        answer.hint = Some(cut(mid));
+        if measure(answer) <= budget {
+            lo = mid;
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+    }
+    answer.hint = Some(cut(lo));
 }
 
 /// What this host adds to an engine diagnostic: the verb or the rule that
@@ -1021,6 +1071,35 @@ fn refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hint_over_the_budget_is_cut_on_a_char_boundary_and_the_status_kept() {
+        // No rows to drop: the hint is the only thing that can shrink. Every
+        // character is two bytes, so a cut that ignored boundaries would panic
+        // or split one.
+        let hint = "é".repeat(2_000);
+        let mut answer = Answer::of(Status::NoIndex, hint.clone());
+        let budget = 1_000;
+        let measure = |a: &mut Answer| Wire::McpJson.bytes(a, false);
+        assert!(measure(&mut answer) > budget);
+
+        fit_hint(&mut answer, budget, measure);
+
+        let bytes = measure(&mut answer);
+        assert!(bytes <= budget, "{bytes} bytes against {budget}");
+        assert_eq!(answer.status, Status::NoIndex);
+        assert!(!answer.truncated, "a hint cut drops no rows");
+        let cut = answer.hint.as_deref().expect("a hint");
+        let kept = cut.strip_suffix(HINT_CUT).expect("the marker");
+        assert!(!kept.is_empty() && hint.starts_with(kept), "{cut}");
+    }
+
+    #[test]
+    fn a_hint_that_fits_is_left_alone() {
+        let mut answer = Answer::of(Status::NoIndex, "run: codeintel index .");
+        fit_hint(&mut answer, 262_144, |a| Wire::McpJson.bytes(a, false));
+        assert_eq!(answer.hint.as_deref(), Some("run: codeintel index ."));
+    }
 
     fn opened(root: &Path) -> Store {
         Store::open(root, &extract::fingerprint()).expect("opens")
