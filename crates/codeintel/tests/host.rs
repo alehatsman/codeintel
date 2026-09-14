@@ -8,7 +8,7 @@ use datalog::{Engine, Limits};
 use facts::Interner;
 use tempfile::TempDir;
 
-const BASE: [(&str, usize); 15] = [
+const BASE: [(&str, usize); 16] = [
     ("file", 2),
     ("def", 4),
     ("def_span", 5),
@@ -24,6 +24,7 @@ const BASE: [(&str, usize); 15] = [
     ("scip_impl", 2),
     ("name_impl", 4),
     ("extern", 4),
+    ("name_export", 2),
 ];
 
 /// An engine over the real dictionary and the real regex engine, with the

@@ -80,8 +80,11 @@ fn stdout(root: &Path, args: &[&str]) -> String {
 /// back against the one growth path the design actually wants.
 ///
 /// So this asserts the thing it can: the text does not grow. A change that
-/// pushes past it is a change that has to argue for itself.
-const MAX_SCHEMA_CHARS: usize = 5_700;
+/// pushes past it is a change that has to argue for itself. One has: the
+/// sixteenth base relation, `name_export` (#22), is one table row, and 5,700
+/// was measured over fifteen. The relation budget always allowed sixteen, so
+/// the ceiling moved by that row and no more.
+const MAX_SCHEMA_CHARS: usize = 5_800;
 
 #[test]
 fn the_schema_fits_its_size_budget_with_the_rule_list_complete() {

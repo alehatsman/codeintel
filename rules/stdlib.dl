@@ -29,6 +29,12 @@ exported(S) :- visibility(S, "public").
 % documentation for unreachable code.
 exported(S) :- visibility(S, "inherited"), parent(S, P), exported(P).
 
+% A TypeScript `export { x }` or `export default x` is a clause the declaration
+% never sees, so `visibility` says `restricted` and this row says exported. Same
+% file, local name; the alias in `f as g` is not recorded (01-facts.md
+% § `name_export`).
+exported(S) :- name_export(F, N), def(S, F, _, N).
+
 % `restricted` appears in no rule, and that is the point: `pub(crate)` and a
 % bare `fn` are both "not visible outside the crate", which is exactly the
 % question `exported` asks.

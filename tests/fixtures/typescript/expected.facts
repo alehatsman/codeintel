@@ -268,6 +268,9 @@ import("store/store.ts", "../kinds", "").
 import("ui/panel.tsx", "../db/conn", "").
 import("ui/panel.tsx", "../net/conn", "net").
 import("ui/panel.tsx", "./row", "").
+name_export("kinds.ts", "outer").
+name_export("kinds.ts", "retries").
+name_export("kinds.ts", "sealed").
 name_ref("Entry", "store/store.ts", 30, 30, "local store/store.ts Store#put().").
 name_ref("Map", "store/store.ts", 18, 24, "local store/store.ts Store#entries.").
 name_ref("Number", "kinds.ts", 79, 9, "local kinds.ts parse().").

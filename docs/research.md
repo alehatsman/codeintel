@@ -518,7 +518,7 @@ UTF-16 (#21). Every reference carries an empty role bitset. So its parameters,
 type parameters and per-file module symbols are tier-B-only `def` rows of kind
 `unknown`, named from their descriptors, and the binding an import makes is a
 role-less reference at module scope, which `calls` counts as an edge from the
-file. Symbol kinds and document languages are committed upstream
+file; the name in `export default f` is recorded the same way. Symbol kinds and document languages are committed upstream
 (2026-09-11) and unreleased.
 
 **Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —

@@ -100,3 +100,9 @@ export namespace Limits {
 // counts that column in UTF-16 and declares no encoding, so the second
 // definition's SCIP occurrence is ambiguous and skipped (#21).
 export const WIDE = "é"; export const AFTER_WIDE = legacy;
+
+// Exported from a clause, not the declaration: `retries` and `sealed` are
+// still `restricted`, and `exported` through `name_export` (#22). Appended
+// here so no earlier SCIP position moves and `index.scip` stays valid.
+export { retries, sealed as seal };
+export default outer;
