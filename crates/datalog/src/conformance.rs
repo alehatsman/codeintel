@@ -945,3 +945,61 @@ fn an_aggregate_does_not_steal_the_empty_literal() {
     assert!(counted.rows.is_empty());
     assert_eq!(counted.stats.empty_at.as_deref(), Some("N > 99"));
 }
+
+/// Predicates that do not negate each other share a stratum.
+///
+/// A stratum is a level, not a strongly connected component. One stratum per
+/// component is a valid evaluation order and the most wasteful one, and it made
+/// `max_strata` a cap on how many derived predicates a program may hold rather
+/// than on how deeply negation nests. Independent rules then cost one stratum
+/// each: in `codeintel`, 26 conformance rules in a `--rules` file made **every**
+/// query fail at planning, including queries touching none of them.
+#[test]
+fn independent_predicates_do_not_each_cost_a_stratum() {
+    use crate::strata::stratify;
+    use crate::symbols::Strings;
+
+    let mut syms = Strings::new();
+    let mut src = String::from("base(\"a\").\n");
+    for i in 0..200 {
+        use std::fmt::Write as _;
+        writeln!(src, "p{i}(X) :- base(X).").expect("writing to a String cannot fail");
+    }
+    let program = crate::parse::parse(&src, &mut syms).expect("parses");
+    let strata = stratify(&program).expect("stratifies");
+    assert_eq!(
+        strata.len(),
+        1,
+        "201 predicates with no negation between them are one stratum: {:?}",
+        strata.order
+    );
+}
+
+/// Negation still forces a level, and the level is the longest negative chain.
+#[test]
+fn negation_still_separates_strata_by_depth() {
+    use crate::strata::stratify;
+    use crate::symbols::Strings;
+
+    let mut syms = Strings::new();
+    // a -> !b -> !c -> d: three negative hops, four levels. The `e` and `f`
+    // predicates are independent and must not add any.
+    let src = "\
+        base(\"x\").\n\
+        d(X) :- base(X).\n\
+        c(X) :- base(X), !d(X).\n\
+        b(X) :- base(X), !c(X).\n\
+        a(X) :- base(X), !b(X).\n\
+        e(X) :- base(X).\n\
+        f(X) :- base(X).\n";
+    let program = crate::parse::parse(src, &mut syms).expect("parses");
+    let strata = stratify(&program).expect("stratifies");
+    assert_eq!(strata.len(), 4, "{:?}", strata.order);
+    let level = |n: &str| strata.stratum_of(n).expect(n);
+    assert!(level("d") < level("c"), "{:?}", strata.order);
+    assert!(level("c") < level("b"), "{:?}", strata.order);
+    assert!(level("b") < level("a"), "{:?}", strata.order);
+    // Independent of the chain, so they sit at the bottom with `d`.
+    assert_eq!(level("e"), level("d"), "{:?}", strata.order);
+    assert_eq!(level("f"), level("d"), "{:?}", strata.order);
+}

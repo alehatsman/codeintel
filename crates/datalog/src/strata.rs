@@ -124,14 +124,71 @@ pub fn stratify(program: &Program) -> Result<Strata> {
     }
     let (names, edges) = graph(program);
     let components = scc(names.len(), &edges);
-
-    // `scc` numbers components in the order it completes them, which for this
-    // edge direction (head -> body) is dependencies first.
     let count = components.iter().copied().max().map_or(0, |m| m + 1);
-    let mut order = vec![Vec::new(); count];
+
+    // A stratum is a *level*, not a component.
+    //
+    // `scc` numbers components in the order it completes them, which for this
+    // edge direction (head -> body) is dependencies first, so one stratum per
+    // component is a valid evaluation order. It is also the most wasteful one.
+    // Stratification requires only that a predicate be evaluated strictly after
+    // anything it negates; two predicates that do not negate each other share a
+    // stratum however many of them there are.
+    //
+    // One stratum per component made `max_strata` a cap on how many derived
+    // predicates a program may hold. `rules/stdlib.dl` alone spent 39 of 64,
+    // and `--rules` — the documented home for a repository's conformance rules
+    // — spent one more per rule, so **26 independent conformance rules made
+    // every query fail at planning**, including queries that touched none of
+    // them:
+    //
+    //     n=25 -> ok, 900 rows
+    //     n=26 -> invalid-query: "this program needs 65 strata, the limit is 64"
+    //
+    // That is pressure on the one release valve this design depends on. The
+    // limit had already been raised 32 -> 64 for the same reason; the number
+    // was never the thing that was wrong.
+    //
+    // A component's level is the longest negative-edge path reaching it: a
+    // positive dependency needs the same level or lower, a negative one
+    // strictly lower.
+    let mut level = vec![0usize; count];
+    // `edges` is in rule order, not topological order, so one pass can leave a
+    // component below a dependency raised after it was read. Components are
+    // numbered dependencies-first, so a sweep settles every chain; `count`
+    // rounds is the bound, and the loop exits as soon as nothing moves.
+    for _ in 0..count {
+        let mut moved = false;
+        for e in &edges {
+            let (Some(&from), Some(&to)) = (components.get(e.from), components.get(e.to)) else {
+                continue;
+            };
+            // Inside one component: mutual recursion, evaluated in one
+            // fixpoint. A negative edge here is the cycle `negative_cycle`
+            // has already rejected.
+            if from == to {
+                continue;
+            }
+            let needed = level.get(to).copied().unwrap_or(0) + usize::from(e.negative);
+            if let Some(slot) = level.get_mut(from)
+                && *slot < needed
+            {
+                *slot = needed;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+
+    let depth = level.iter().copied().max().map_or(0, |m| m + 1);
+    let mut order = vec![Vec::new(); depth];
     for (i, name) in names.iter().enumerate() {
-        if let Some(c) = components.get(i).copied()
-            && let Some(stratum) = order.get_mut(c)
+        if let Some(stratum) = components
+            .get(i)
+            .and_then(|c| level.get(*c))
+            .and_then(|l| order.get_mut(*l))
         {
             stratum.push((*name).to_string());
         }
@@ -139,6 +196,7 @@ pub fn stratify(program: &Program) -> Result<Strata> {
     for stratum in &mut order {
         stratum.sort();
     }
+    order.retain(|stratum| !stratum.is_empty());
     Ok(Strata { order })
 }
 
