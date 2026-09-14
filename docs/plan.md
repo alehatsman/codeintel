@@ -125,6 +125,40 @@ Notes that matter:
 - `.gate/findings.jsonl` is the machine-readable output. An agent working in this
   repo reads that, not scraped terminal text.
 
+### Build and install, added 2026-09-14
+
+Not part of M0 and not backdated into the listing above: M0 wired the gate, and
+the gate is all it wired. There was no supported way to get the binary onto
+PATH until this, which is a gap nothing in the deferred table had recorded.
+
+```
+tasks/
+  build.yml         cargo build --locked --release -p codeintel
+  install.yml       use: ./build.yml, then a `file` step onto PATH
+                    prop: dest, default ~/.local/bin/codeintel
+```
+
+Copied from `provision`'s own two, with two deviations:
+
+- `-p codeintel`. `provision` is one crate; this is a four-member workspace
+  with one binary. Naming the package keeps the build to what `install.yml`
+  copies.
+- `--locked`, which `provision`'s `build.yml` does not pass and
+  `tasks/bench.yml` already does. A release binary that resolved a different
+  dependency set than the gate checked is not the thing the gate passed.
+
+Neither is a gate task and neither runs in CI. `install.yml` `use`s `build.yml`
+rather than copying its step, and lands the binary with a `file` step so a
+matching binary on PATH reports `ok` instead of being copied again — `cp`
+cannot say that. Not `cargo install`, which rebuilds into its own target dir.
+
+No Windows cross-compile task. `provision` has one for a fleet that needs it;
+nothing here does yet.
+
+Registering `codeintel mcp` with an agent stays the agent's configuration. If
+that turns out to be the step everyone gets wrong, the revisit is a sixth task,
+not a sixth verb.
+
 ### Read before writing any Rust
 
 - `rust-quality/docs/RUST.md` — the rules, gate markers, the 2026 trap list, and
@@ -1221,6 +1255,8 @@ Recorded so a future agent knows these were considered, not overlooked.
 | Depth-bounded traversals `impact_of_d/3` | truncation on a traversal proves misleading in practice |
 | Query result caching | a profile shows repeated identical queries |
 | Publishing `crates/datalog` standalone | M1 is green and the seam test holds |
+| A Windows cross-compile task | a machine in the fleet needs the binary and has no toolchain |
+| Shipping an MCP registration step | the `codeintel mcp` wiring proves to be the step people get wrong |
 
 ## Explicitly never
 
