@@ -44,19 +44,19 @@ pub struct Anchors {
 impl Anchors {
     /// Build the anchor index for one file.
     ///
-    /// `known` is every symbol this SCIP index defines anywhere; parent
-    /// precedence rule 1 only fires when the truncated descriptor actually
-    /// names one of them.
+    /// Parent precedence rule 1 only fires when the truncated descriptor
+    /// names a symbol in `ingest.known`, which is what the join will emit a
+    /// `def` for (`specs/02-extraction.md` § Parent precedence).
     #[must_use]
     pub fn of(ingest: &Ingest, path: &str) -> Self {
-        let known = defined(ingest);
         let Some(doc) = ingest.docs.get(path) else {
             return Self::default();
         };
         let mut at = BTreeMap::new();
         for def in &doc.defs {
-            // Defined elsewhere too: not an identity, a collision. Tier A keeps
-            // its own symbol for this definition.
+            // Defined elsewhere too, or beside another symbol at this very
+            // position: not an identity, a collision. Tier A keeps its own
+            // symbol for this definition.
             if ingest.collisions.contains(&def.symbol) {
                 continue;
             }
@@ -64,7 +64,7 @@ impl Anchors {
             at.insert(
                 (def.line, def.col),
                 Anchor {
-                    parent: parent_of(&def.symbol, info, &known),
+                    parent: parent_of(&def.symbol, info, &ingest.known),
                     symbol: def.symbol.clone(),
                     doc: info.and_then(|i| i.doc.clone()),
                     sig: info.and_then(|i| i.sig.clone()),
@@ -102,9 +102,10 @@ pub struct Counts {
     pub resolved: usize,
     /// `def` rows for definitions tier A had no counterpart for.
     pub only: usize,
-    /// Definition occurrences whose symbol this index defines in more than
-    /// one document. Not adopted, not emitted; counted so `status` can say
-    /// so (`specs/02-extraction.md` § The anchor join).
+    /// Definition occurrences whose symbol this index refuses: defined in
+    /// more than one document, or beside another symbol at one position.
+    /// Not adopted, not emitted; counted so `status` can say so
+    /// (`specs/02-extraction.md` § The anchor join).
     pub collided: usize,
 }
 
@@ -136,16 +137,15 @@ pub fn emit(
     // spans where it parsed the file; SCIP's `typed_enclosing_range` where it
     // did not.
     let mut owners: Vec<(Span, String)> = anchored.to_vec();
-    let anchors = Anchors::of(ingest, path);
-    let known = defined(ingest);
     for def in &doc.defs {
         if ingest.collisions.contains(&def.symbol) {
             counts.collided += 1;
             continue;
         }
         let resolved = atom(interner, &def.symbol)?;
-        if anchors.at(def.line, def.col).is_some() && anchored.iter().any(|(_, s)| *s == def.symbol)
-        {
+        // A tier-A definition carries this symbol only by adopting it from
+        // its anchor, so `anchored` alone says whether tier A owns the row.
+        if anchored.iter().any(|(_, s)| *s == def.symbol) {
             // Tier A owns the `def` row; it already adopted this symbol.
             push(seg, "resolved", &[resolved]);
             counts.resolved += 1;
@@ -156,11 +156,21 @@ pub fn emit(
         push(seg, "resolved", &[resolved]);
         let info = ingest.symbols.get(&def.symbol);
         let kind = info.map_or("unknown", |i| i.kind);
-        let name = info.map_or("", |i| i.name.as_str());
+        // No `SymbolInformation` at all is still a symbol string with a
+        // descriptor in it (`specs/02-extraction.md` § Ingest).
+        let name = info.map_or_else(
+            || crate::scip::descriptor_name(&def.symbol),
+            |i| i.name.clone(),
+        );
         push(
             seg,
             "def",
-            &[resolved, file, atom(interner, kind)?, atom(interner, name)?],
+            &[
+                resolved,
+                file,
+                atom(interner, kind)?,
+                atom(interner, &name)?,
+            ],
         );
         // No span, no signature: SCIP's ranges are not our `def_span`, which is
         // the *full* definition including attributes and docs. Emitting an
@@ -171,7 +181,7 @@ pub fn emit(
         if let Some(sig) = info.and_then(|i| i.sig.as_deref()) {
             push(seg, "def_sig", &[resolved, atom(interner, sig)?]);
         }
-        let owner = match parent_of(&def.symbol, info, &known) {
+        let owner = match parent_of(&def.symbol, info, &ingest.known) {
             Some(parent) => atom(interner, &parent)?,
             None => file,
         };
@@ -254,26 +264,17 @@ pub fn emit(
     Ok(counts)
 }
 
-/// Every symbol this index defines, anywhere.
-fn defined(ingest: &Ingest) -> BTreeSet<&str> {
-    ingest
-        .docs
-        .values()
-        .flat_map(|d| d.defs.iter().map(|def| def.symbol.as_str()))
-        .collect()
-}
-
 /// The semantic owner of a symbol: descriptor prefix, else `enclosing_symbol`,
 /// else nothing — and "nothing" means tier A's span nesting stands.
 ///
 /// The order is fixed by `specs/02-extraction.md` § Parent precedence. Rule 1
 /// is preferred because the descriptor grammar is mandatory, so every indexer
-/// supplies it; it only fires when the truncated symbol actually names a
-/// definition, or a Go method would be owned by a symbol nothing defines.
+/// supplies it; it only fires when the truncated symbol names a definition the
+/// join will emit, or a Go method would be owned by a symbol nothing defines.
 fn parent_of(
     symbol: &str,
     info: Option<&crate::scip::Info>,
-    known: &BTreeSet<&str>,
+    known: &BTreeSet<String>,
 ) -> Option<String> {
     if let Some(owner) = crate::scip::owner(symbol)
         && known.contains(owner.as_str())
@@ -380,6 +381,7 @@ mod tests {
             "sc cargo dep 2.0 dep/helper().".to_string(),
             ("cargo".to_string(), "dep".to_string(), "2.0".to_string()),
         );
+        ingest.recount();
         ingest
     }
 
@@ -413,6 +415,7 @@ mod tests {
             .expect("the document")
             .defs
             .remove(0);
+        ingest.recount();
         let anchors = Anchors::of(&ingest, "src/store.rs");
         assert_eq!(anchors.at(4, 7).expect("anchored").parent, None);
     }
@@ -493,10 +496,12 @@ mod tests {
     fn a_definition_tier_a_missed_becomes_a_tier_b_def_with_no_span() {
         let (seg, counts, interner) = emitted(&[]);
         assert_eq!(counts.only, 2);
+        // `Store#` has no `SymbolInformation` at all: the name comes from its
+        // descriptor, as it does when only `display_name` is missing (#47).
         assert_eq!(
             rows(&seg, "def", &interner),
             vec![
-                "sc cargo p 1.0 store/Store# src/store.rs unknown ",
+                "sc cargo p 1.0 store/Store# src/store.rs unknown Store",
                 "sc cargo p 1.0 store/Store#get(). src/store.rs method get",
             ]
         );
@@ -589,5 +594,147 @@ mod tests {
         assert_eq!(lines.byte(99, 0), 6);
         assert_eq!(lines.byte(2, 99), 6);
         assert_eq!(lines.byte(0, 0), 0);
+    }
+
+    /// #47: a refused symbol has no `def` row under its own name, so it may
+    /// not be anyone's parent either.
+    #[test]
+    fn a_collided_owner_is_not_a_parent() {
+        let mut ingest = ingest();
+        // Define `Store#` in a second document too: it collides.
+        ingest.docs.insert(
+            "src/again.rs".to_string(),
+            Doc {
+                lang: "rust".to_string(),
+                defs: vec![Def {
+                    symbol: "sc cargo p 1.0 store/Store#".to_string(),
+                    line: 1,
+                    col: 11,
+                    enclosing: None,
+                }],
+                refs: vec![],
+            },
+        );
+        ingest.recount();
+        assert!(ingest.collisions.contains("sc cargo p 1.0 store/Store#"));
+        assert!(!ingest.known.contains("sc cargo p 1.0 store/Store#"));
+        assert!(ingest.known.contains("sc cargo p 1.0 store/Store#get()."));
+        let anchors = Anchors::of(&ingest, "src/store.rs");
+        assert_eq!(anchors.len(), 1, "the collided symbol is not an anchor");
+        // Rule 1 names a symbol the join refuses, so it declines; rule 2 has
+        // nothing; tier A's nesting stands.
+        assert_eq!(anchors.at(4, 7).expect("anchored").parent, None);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut interner = Interner::open(dir.path()).expect("interner");
+        let mut seg = Segment::new();
+        let counts = emit(
+            &mut seg,
+            &ingest,
+            "src/store.rs",
+            Some(SRC),
+            &[],
+            &mut interner,
+        )
+        .expect("emits");
+        assert_eq!(counts.collided, 1);
+        assert_eq!(
+            rows(&seg, "parent", &interner),
+            vec!["sc cargo p 1.0 store/Store#get(). src/store.rs"]
+        );
+    }
+
+    /// #47: two symbols at one name token. Last-wins picked by input order;
+    /// now neither is adopted and both are counted with the collisions.
+    #[test]
+    fn two_symbols_at_one_position_are_both_refused() {
+        let mut ingest = ingest();
+        ingest
+            .docs
+            .get_mut("src/store.rs")
+            .expect("doc")
+            .defs
+            .push(Def {
+                symbol: "sc cargo p 1.0 store/Store#get2().".to_string(),
+                line: 4,
+                col: 7,
+                enclosing: None,
+            });
+        ingest.recount();
+        for s in [
+            "sc cargo p 1.0 store/Store#get().",
+            "sc cargo p 1.0 store/Store#get2().",
+        ] {
+            assert!(ingest.collisions.contains(s), "{s}");
+            assert!(!ingest.known.contains(s), "{s}");
+        }
+        let anchors = Anchors::of(&ingest, "src/store.rs");
+        assert!(anchors.at(4, 7).is_none());
+        assert_eq!(anchors.len(), 1);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut interner = Interner::open(dir.path()).expect("interner");
+        let mut seg = Segment::new();
+        let counts = emit(
+            &mut seg,
+            &ingest,
+            "src/store.rs",
+            Some(SRC),
+            &[],
+            &mut interner,
+        )
+        .expect("emits");
+        assert_eq!(counts.collided, 2);
+        assert_eq!(counts.only, 1);
+    }
+
+    /// The same symbol twice at one position is one definition, not a
+    /// conflict.
+    #[test]
+    fn one_symbol_twice_at_one_position_is_not_a_conflict() {
+        let mut ingest = ingest();
+        let doc = ingest.docs.get_mut("src/store.rs").expect("doc");
+        let dup = doc.defs[1].clone();
+        doc.defs.push(dup);
+        ingest.recount();
+        assert!(ingest.collisions.is_empty());
+        assert_eq!(Anchors::of(&ingest, "src/store.rs").len(), 2);
+    }
+
+    /// #47: `extern` is "not defined by any document" over the whole merge. A
+    /// symbol one input references and the other defines is a definition.
+    #[test]
+    fn a_merge_drops_an_extern_the_other_input_defines() {
+        let mut merged = ingest();
+        let mut other = Ingest::default();
+        other.docs.insert(
+            "dep/lib.rs".to_string(),
+            Doc {
+                lang: "rust".to_string(),
+                defs: vec![Def {
+                    symbol: "sc cargo dep 2.0 dep/helper().".to_string(),
+                    line: 1,
+                    col: 7,
+                    enclosing: None,
+                }],
+                refs: vec![],
+            },
+        );
+        other.recount();
+        assert!(
+            merged
+                .externs
+                .contains_key("sc cargo dep 2.0 dep/helper().")
+        );
+        merged.docs.extend(other.docs);
+        merged.symbols.extend(other.symbols);
+        merged.externs.extend(other.externs);
+        merged.recount();
+        assert!(
+            !merged
+                .externs
+                .contains_key("sc cargo dep 2.0 dep/helper().")
+        );
+        assert!(merged.known.contains("sc cargo dep 2.0 dep/helper()."));
     }
 }

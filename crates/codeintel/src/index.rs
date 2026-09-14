@@ -557,7 +557,7 @@ fn read_scip(root: &Path, paths: &[PathBuf]) -> Result<(Ingest, BTreeMap<String,
         merged.externs.extend(one.externs);
         merged.skipped.extend(one.skipped);
     }
-    merged.recount_collisions();
+    merged.recount();
     Ok((merged, own))
 }
 
