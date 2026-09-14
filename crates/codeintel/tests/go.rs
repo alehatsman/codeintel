@@ -23,12 +23,44 @@ fn fixture() -> PathBuf {
 }
 
 /// A throwaway copy of the Go fixture, `index.scip` included.
+///
+/// On a pinned clock, as `scip.rs`'s `tree` explains: `index` trusts the SCIP
+/// inputs to have seen a file only when its mtime is not newer than theirs,
+/// and a checkout's mtimes are whatever the checkout wrote. macOS copies carry
+/// them over, so a fresh worktree read the fixture as `scip-stale` (#50).
 fn tree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     copy(&fixture(), dir.path());
     // The golden file is not source; the fixture is a tree to index.
     drop(std::fs::remove_file(dir.path().join("expected.facts")));
+    backdate(dir.path(), SOURCE_MTIME);
+    set_mtime(&dir.path().join("index.scip"), SOURCE_MTIME + 60);
     dir
+}
+
+/// Seconds since the epoch every copied source is stamped with.
+const SOURCE_MTIME: u64 = 1_700_000_000;
+
+/// Stamp every file in the tree, recursively, with `secs`.
+fn backdate(dir: &Path, secs: u64) {
+    for entry in std::fs::read_dir(dir).expect("readable") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            backdate(&path, secs);
+        } else {
+            set_mtime(&path, secs);
+        }
+    }
+}
+
+fn set_mtime(path: &Path, secs: u64) {
+    let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("opens for set_times");
+    file.set_times(std::fs::FileTimes::new().set_modified(when))
+        .expect("sets mtime");
 }
 
 /// The same tree with no SCIP index, so tier A answers alone.

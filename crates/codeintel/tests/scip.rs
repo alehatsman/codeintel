@@ -307,6 +307,10 @@ fn exact_calls_find_edges_tier_a_alone_cannot_see() {
 
     // Now with SCIP.
     std::fs::copy(fixture().join("index.scip"), dir.path().join("index.scip")).expect("restores");
+    // Back on the pinned clock: a copy can carry the checkout's mtime, older
+    // than the sources `tree` stamped, and the inputs would then see none of
+    // them (#50).
+    set_mtime(&dir.path().join("index.scip"), SOURCE_MTIME + 60);
     index(dir.path());
     let exact: BTreeSet<String> = rows(dir.path(), "?- calls_exact(A, B).")
         .into_iter()

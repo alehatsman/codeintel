@@ -27,6 +27,11 @@ fn indexed() -> &'static Path {
         copy(&from, dir.path());
         // The golden file is not source.
         drop(std::fs::remove_file(dir.path().join("expected.facts")));
+        // A pinned clock, as `scip.rs`'s `tree` explains: a checkout's mtimes
+        // are arbitrary, and a source newer than `index.scip` is tier A only
+        // (#50).
+        backdate(dir.path(), SOURCE_MTIME);
+        set_mtime(&dir.path().join("index.scip"), SOURCE_MTIME + 60);
         let out = Command::new(binary())
             .args(["index", ".", "--scip", "index.scip"])
             .current_dir(dir.path())
@@ -57,6 +62,31 @@ fn copy(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).expect("copy");
         }
     }
+}
+
+/// Seconds since the epoch every copied source is stamped with.
+const SOURCE_MTIME: u64 = 1_700_000_000;
+
+/// Stamp every file in the tree, recursively, with `secs`.
+fn backdate(dir: &Path, secs: u64) {
+    for entry in std::fs::read_dir(dir).expect("readable") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            backdate(&path, secs);
+        } else {
+            set_mtime(&path, secs);
+        }
+    }
+}
+
+fn set_mtime(path: &Path, secs: u64) {
+    let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("opens for set_times");
+    file.set_times(std::fs::FileTimes::new().set_modified(when))
+        .expect("sets mtime");
 }
 
 /// Rows of one goal, rendered. `--no-refresh` because the tree does not move
