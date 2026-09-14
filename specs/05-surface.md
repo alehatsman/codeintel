@@ -58,7 +58,9 @@ gets what there is and is told exactly what is wrong with it. Only `no-index`,
 `invalid-query`, `unstratified`, `timeout`, `budget-exceeded`, `locked` and
 `corrupt` exit 2 — and so does an error no status expresses (an unreadable
 program on stdin, an I/O failure), because 2 means "the query never ran" and 1
-is `--expect-empty`'s "it ran and found a violation" (§ `query`).
+is `--expect-empty`'s "it ran and found a violation" (§ `query`). `schema` is
+the one exception: its answer is the catalog, complete without an index, so it
+reports `no-index` and exits 0 (§ `schema`).
 
 **When two of those apply, the index's condition wins the `status` and the cap
 rides along.** A truncated answer from a stale index is `stale`, not
@@ -447,6 +449,23 @@ signatures, and `text` for the rendered form. A consumer must never regex the
 prose to learn that a kind is at zero — that is the same defect as handing
 `query` a `display` column and no raw one.
 
+**`schema` carries a `status` like every response, and exits 0 without an
+index.** With no `.codeintel/` the status is `no-index` and the hint is the
+usual `run: codeintel index <root>`: `status=` and `hint:` on stderr for text,
+`status` and `hint` fields for `--format json`, `structuredContent` over MCP.
+It used to say `ok` in every form and leave the difference to a sentence inside
+the text — invariant 6, which a consumer must be able to branch on without
+reading prose. The status goes to stderr in text mode so stdout stays exactly
+the catalog the size budget measures.
+
+The catalog itself is still returned in full, and the command **exits 0**,
+unlike a `no-index` query. The vocabulary is what an agent reads before anything
+is indexed, so the catalog is the answer and it is complete; only the counts
+are absent, and the status says so. Exit 2 means "never ran", and failing
+`codeintel schema > vocab.txt` on a fresh checkout for printing exactly what was
+asked would be that code lying in the other direction. A store that exists but
+will not load is still `corrupt` and exits 2.
+
 ### `status`
 
 Index freshness, per-tier. Reports the counts a user needs to trust or distrust
@@ -575,9 +594,11 @@ speaks has no `structuredContent`, and its clients read only `content`.
 **The catalog travels once too.** `schema: true` puts the catalog in `content`
 in the format asked for — the text `codeintel schema` prints, or, with
 `format: "json"`, the document `codeintel schema --format json` prints — and
-`structuredContent` is `{ "status": "ok" }`. It used to repeat the whole text
-in `structuredContent.schema`: ~5.7 KB twice, on the call every session starts
-with.
+`structuredContent` is `{ "status", "hint" }` — `ok`, or `no-index` with the
+indexing hint when there is nothing to count — and `isError` is false either
+way, because the catalog was delivered (§ `schema`). It used to repeat the whole
+text in `structuredContent.schema`: ~5.7 KB twice, on the call every session
+starts with.
 
 **Both surfaces print one answer.** A ground goal that holds prints `true` in
 an MCP text result exactly as on the CLI; one function writes the rows for

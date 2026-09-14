@@ -145,8 +145,12 @@ pub fn body(answer: &Answer, raw: bool) -> String {
 pub fn schema_json(
     catalog: &crate::schema::Schema<'_>,
     census: &crate::census::Census,
+    root: &std::path::Path,
 ) -> serde_json::Value {
+    let (status, hint) = schema_status(census, root);
     serde_json::json!({
+        "status": status.as_str(),
+        "hint": hint,
         "text": catalog.to_string(),
         "indexed": census.indexed,
         "rules": crate::schema::rules(crate::schema::STDLIB)
@@ -164,6 +168,23 @@ pub fn schema_json(
         "kinds": counted(extract::lang::KINDS, &census.kinds),
         "roles": counted(extract::lang::ROLES, &census.roles),
     })
+}
+
+/// The status a catalog carries: `ok`, or `no-index` with the hint `query`
+/// gives when there is nothing to count (`specs/05-surface.md` § `schema`).
+#[must_use]
+pub fn schema_status(
+    census: &crate::census::Census,
+    root: &std::path::Path,
+) -> (crate::status::Status, Option<String>) {
+    if census.indexed {
+        (crate::status::Status::Ok, None)
+    } else {
+        (
+            crate::status::Status::NoIndex,
+            Some(format!("run: codeintel index {}", root.display())),
+        )
+    }
 }
 
 /// A closed vocabulary with this index's count against each value, zeros

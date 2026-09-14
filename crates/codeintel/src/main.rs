@@ -162,13 +162,34 @@ fn run() -> Result<ExitCode> {
 /// The catalog an agent reads to learn the system. Counts come from the index
 /// when there is one; with none, every count is zero and the output says so
 /// rather than printing a static list that looks like an inventory.
+///
+/// It exits 0 with no index: the catalog is the answer and it is complete, and
+/// `no-index` says the counts are absent (`specs/05-surface.md` § `schema`).
 fn schema_cmd(path: &std::path::Path, format: Format) -> Result<ExitCode> {
-    let (store, _) = open(path)?;
-    let census = Census::of(&store)?;
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("{} does not exist", path.display()))?;
+    let store = match Store::open(&root, &extract::fingerprint()) {
+        Ok(store) => store,
+        Err(e) => return refusal(e, format),
+    };
+    let census = match Census::of(&store) {
+        Ok(census) => census,
+        Err(e) => return refusal(e, format),
+    };
     let schema = Schema { census: &census };
     match format {
-        Format::Text => print!("{schema}"),
-        Format::Json => println!("{}", wire::schema_json(&schema, &census)),
+        Format::Text => {
+            // stdout is the catalog the size budget measures; the status goes
+            // where `query` puts it.
+            print!("{schema}");
+            let (status, hint) = wire::schema_status(&census, &root);
+            eprintln!("status={status}");
+            if let Some(hint) = hint {
+                eprintln!("hint: {hint}");
+            }
+        }
+        Format::Json => println!("{}", wire::schema_json(&schema, &census, &root)),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -239,15 +260,6 @@ fn mcp_cmd(path: &std::path::Path) -> Result<ExitCode> {
     let stdin = std::io::stdin();
     codeintel::mcp::serve(&root, stdin.lock(), std::io::stdout().lock())?;
     Ok(ExitCode::SUCCESS)
-}
-
-/// Open the store under `path`, returning it and the canonical root.
-fn open(path: &std::path::Path) -> Result<(Store, PathBuf)> {
-    let root = path
-        .canonicalize()
-        .with_context(|| format!("{} does not exist", path.display()))?;
-    let store = Store::open(&root, &extract::fingerprint()).context("opening the index")?;
-    Ok((store, root))
 }
 
 fn index_cmd(
