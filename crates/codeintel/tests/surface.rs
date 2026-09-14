@@ -1063,3 +1063,57 @@ fn status_reports_a_store_that_will_not_load_as_corrupt() {
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
     assert_eq!(json["status"], "corrupt", "{json}");
 }
+
+#[test]
+fn an_argument_the_tool_does_not_have_is_refused() {
+    // `path` was accepted and ignored. An MCP server started in one repository
+    // and asked for `path: "<another repository>"` answered from its own tree
+    // with `status: "ok"` — a well-formed, confident answer about the wrong
+    // codebase. The CLI takes `--path`, the tool description never said the
+    // repository is fixed, so it is the first argument an agent invents.
+    let dir = tree();
+    run(dir.path(), &["index", "."]);
+
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    let out = rpc(
+        dir.path(),
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"code_query",
+                "arguments":{"query":"?- def(S, F, \"function\", N).",
+                             "path": elsewhere.path().to_string_lossy()}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "name":"code_query",
+                "arguments":{"query":"?- def(S, F, \"function\", N).", "bogus": 1}}}),
+            // The arguments it does have still work, so this is a guard and not
+            // a wall.
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+                "name":"code_query",
+                "arguments":{"query":"?- def(S, F, \"function\", N).",
+                             "limit": 2, "format": "json", "raw": true}}}),
+        ],
+    );
+
+    let message = out[0]["error"]["message"]
+        .as_str()
+        .expect("an unknown argument is an error, not an answer");
+    assert!(message.contains("no argument `path`"), "{message}");
+    assert!(message.contains("working directory"), "{message}");
+    assert!(out[0]["result"].is_null(), "{}", out[0]);
+
+    let message = out[1]["error"]["message"].as_str().expect("error");
+    assert!(message.contains("no argument `bogus`"), "{message}");
+
+    assert!(out[2]["error"].is_null(), "{}", out[2]);
+    assert_eq!(out[2]["result"]["structuredContent"]["status"], "truncated");
+
+    // And the declaration a validating client reads says the same thing.
+    let tools = rpc(
+        dir.path(),
+        &[serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})],
+    );
+    assert_eq!(
+        tools[0]["result"]["tools"][0]["inputSchema"]["additionalProperties"],
+        serde_json::Value::Bool(false)
+    );
+}

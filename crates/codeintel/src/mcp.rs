@@ -197,9 +197,25 @@ fn tool() -> serde_json::Value {
                                     Use when feeding one answer into the next query.",
                 },
             },
+            // The repository is this process's working directory and there is
+            // no argument for it. A caller that passes one — `path` is the
+            // obvious guess, because the CLI has `--path` — must be told, not
+            // quietly answered about a different tree. `ARGUMENTS` enforces it;
+            // this declares it to a client that validates.
+            "additionalProperties": false,
         },
     })
 }
+
+/// Every argument `code_query` accepts.
+///
+/// Unknown arguments were ignored, and the one a caller reaches for first is
+/// `path`: the CLI takes `--path`, the tool description does not say the
+/// repository is fixed, and an agent generalises. An MCP server started in one
+/// repository, asked for `path: "<another repository>"`, answered from its own
+/// tree with `status: "ok"` — a well-formed, confident answer about the wrong
+/// codebase, which is the one failure mode invariant 6 exists to prevent.
+const ARGUMENTS: [&str; 5] = ["query", "schema", "limit", "format", "raw"];
 
 /// Run one `code_query` call.
 ///
@@ -229,6 +245,25 @@ fn call(
         }
     }
     let arguments = params.get("arguments").unwrap_or(&serde_json::Value::Null);
+    // An argument this tool does not have is a question the caller thinks it is
+    // asking and is not. `path` is the one that matters — see `ARGUMENTS`.
+    if let Some(object) = arguments.as_object()
+        && let Some(unknown) = object.keys().find(|k| !ARGUMENTS.contains(&k.as_str()))
+    {
+        let extra = if unknown == "path" {
+            ". the repository is this server's working directory and cannot be \
+             chosen per call; start one server per repository"
+        } else {
+            ""
+        };
+        return Err((
+            INVALID_PARAMS,
+            format!(
+                "no argument `{unknown}`; `{TOOL}` takes {}{extra}",
+                ARGUMENTS.join(", ")
+            ),
+        ));
+    }
     let program = arguments.get("query").and_then(serde_json::Value::as_str);
     let wants_schema = arguments
         .get("schema")

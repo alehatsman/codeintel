@@ -605,6 +605,18 @@ into `structuredContent` and copies that same JSON into `content` as one text
 block), which is why dex never hit this failure and codeintel's hand-rolled
 transport did.
 
+**An argument the tool does not have is refused.** `code_query` takes `query`,
+`schema`, `limit`, `format` and `raw`, and nothing else; the input schema says
+`additionalProperties: false` and the handler enforces it, because a hand-rolled
+transport cannot rely on the client validating. Unknown arguments used to be
+ignored, and the one a caller reaches for first is `path` — the CLI takes
+`--path`, nothing in the tool description says the repository is fixed, so an
+agent generalises. A server started in one repository and asked for
+`path: "<another repository>"` answered from its own tree with `status: "ok"`:
+a well-formed, confident answer about the wrong codebase, which is exactly the
+failure invariant 6 exists to prevent. The repository is the server's working
+directory, one server per repository, and the refusal says so.
+
 **The budget still bounds the whole result, not just `content`.** Doubling what
 `structuredContent` carries does not double-count against `max_result_bytes`:
 the cap is measured on the tool result object as actually serialized
