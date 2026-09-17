@@ -502,8 +502,10 @@ parameter, an attribute bound in `__init__`, or a module, so those `def` rows
 are named from the symbol's own descriptor (02-extraction.md § Ingest) and
 their kind is `unknown`. And it records the binding `from db.conn import open`
 makes as a plain read of `open` at module scope, with no `Import` role bit, so
-`calls` carries an edge whose caller is the file. The row is what the indexer
-stated. rust-analyzer, for comparison, sets no role bits at all. It also declares
+`ref` carries the occurrence — but `calls_at` requires an enclosing def
+(`def(From, _, _, _)`), and a module-scope binding is enclosed by the file,
+not a def, so the row never reaches `calls` (#39). rust-analyzer, for
+comparison, sets no role bits at all. It also declares
 no position encoding and counts columns in UTF-16, as `scip-typescript` 0.4.0
 does, and ingest had read those columns as bytes (#21); an undeclared column
 is now kept only over an ASCII prefix ([02-extraction.md](../specs/02-extraction.md)
@@ -517,8 +519,10 @@ method, so `implements/3` has rows for the first time. It writes no `kind`, no
 UTF-16 (#21). Every reference carries an empty role bitset. So its parameters,
 type parameters and per-file module symbols are tier-B-only `def` rows of kind
 `unknown`, named from their descriptors, and the binding an import makes is a
-role-less reference at module scope, which `calls` counts as an edge from the
-file; the name in `export default f` is recorded the same way. Symbol kinds and document languages are committed upstream
+role-less reference at module scope — `calls_at`'s `def(From, _, _, _)` guard
+excludes it, because the enclosing symbol is the file, not a def (#39); the
+name in `export default f` is recorded the same way and excluded the same way.
+Symbol kinds and document languages are committed upstream
 (2026-09-11) and unreleased.
 
 **Ruby is dropped**, not deferred: `tree-sitter-ruby` has no import node —

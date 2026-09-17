@@ -647,6 +647,7 @@ callable("function"). callable("method"). callable("constructor"). callable("mac
 % --- calls: a reference to a callable, attributed to its enclosing def --
 calls_at(From, S, F, L, Prov) :-
     ref(S, F, L, _, From, Role, Prov), Role != "def",
+    def(From, _, _, _),
     def(S, _, K, _), callable(K).
 calls(From, S) :- calls_at(From, S, _, _, _).
 calls_exact(From, S) :- calls_at(From, S, _, _, "exact").

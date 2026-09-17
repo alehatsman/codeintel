@@ -136,8 +136,16 @@ callable("macro").
 
 % === calls: a reference to a callable, attributed to its enclosing def ==
 %% calls_at(From, S, F, L, Prov)  one call site, with its line and provenance.
+% `Role != "def"` never filters anything: `scip_ref` never carries a `def` row
+% (definitions live in `def`, not `scip_ref`), so an import/re-export
+% occurrence — role `import` or role-less — passes straight through with
+% `From` bound to the enclosing file, not a def. `def(From, _, _, _)` is the
+% guard that actually does the work: a call site must be enclosed by a
+% definition, so `use x::f` / `pub use m::f` (attributed to the file) drop
+% out, and `impact_of`/`entrypoint` stop treating a file as a caller.
 calls_at(From, S, F, L, Prov) :-
     ref(S, F, L, _, From, Role, Prov), Role != "def",
+    def(From, _, _, _),
     def(S, _, K, _), callable(K).
 
 %% calls(From, S)  From calls S, either provenance.

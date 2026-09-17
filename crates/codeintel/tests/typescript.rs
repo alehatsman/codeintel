@@ -247,12 +247,14 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
     // `!ambiguous(N)` guard refuses the edge. The type checker gives each
     // caller its one target, JSX tags included.
     //
-    // Six rows have a FILE as the caller. `scip-typescript` 0.4.0 records
-    // the binding an import makes as an ordinary reference at module scope,
-    // with an empty role bitset, as `scip-python` does; a decorator is
-    // referenced at module scope, which is also where it runs; and so is the
-    // name in `export default outer`. The rows are what the indexer stated
-    // (docs/research.md § Language coverage).
+    // Six rows are ABSENT that a naive reading of `ref` would expect, all
+    // with a FILE as the would-be caller. `scip-typescript` 0.4.0 records the
+    // binding an import makes as an ordinary reference at module scope, with
+    // an empty role bitset, as `scip-python` does; a decorator is referenced
+    // at module scope, which is also where it runs; and so is the name in
+    // `export default outer`. `calls_at`'s own contract is "attributed to its
+    // enclosing def" — a module-scope reference has no enclosing def, so it
+    // cannot be represented here regardless of what runs when (#39).
     let dir = tree();
     index(dir.path());
     let (rows, stderr) = query(dir.path(), "?- calls(A, B).");
@@ -264,19 +266,13 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
             "Panel ui/panel.tsx:10\tRow ui/row.tsx:1",
             "Panel ui/panel.tsx:10\topen db/conn.ts:1",
             "Panel ui/panel.tsx:10\topen net/conn.ts:1",
-            "app/app.ts\topen db/conn.ts:1",
             "describe kinds.ts:12\tdescribe kinds.ts:55",
             "handle store/store.ts:33\tget store/store.ts:20",
             "hidden kinds.ts:96\touter kinds.ts:86",
-            "kinds.ts\touter kinds.ts:86",
-            "kinds.ts\tsealed kinds.ts:15",
             "outer kinds.ts:86\tinner kinds.ts:88",
             "put store/store.ts:29\tconstructor store/store.ts:7",
             "start app/app.ts:3\topen db/conn.ts:1",
-            "store/store.test.ts\twarm store/store.ts:42",
             "testWarm store/store.test.ts:3\twarm store/store.ts:42",
-            "ui/panel.tsx\tRow ui/row.tsx:1",
-            "ui/panel.tsx\topen db/conn.ts:1",
             "warm store/store.ts:42\tget store/store.ts:20",
         ]
     );
@@ -285,6 +281,14 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
         exact.len(),
         rows.len(),
         "every TypeScript edge here is exact"
+    );
+
+    // The absence, stated directly: no file is ever `calls`'s first argument.
+    let (file_callers, _) = query(dir.path(), "?- calls(C, S), file(C, _).");
+    assert_eq!(
+        file_callers,
+        Vec::<String>::new(),
+        "a file was reported as a caller: {file_callers:?}"
     );
 }
 
