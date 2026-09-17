@@ -103,7 +103,7 @@ impl fmt::Display for Schema<'_> {
         for rel in facts::RELATIONS {
             let (args, note) = signature(rel.name);
             let row = format!(
-                "  {:<10} {:<44} {:<6} {note}",
+                "  {:<11} {:<44} {:<6} {note}",
                 rel.name,
                 args,
                 census.rows(rel.name)
@@ -193,6 +193,7 @@ pub fn signature(name: &str) -> (&'static str, &'static str) {
         "scip_impl" => ("(S, T)", "compiler-resolved"),
         "name_impl" => ("(F, Type, Trait, Line)", "unresolved, tier A"),
         "extern" => ("(S, Manager, Package, Version)", ""),
+        "name_export" => ("(F, Name)", "export { x }, tier A"),
         _ => ("", ""),
     }
 }

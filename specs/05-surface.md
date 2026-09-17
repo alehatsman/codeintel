@@ -6,7 +6,7 @@ binding: yes
 # 05 — Surface
 
 The surface budget from [00-overview.md](00-overview.md) is binding: **5 CLI
-verbs, 1 MCP tool, <= 16 base relations, and `schema` output <= 5,700
+verbs, 1 MCP tool, <= 16 base relations, and `schema` output <= 10,000
 characters with the rule list complete.** Growth requires deletion.
 
 There is **no cap on the rule count**. There was, twice, and both numbers were

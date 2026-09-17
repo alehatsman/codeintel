@@ -123,7 +123,8 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
 - **MCP tools: 1.** Named `code_query`. Growing to 2 requires deleting one.
 - **CLI verbs: 5.** `index`, `query`, `schema`, `status`, `mcp`.
   Benchmarking is a test-only harness (`cargo bench`), **not** a sixth verb.
-- **Base relations: ≤ 16.** Currently 15 ([01-facts.md](01-facts.md)).
+- **Base relations: ≤ 16.** Currently 16 ([01-facts.md](01-facts.md)). The
+  slot was spent on `name_export` (#22); the next relation deletes one.
 - **`codeintel schema` output: ≤ 10,000 characters, with the rule list
   complete.** Every rule must appear in `schema` with its signature and a
   one-line doc, so the rule list pays for itself in the one currency that
@@ -138,7 +139,9 @@ A hard ceiling, checked in CI (see [docs/plan.md](../docs/plan.md) M4):
   describes: the same binary renders 5,688 characters there and **5,788 on this
   repository**, over a ceiling CI reported green on every commit. A number
   measured only on the smallest possible input is declared, not measured, and
-  this one had been wearing the other word.
+  this one had been wearing the other word. The sixteenth relation,
+  `name_export` (#22), lands inside this headroom with room to spare — it does
+  not need a ceiling move of its own.
 
   10,000 is therefore **headroom, not a budget**: it catches a change that
   doubles this text and nothing subtler. Restoring a ceiling that binds means

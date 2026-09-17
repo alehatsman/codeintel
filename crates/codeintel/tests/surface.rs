@@ -93,7 +93,8 @@ fn stdout(root: &Path, args: &[&str]) -> String {
 /// that is deferred. 10,000 is a headroom number, not a budget: it catches the
 /// change that doubles this text and nothing subtler. `specs/05-surface.md`
 /// § `schema` still states the real intent in tokens, and it is the statement
-/// that binds a human reviewer.
+/// that binds a human reviewer. The sixteenth base relation, `name_export`
+/// (#22), lands inside this headroom with room to spare.
 const MAX_SCHEMA_CHARS: usize = 10_000;
 
 #[test]
