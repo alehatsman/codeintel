@@ -248,12 +248,12 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
     // `!ambiguous(N)` guard refuses the edge. Two callers, one correct target
     // each, and the provenance says which tier answered.
     //
-    // Two of the rows have a FILE as the caller. `scip-python` 0.6.6 records
-    // the binding an import statement makes as an ordinary read of the
-    // function, at module scope, with no `Import` role bit — so the rule that
-    // says "a reference to a callable is a call" counts it. The row is what
-    // the indexer stated; docs/research.md § Language coverage is where its
-    // tier B is on notice for exactly this class of thing.
+    // Two rows are ABSENT that a naive reading of `ref` would expect: `import
+    // db.conn` and `from store.warm import warm` bind the function at module
+    // scope with no `Import` role bit (`scip-python` 0.6.6), so `ref` still
+    // carries the occurrence — but `calls_at` now requires `def(From, _, _,
+    // _)`, and a module-scope binding is enclosed by the file, not a def
+    // (#39). The file never appears as a caller.
     let dir = tree();
     index(dir.path());
     let (rows, stderr) = query(dir.path(), "?- calls(A, B).");
@@ -261,19 +261,25 @@ fn the_type_checker_answers_what_tier_a_would_not_guess() {
     assert_eq!(
         rows,
         [
-            "app/app.py\topen db/conn.py:4",
             "describe kinds.py:48\t_describe kinds.py:32",
             "draw ui/panel.py:10\topen db/conn.py:4",
             "handle kinds.py:44\thandle kinds.py:25",
             "outer kinds.py:54\tinner kinds.py:57",
             "start app/app.py:9\topen db/conn.py:4",
-            "store/test_store.py\twarm store/store.py:41",
             "test_warm store/test_store.py:6\twarm store/store.py:41",
             "warm store/store.py:41\tget store/store.py:26",
         ]
     );
     let (exact, _) = query(dir.path(), r"?- calls_exact(A, B).");
     assert_eq!(exact.len(), rows.len(), "every Python edge here is exact");
+
+    // The absence, stated directly: no file is ever `calls`'s first argument.
+    let (file_callers, _) = query(dir.path(), "?- calls(C, S), file(C, _).");
+    assert_eq!(
+        file_callers,
+        Vec::<String>::new(),
+        "a file was reported as a caller: {file_callers:?}"
+    );
 }
 
 #[test]

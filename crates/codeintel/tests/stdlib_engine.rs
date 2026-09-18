@@ -175,6 +175,43 @@ fn store_fixture() -> Engine {
     e
 }
 
+/// `store_fixture`, plus one `scip_ref` row shaped like a `pub use store::get;`
+/// re-export: rust-analyzer sets no role bits on that occurrence (role
+/// `"unknown"`, `scip.rs`'s `role_of`), and its enclosing symbol is the file
+/// itself, not a def — `From` is `"src/lib.rs"` (#39).
+fn re_export_fixture() -> Engine {
+    let mut e = store_fixture();
+    install(
+        &mut e,
+        "file",
+        &[&["src/store.rs", "rust"], &["src/lib.rs", "rust"]],
+    );
+    install(
+        &mut e,
+        "scip_ref",
+        &[&["S#get().", "src/lib.rs", "3", "12", "src/lib.rs", "unknown"]],
+    );
+    e
+}
+
+#[test]
+fn a_re_export_is_not_attributed_to_the_file_as_a_caller() {
+    // `Role != "def"` alone never filters this: `scip_ref` never carries a
+    // `def` row, so an import/re-export occurrence passed straight through
+    // with `From` bound to the file. `def(From, _, _, _)` is the guard that
+    // does the work.
+    let (rows, _) = both_in(re_export_fixture, r#"?- calls("src/lib.rs", "S#get().")."#);
+    assert_eq!(
+        rows,
+        vec![] as Vec<String>,
+        "the re-export was attributed to the file as a caller: {rows:?}"
+    );
+
+    // The real call site survives: `put` still calls `get` by name.
+    let (rows, _) = both_in(re_export_fixture, r#"?- calls("S#put().", "S#get().")."#);
+    assert_eq!(rows, vec![String::new()], "{rows:?}");
+}
+
 #[test]
 fn the_standard_library_answers_over_hand_written_facts() {
     // The location bridge: a file:line from a stack trace becomes a symbol.
